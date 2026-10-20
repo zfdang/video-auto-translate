@@ -133,18 +133,56 @@ public final class SubtitleTranslator {
 
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // 尝试找到第一个 '[' 和最后一个 ']'
-        guard let firstBracket = text.firstIndex(of: "["),
-              let lastBracket = text.lastIndex(of: "]"),
-              firstBracket <= lastBracket else {
-            throw LLMError.parsingFailed("未找到合法的 JSON 数组结构: \(text.prefix(100))...")
+        // 策略 1: 尝试找到最外层的 '[' 和 ']' 数组
+        if let firstBracket = text.firstIndex(of: "["),
+           let lastBracket = text.lastIndex(of: "]"),
+           firstBracket <= lastBracket {
+            let jsonSubstring = text[firstBracket...lastBracket]
+            if let data = String(jsonSubstring).data(using: .utf8),
+               let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                var entries: [TranslationEntry] = []
+                for dict in jsonArray {
+                    let idVal = dict["id"] ?? dict["ID"] ?? dict["index"] ?? ""
+                    let idStr = String(describing: idVal)
+                    let transVal = dict["translation"] ?? dict["translated"] ?? dict["target"] ?? dict["translated_text"] ?? dict["chinese"] ?? dict["text"] ?? ""
+                    let transStr = String(describing: transVal)
+                    if !idStr.isEmpty && !transStr.isEmpty {
+                        entries.append(TranslationEntry(id: idStr, translation: transStr))
+                    }
+                }
+                if !entries.isEmpty {
+                    return entries
+                }
+            }
         }
 
-        let jsonSubstring = text[firstBracket...lastBracket]
-        guard let data = String(jsonSubstring).data(using: .utf8) else {
-            throw LLMError.parsingFailed("编码转换失败")
+        // 策略 2: 尝试找到最外层的 '{' 和 '}' 字典 (例如 {"translations": [...]} 或 {"data": [...]})
+        if let firstBrace = text.firstIndex(of: "{"),
+           let lastBrace = text.lastIndex(of: "}"),
+           firstBrace <= lastBrace {
+            let jsonSubstring = text[firstBrace...lastBrace]
+            if let data = String(jsonSubstring).data(using: .utf8),
+               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                for (_, val) in dict {
+                    if let arr = val as? [[String: Any]] {
+                        var entries: [TranslationEntry] = []
+                        for item in arr {
+                            let idVal = item["id"] ?? item["ID"] ?? item["index"] ?? ""
+                            let idStr = String(describing: idVal)
+                            let transVal = item["translation"] ?? item["translated"] ?? item["target"] ?? item["translated_text"] ?? item["chinese"] ?? item["text"] ?? ""
+                            let transStr = String(describing: transVal)
+                            if !idStr.isEmpty && !transStr.isEmpty {
+                                entries.append(TranslationEntry(id: idStr, translation: transStr))
+                            }
+                        }
+                        if !entries.isEmpty {
+                            return entries
+                        }
+                    }
+                }
+            }
         }
 
-        return try JSONDecoder().decode([TranslationEntry].self, from: data)
+        throw LLMError.parsingFailed("未能提取出有效的 JSON 翻译数据: \(text.prefix(120))...")
     }
 }

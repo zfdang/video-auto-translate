@@ -9,9 +9,6 @@ public struct SubtitleRowView: View {
     let onAudition: () -> Void
     let onSplit: () -> Void
 
-    @State private var originalText: String = ""
-    @State private var translatedText: String = ""
-
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -52,7 +49,7 @@ public struct SubtitleRowView: View {
                 .help("从中间拆分此行字幕")
             }
 
-            // 原文字幕编辑框
+            // 原文字幕编辑框 (英文/源语种)
             TextField("原文内容", text: $item.originalText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .regular))
@@ -60,8 +57,8 @@ public struct SubtitleRowView: View {
                 .background(Color(nsColor: .textBackgroundColor).opacity(0.6))
                 .cornerRadius(4)
 
-            // 译文字幕编辑框
-            TextField("译文内容 (未翻译)", text: $item.translatedText)
+            // 译文字幕编辑框 (中文/目标语种)
+            TextField("译文内容 (未翻译，可直接编辑或点击上方「智能翻译」)", text: $item.translatedText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.accentColor)

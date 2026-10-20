@@ -196,11 +196,14 @@ public final class AppState: ObservableObject {
                     self.project.progress = progress
                 }
             }
+            project.subtitles = Array(project.subtitles)
             project.isProcessing = false
+            project.progress = 1.0
             statusMessage = "翻译完成，已为 \(project.subtitles.count) 行字幕生成译文"
         } catch {
             project.isProcessing = false
             statusMessage = "翻译失败: \(error.localizedDescription)"
+            errorMessage = "翻译失败: \(error.localizedDescription)"
         }
     }
 

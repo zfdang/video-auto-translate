@@ -53,6 +53,8 @@ cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.video</string>
 </dict>
