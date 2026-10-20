@@ -19,6 +19,7 @@ mkdir -p "$APP_DIR/Contents/Resources"
 
 cp "$DIR/.build/arm64-apple-macosx/release/VideoAutoTranslateApp" "$APP_DIR/Contents/MacOS/VideoAutoTranslateApp"
 chmod +x "$APP_DIR/Contents/MacOS/VideoAutoTranslateApp"
+cp "$DIR/assets/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -33,6 +34,8 @@ cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
     <string>VideoAutoTranslate</string>
     <key>CFBundleDisplayName</key>
     <string>VideoAutoTranslate</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

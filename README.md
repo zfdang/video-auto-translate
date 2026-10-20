@@ -1,5 +1,7 @@
 # VideoAutoTranslate (macOS 原生视频自动字幕与语言替换工作站)
 
+<img src="assets/app-icon.png" width="128" height="128" alt="VideoAutoTranslate 应用图标">
+
 专为 **macOS Apple Silicon (ARM64)** 原生打造的高性能、超轻量（安装包仅约 1.4MB）本地视频字幕制作与多语言配音工作站。
 
 ---
