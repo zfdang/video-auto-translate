@@ -6,6 +6,10 @@ public struct SettingsView: View {
     @ObservedObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab: SettingsTab = .asrModels
+    @State private var isTestingASR: Bool = false
+    @State private var asrTestFeedback: (isSuccess: Bool, message: String)? = nil
+    @State private var selectedLanguageOption: String = "简体中文 (Simplified Chinese)"
+    private let customLanguageTag: String = "__custom__"
 
     enum SettingsTab: String, CaseIterable, Identifiable {
         case asrModels = "模型与存储"
@@ -68,6 +72,11 @@ public struct SettingsView: View {
         .onAppear {
             appState.modelStorageManager.config = appState.project.modelStorageConfig
             appState.modelStorageManager.refreshAll()
+            if TargetLanguagePreset.defaultPresets.contains(where: { $0.name == appState.project.llmConfig.targetLanguage }) {
+                selectedLanguageOption = appState.project.llmConfig.targetLanguage
+            } else {
+                selectedLanguageOption = customLanguageTag
+            }
         }
     }
 
@@ -260,15 +269,50 @@ public struct SettingsView: View {
 
                 Divider()
 
-                HStack {
-                    TextField("ASR 接口 URL", text: $appState.project.asrConfig.serviceURL)
-                    Button("测试连通") {
-                        Task {
-                            await appState.probeLocalASR()
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        TextField("ASR 接口 URL", text: $appState.project.asrConfig.serviceURL)
+                        Button(action: {
+                            Task {
+                                isTestingASR = true
+                                asrTestFeedback = nil
+                                let res = await appState.testASRConnection()
+                                await MainActor.run {
+                                    self.isTestingASR = false
+                                    self.asrTestFeedback = (res.success, res.message)
+                                    self.appState.isASRServerOnline = res.success
+                                }
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                if isTestingASR {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                }
+                                Text("测试连通")
+                            }
                         }
+                        .disabled(isTestingASR)
+                    }
+
+                    if let feedback = asrTestFeedback {
+                        HStack(spacing: 6) {
+                            Image(systemName: feedback.isSuccess ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                .foregroundColor(feedback.isSuccess ? .green : .red)
+                            Text(feedback.message)
+                                .font(.caption)
+                                .foregroundColor(feedback.isSuccess ? .green : .red)
+                        }
+                        .padding(.top, 2)
                     }
                 }
                 TextField("默认 ASR 模型标识", text: $appState.project.asrConfig.model)
+
+                Picker("默认原语言策略", selection: $appState.project.asrConfig.language) {
+                    ForEach(ASRLanguagePreset.presets) { preset in
+                        Text(preset.displayName).tag(preset.code)
+                    }
+                }
             }
         }
         .formStyle(.grouped)
@@ -326,7 +370,30 @@ public struct SettingsView: View {
             }
 
             Section(header: Text("翻译目标语言与参数").font(.headline)) {
-                TextField("目标语言", text: $appState.project.llmConfig.targetLanguage)
+                VStack(alignment: .leading, spacing: 8) {
+                    Picker("目标语言", selection: $selectedLanguageOption) {
+                        ForEach(TargetLanguagePreset.defaultPresets) { preset in
+                            Text(preset.name).tag(preset.name)
+                        }
+                        Divider()
+                        Text("自定义语言...").tag(customLanguageTag)
+                    }
+                    .onChange(of: selectedLanguageOption) {
+                        if selectedLanguageOption != customLanguageTag {
+                            appState.project.llmConfig.targetLanguage = selectedLanguageOption
+                        }
+                    }
+
+                    if selectedLanguageOption == customLanguageTag {
+                        HStack {
+                            Image(systemName: "pencil")
+                                .foregroundColor(.secondary)
+                            TextField("输入自定义目标语言 (如: 广东话/粤语、文言文等)", text: $appState.project.llmConfig.targetLanguage)
+                        }
+                        .padding(.top, 2)
+                    }
+                }
+
                 Stepper("最大并发请求数: \(appState.project.llmConfig.maxConcurrency)", value: $appState.project.llmConfig.maxConcurrency, in: 1...8)
                 HStack {
                     Text("采样温度: \(String(format: "%.1f", appState.project.llmConfig.temperature))")

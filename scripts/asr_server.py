@@ -301,7 +301,10 @@ def run_local_transcription(audio_path: str, model: str = "qwen3-asr", language:
         try:
             from mlx_audio.asr import load_model, transcribe
             model_instance = load_model(str(qwen_path))
-            res = transcribe(model_instance, audio_path)
+            kwargs = {}
+            if language and language != "auto":
+                kwargs["language"] = language
+            res = transcribe(model_instance, audio_path, **kwargs)
             words = []
             for seg in res.get("segments", []):
                 for w in seg.get("words", []):

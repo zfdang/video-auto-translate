@@ -1,5 +1,35 @@
 import Foundation
 
+/// 目标语言预设项
+public struct TargetLanguagePreset: Identifiable, Hashable {
+    public let code: String
+    public let name: String
+
+    public var id: String { name }
+
+    public init(code: String, name: String) {
+        self.code = code
+        self.name = name
+    }
+
+    public static let defaultPresets: [TargetLanguagePreset] = [
+        TargetLanguagePreset(code: "zh-Hans", name: "简体中文 (Simplified Chinese)"),
+        TargetLanguagePreset(code: "en", name: "英语 (English)"),
+        TargetLanguagePreset(code: "ja", name: "日语 (Japanese)"),
+        TargetLanguagePreset(code: "ko", name: "韩语 (Korean)"),
+        TargetLanguagePreset(code: "zh-Hant", name: "繁体中文 (Traditional Chinese)"),
+        TargetLanguagePreset(code: "fr", name: "法语 (French)"),
+        TargetLanguagePreset(code: "de", name: "德语 (German)"),
+        TargetLanguagePreset(code: "es", name: "西班牙语 (Spanish)"),
+        TargetLanguagePreset(code: "ru", name: "俄语 (Russian)"),
+        TargetLanguagePreset(code: "pt", name: "葡萄牙语 (Portuguese)"),
+        TargetLanguagePreset(code: "it", name: "意大利语 (Italian)"),
+        TargetLanguagePreset(code: "ar", name: "阿拉伯语 (Arabic)"),
+        TargetLanguagePreset(code: "th", name: "泰语 (Thai)"),
+        TargetLanguagePreset(code: "vi", name: "越南语 (Vietnamese)")
+    ]
+}
+
 /// 翻译大模型提供者类型
 public enum LLMProviderType: String, Codable, CaseIterable, Identifiable {
     case localOllama = "本地 Qwen (Ollama)"

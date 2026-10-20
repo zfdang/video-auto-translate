@@ -43,13 +43,18 @@ public final class AppState: ObservableObject {
 
     /// 探测本地 ASR 服务
     public func probeLocalASR() async {
-        let online = await sidecarManager.checkHealth(port: sidecarManager.defaultPort)
+        let (online, _) = await LocalASRService.testConnection(urlString: project.asrConfig.serviceURL)
         await MainActor.run {
             self.isASRServerOnline = online
             if online && !self.sidecarManager.status.isRunning {
                 self.sidecarManager.status = .running(pid: 0, port: self.sidecarManager.defaultPort)
             }
         }
+    }
+
+    /// 详细测试当前 ASR 配置 URL 连通性
+    public func testASRConnection() async -> (success: Bool, message: String) {
+        return await LocalASRService.testConnection(urlString: project.asrConfig.serviceURL)
     }
 
     deinit {
