@@ -1,5 +1,7 @@
 # VideoAutoTranslate
 
+<img src="assets/app-icon.png" width="128" height="128" alt="VideoAutoTranslate 应用图标">
+
 面向 **macOS Apple Silicon** 的原生视频字幕编辑与多语言配音工作站。
 
 当前处于设计阶段，仓库尚无应用实现。首先建立可校对、可拆分合并、可人工调时并能保存恢复的字幕编辑闭环，再扩展上下文翻译、视频导出和增量配音。
