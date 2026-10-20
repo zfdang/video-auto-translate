@@ -141,26 +141,26 @@ public struct MainView: View {
                             await appState.runTranscription()
                         }
                     }) {
-                        Label("一键转录", systemImage: "waveform.and.mic")
+                        Label("语音转录", systemImage: "waveform.and.mic")
                             .lineLimit(1)
                     }
                     .buttonStyle(.borderedProminent)
                     .fixedSize()
                     .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
-                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳并智能断句")
+                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳并切分字幕")
                 } else {
                     Button(action: {
                         Task {
                             await appState.runTranscription()
                         }
                     }) {
-                        Label("一键转录", systemImage: "waveform.and.mic")
+                        Label("语音转录", systemImage: "waveform.and.mic")
                             .lineLimit(1)
                     }
                     .buttonStyle(.bordered)
                     .fixedSize()
                     .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
-                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳并智能断句")
+                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳并切分字幕")
                 }
             }
             .padding(.horizontal, 6)
@@ -172,7 +172,7 @@ public struct MainView: View {
 
             workflowArrow
 
-            // 步骤 3: 智能翻译
+            // 步骤 3: 字幕翻译
             HStack(spacing: 4) {
                 StepBadge(
                     step: 3,
@@ -211,26 +211,26 @@ public struct MainView: View {
                             await appState.runTranslation()
                         }
                     }) {
-                        Label("智能翻译", systemImage: "character.book.closed.fill")
+                        Label("字幕翻译", systemImage: "character.book.closed.fill")
                             .lineLimit(1)
                     }
                     .buttonStyle(.borderedProminent)
                     .fixedSize()
                     .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
-                    .help("使用本地 Qwen2.5 或大模型生成精准口语化双语字幕")
+                    .help("使用本地大模型生成精准口语化双语字幕")
                 } else {
                     Button(action: {
                         Task {
                             await appState.runTranslation()
                         }
                     }) {
-                        Label("智能翻译", systemImage: "character.book.closed.fill")
+                        Label("字幕翻译", systemImage: "character.book.closed.fill")
                             .lineLimit(1)
                     }
                     .buttonStyle(.bordered)
                     .fixedSize()
                     .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
-                    .help("使用本地 Qwen2.5 或大模型生成精准口语化双语字幕")
+                    .help("使用本地大模型生成精准口语化双语字幕")
                 }
             }
             .padding(.horizontal, 6)
