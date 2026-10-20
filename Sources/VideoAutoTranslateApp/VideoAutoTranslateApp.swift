@@ -30,6 +30,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // 支持拖拽到 App 图标或从访达右键使用本应用打开视频
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        if let first = filenames.first, FileManager.default.fileExists(atPath: first) {
+            NotificationCenter.default.post(
+                name: Notification.Name("com.videoautotranslate.openVideoFile"),
+                object: URL(fileURLWithPath: first)
+            )
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // 应用退出时终止静默托管的后台 ASR 进程，释放显存与端口
         ASRSidecarManager.shared.stop()
