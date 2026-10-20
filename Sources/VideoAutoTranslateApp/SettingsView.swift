@@ -6,6 +6,8 @@ public struct SettingsView: View {
     @ObservedObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab: SettingsTab = .asrModels
+    @State private var isTestingASR: Bool = false
+    @State private var asrTestFeedback: (isSuccess: Bool, message: String)? = nil
 
     enum SettingsTab: String, CaseIterable, Identifiable {
         case asrModels = "模型与存储"
@@ -260,12 +262,41 @@ public struct SettingsView: View {
 
                 Divider()
 
-                HStack {
-                    TextField("ASR 接口 URL", text: $appState.project.asrConfig.serviceURL)
-                    Button("测试连通") {
-                        Task {
-                            await appState.probeLocalASR()
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        TextField("ASR 接口 URL", text: $appState.project.asrConfig.serviceURL)
+                        Button(action: {
+                            Task {
+                                isTestingASR = true
+                                asrTestFeedback = nil
+                                let res = await appState.testASRConnection()
+                                await MainActor.run {
+                                    self.isTestingASR = false
+                                    self.asrTestFeedback = (res.success, res.message)
+                                    self.appState.isASRServerOnline = res.success
+                                }
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                if isTestingASR {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                }
+                                Text("测试连通")
+                            }
                         }
+                        .disabled(isTestingASR)
+                    }
+
+                    if let feedback = asrTestFeedback {
+                        HStack(spacing: 6) {
+                            Image(systemName: feedback.isSuccess ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                .foregroundColor(feedback.isSuccess ? .green : .red)
+                            Text(feedback.message)
+                                .font(.caption)
+                                .foregroundColor(feedback.isSuccess ? .green : .red)
+                        }
+                        .padding(.top, 2)
                     }
                 }
                 TextField("默认 ASR 模型标识", text: $appState.project.asrConfig.model)
