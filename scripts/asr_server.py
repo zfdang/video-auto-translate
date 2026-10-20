@@ -70,12 +70,20 @@ PRESET_MODELS = [
 ]
 
 def find_model_path(repo_or_filename: str, is_repo: bool = True) -> Optional[Path]:
-    """多目录扫描模型是否存在"""
+    """多目录扫描模型是否存在并自动定位快照或实体目录"""
     candidate_dirs = [
         CURRENT_STORAGE_DIR,
         DEFAULT_SHARED_DIR,
         DEFAULT_DEDICATED_DIR
     ]
+
+    def resolve_snapshot_or_target(p: Path) -> Path:
+        snapshots_dir = p / "snapshots"
+        if snapshots_dir.exists() and any(snapshots_dir.iterdir()):
+            snapshots = sorted(snapshots_dir.glob("*"), key=os.path.getmtime)
+            if snapshots:
+                return snapshots[-1]
+        return p
 
     safe_repo = "models--" + repo_or_filename.replace("/", "--")
     for d in candidate_dirs:
@@ -84,15 +92,42 @@ def find_model_path(repo_or_filename: str, is_repo: bool = True) -> Optional[Pat
         if is_repo:
             target = d / safe_repo
             if target.exists() and any(target.iterdir()):
-                return target
+                return resolve_snapshot_or_target(target)
             direct = d / repo_or_filename
             if direct.exists() and any(direct.iterdir()):
-                return direct
+                return resolve_snapshot_or_target(direct)
         else:
             file_path = d / repo_or_filename
             if file_path.exists() and file_path.stat().st_size > 1024 * 1024:
                 return file_path
     return None
+
+
+LOADED_MODELS: Dict[str, Any] = {}
+MODEL_LOCK = threading.Lock()
+
+def get_loaded_model(model_path: str):
+    """线程安全并单例复用已载入的 ASR 与对齐模型"""
+    with MODEL_LOCK:
+        if model_path not in LOADED_MODELS:
+            from mlx_audio import stt
+            print(f"[ASR Server] 正在载入本地推理模型至 Apple Silicon 显存: {model_path}", flush=True)
+            LOADED_MODELS[model_path] = stt.load_model(model_path)
+            print(f"[ASR Server] 模型载入完成并热驻留显存: {model_path}", flush=True)
+        return LOADED_MODELS[model_path]
+
+
+LANGUAGE_NAMES = {
+    "zh": "Chinese",
+    "en": "English",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "yue": "Cantonese",
+    "fr": "French",
+    "de": "German",
+    "es": "Spanish",
+    "ru": "Russian",
+}
 
 
 @app.get("/health")
@@ -292,35 +327,105 @@ async def create_transcription(
 
 def run_local_transcription(audio_path: str, model: str = "qwen3-asr", language: Optional[str] = None) -> dict:
     """
-    执行物理音频转录并提取逐词时间戳
+    执行物理音频转录并提取逐词时间戳 (使用 Qwen3-ASR 与 Qwen3-ForcedAligner)
     """
-    # 优先查找本地已存在的模型路径
-    qwen_path = find_model_path("mlx-community/Qwen3-ASR-1.7B-8bit", is_repo=True)
+    qwen_asr_path = find_model_path("mlx-community/Qwen3-ASR-1.7B-8bit", is_repo=True)
+    qwen_aligner_path = find_model_path("mlx-community/Qwen3-ForcedAligner-0.6B-8bit", is_repo=True)
 
-    if HAS_MLX and qwen_path:
+    if HAS_MLX and qwen_asr_path:
         try:
-            from mlx_audio.asr import load_model, transcribe
-            model_instance = load_model(str(qwen_path))
+            asr_model = get_loaded_model(str(qwen_asr_path))
             kwargs = {}
             if language and language != "auto":
                 kwargs["language"] = language
-            res = transcribe(model_instance, audio_path, **kwargs)
+
+            print(f"[ASR Server] 开始转录音频: {audio_path}, 参数: {kwargs}", flush=True)
+            res = asr_model.generate(audio_path, **kwargs)
+            transcribed_text = res.text.strip() if hasattr(res, "text") and res.text else ""
+            
+            detected_lang = getattr(res, "language", None)
+            if isinstance(detected_lang, list) and detected_lang:
+                detected_lang = detected_lang[0]
+            print(f"[ASR Server] 转录完成 (文本字数: {len(transcribed_text)}, 检测语种: {detected_lang})", flush=True)
+
             words = []
-            for seg in res.get("segments", []):
-                for w in seg.get("words", []):
-                    words.append({
-                        "word": w.get("word", ""),
-                        "start": float(w.get("start", 0.0)),
-                        "end": float(w.get("end", 0.0))
+            # 如果转录产生文本且对齐模型就绪，使用 Qwen3-ForcedAligner 提取精确逐词时间戳
+            if transcribed_text and qwen_aligner_path:
+                try:
+                    aligner_model = get_loaded_model(str(qwen_aligner_path))
+                    align_lang = "English"
+                    if language and language != "auto":
+                        align_lang = LANGUAGE_NAMES.get(language, language)
+                    elif detected_lang:
+                        align_lang = LANGUAGE_NAMES.get(detected_lang, str(detected_lang))
+
+                    print(f"[ASR Server] 开始词级时间戳强制对齐 (对齐语言: {align_lang})...", flush=True)
+                    aligned = aligner_model.generate(audio_path, text=transcribed_text, language=align_lang)
+
+                    align_items = getattr(aligned, "items", []) or []
+                    if not align_items and hasattr(aligned, "segments"):
+                        align_items = aligned.segments or []
+
+                    for it in align_items:
+                        it_text = getattr(it, "text", "") if hasattr(it, "text") else it.get("text", "")
+                        it_start = getattr(it, "start_time", None) if hasattr(it, "start_time") else it.get("start", 0.0)
+                        it_end = getattr(it, "end_time", None) if hasattr(it, "end_time") else it.get("end", 0.0)
+
+                        if it_text and str(it_text).strip():
+                            words.append({
+                                "word": str(it_text).strip(),
+                                "start": round(float(it_start), 3),
+                                "end": round(float(it_end), 3)
+                            })
+                    print(f"[ASR Server] 强制对齐完成，共提取 {len(words)} 个词/字时间序列", flush=True)
+                except Exception as align_err:
+                    print(f"[ASR Server] 词级对齐异常 (回退至 ASR 片段): {align_err}", file=sys.stderr)
+
+            # 提取 segments
+            segments = []
+            if hasattr(res, "segments") and res.segments:
+                for idx, s in enumerate(res.segments):
+                    s_text = s.get("text", "") if isinstance(s, dict) else getattr(s, "text", "")
+                    s_start = s.get("start", 0.0) if isinstance(s, dict) else getattr(s, "start", 0.0)
+                    s_end = s.get("end", 0.0) if isinstance(s, dict) else getattr(s, "end", 0.0)
+                    segments.append({
+                        "id": idx,
+                        "text": s_text,
+                        "start": round(float(s_start), 3),
+                        "end": round(float(s_end), 3),
+                        "words": []
                     })
+
             if words:
+                start_t = words[0]["start"]
+                end_t = words[-1]["end"]
+                if not segments:
+                    segments = [{
+                        "id": 0,
+                        "text": transcribed_text,
+                        "start": start_t,
+                        "end": end_t,
+                        "words": words
+                    }]
                 return {
-                    "text": res.get("text", ""),
+                    "text": transcribed_text,
                     "words": words,
-                    "segments": res.get("segments", [])
+                    "segments": segments
+                }
+            elif transcribed_text:
+                return {
+                    "text": transcribed_text,
+                    "words": [],
+                    "segments": segments if segments else [{
+                        "id": 0,
+                        "text": transcribed_text,
+                        "start": 0.0,
+                        "end": 5.0,
+                        "words": []
+                    }]
                 }
         except Exception as e:
-            print(f"[ASR Server] MLX 推理回退: {e}", file=sys.stderr)
+            print(f"[ASR Server] MLX 识别处理失败，回退至模拟时序: {e}", file=sys.stderr)
 
     # 轻量化通用回退切分逻辑 (带真实音频时长适配)
     import wave
