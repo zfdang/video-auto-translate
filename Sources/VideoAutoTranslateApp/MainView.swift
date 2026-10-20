@@ -66,18 +66,36 @@ public struct MainView: View {
 
     // MARK: - 顶部一体化工作流工具栏
     private var topWorkflowBar: some View {
-        HStack(spacing: 10) {
-            // 1. 打开视频
-            Button(action: openVideoFilePicker) {
-                Label("打开视频", systemImage: "folder.fill")
+        HStack(spacing: 6) {
+            // 步骤 1: 导入视频
+            HStack(spacing: 6) {
+                StepBadge(
+                    step: 1,
+                    isCompleted: appState.project.videoURL != nil,
+                    isActive: appState.project.videoURL == nil
+                )
+
+                Button(action: openVideoFilePicker) {
+                    Label(appState.project.videoURL == nil ? "打开视频" : "更换视频", systemImage: "folder.fill")
+                }
+                .buttonStyle(.bordered)
+                .help("打开或更换本地待处理视频文件")
             }
-            .buttonStyle(.bordered)
-            .help("打开本地视频文件")
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.06))
+            .cornerRadius(8)
 
-            Divider().frame(height: 20)
+            workflowArrow
 
-            // 2. ASR 语音识别 (原语言选择 + 转录按钮)
+            // 步骤 2: 语音转录
             HStack(spacing: 4) {
+                StepBadge(
+                    step: 2,
+                    isCompleted: !appState.project.subtitles.isEmpty,
+                    isActive: appState.project.videoURL != nil && appState.project.subtitles.isEmpty
+                )
+
                 Menu {
                     ForEach(ASRLanguagePreset.presets) { preset in
                         Button(action: {
@@ -92,7 +110,7 @@ public struct MainView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 3) {
                         Image(systemName: "globe")
                         Text(currentASRLanguageName)
                             .font(.subheadline)
@@ -100,7 +118,7 @@ public struct MainView: View {
                 }
                 .menuStyle(.borderedButton)
                 .fixedSize()
-                .help("指定待识别音视频的原语言 (有助于消除误判并提升识别准确率)")
+                .help("指定待识别音视频的原语言 (默认自动检测)")
 
                 Button(action: {
                     Task {
@@ -113,9 +131,21 @@ public struct MainView: View {
                 .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
                 .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳并智能断句")
             }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.06))
+            .cornerRadius(8)
 
-            // 3. 智能翻译 (目标语言选择 + 翻译按钮)
+            workflowArrow
+
+            // 步骤 3: 智能翻译
             HStack(spacing: 4) {
+                StepBadge(
+                    step: 3,
+                    isCompleted: hasTranslations,
+                    isActive: !appState.project.subtitles.isEmpty && !hasTranslations
+                )
+
                 Menu {
                     ForEach(TargetLanguagePreset.defaultPresets) { preset in
                         Button(action: {
@@ -130,7 +160,7 @@ public struct MainView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 3) {
                         Image(systemName: "character.bubble")
                         Text(shortTargetLanguageName)
                             .font(.subheadline)
@@ -149,25 +179,49 @@ public struct MainView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
-                .help("使用本地 Qwen 或在线大模型生成精准口语化双语字幕")
+                .help("使用本地 Qwen2.5 或大模型生成精准口语化双语字幕")
             }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.06))
+            .cornerRadius(8)
 
-            // 4. 自动配音
-            Button(action: {
-                Task {
-                    await appState.runFullDubbing()
+            workflowArrow
+
+            // 步骤 4: 自动配音
+            HStack(spacing: 4) {
+                StepBadge(
+                    step: 4,
+                    isCompleted: hasDubbing,
+                    isActive: hasTranslations && !hasDubbing
+                )
+
+                Button(action: {
+                    Task {
+                        await appState.runFullDubbing()
+                    }
+                }) {
+                    Label("自动配音", systemImage: "speaker.wave.2.fill")
                 }
-            }) {
-                Label("自动配音", systemImage: "speaker.wave.2.fill")
+                .buttonStyle(.bordered)
+                .disabled(!hasTranslations || appState.project.isProcessing)
+                .help("合成新语言配音，并执行自适应语速对齐与背景音自动闪避混音")
             }
-            .buttonStyle(.bordered)
-            .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
-            .help("合成新语言配音，并执行自适应语速对齐与背景音自动闪避混音")
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.06))
+            .cornerRadius(8)
 
-            Spacer()
+            workflowArrow
 
-            // 5. 导出成片与设置
-            HStack(spacing: 8) {
+            // 步骤 5: 导出成品
+            HStack(spacing: 4) {
+                StepBadge(
+                    step: 5,
+                    isCompleted: false,
+                    isActive: !appState.project.subtitles.isEmpty
+                )
+
                 Button(action: {
                     appState.showExportSheet = true
                 }) {
@@ -176,20 +230,44 @@ public struct MainView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(appState.project.subtitles.isEmpty)
                 .help("导出双语字幕文件 (SRT/VTT) 或全新压制音画同步视频")
-
-                Button(action: {
-                    appState.showSettings = true
-                }) {
-                    Image(systemName: "gearshape.fill")
-                        .font(.body)
-                }
-                .buttonStyle(.bordered)
-                .help("偏好设置 (模型下载与存储、Ollama 与 ASR 引擎托管)")
             }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.06))
+            .cornerRadius(8)
+
+            Spacer()
+
+            // 设置按钮
+            Button(action: {
+                appState.showSettings = true
+            }) {
+                Image(systemName: "gearshape.fill")
+                    .font(.body)
+            }
+            .buttonStyle(.bordered)
+            .help("偏好设置 (模型下载与存储、Ollama 与 ASR 引擎托管)")
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var workflowArrow: some View {
+        Image(systemName: "arrow.right")
+            .font(.system(size: 11, weight: .bold))
+            .foregroundColor(.secondary.opacity(0.45))
+            .padding(.horizontal, 2)
+    }
+
+    private var hasTranslations: Bool {
+        !appState.project.subtitles.isEmpty &&
+        appState.project.subtitles.contains(where: { !$0.translatedText.isEmpty })
+    }
+
+    private var hasDubbing: Bool {
+        !appState.project.subtitles.isEmpty &&
+        appState.project.subtitles.contains(where: { $0.dubbedAudioURL != nil })
     }
 
     private var currentASRLanguageName: String {
@@ -287,6 +365,40 @@ public struct MainView: View {
 
         if panel.runModal() == .OK, let url = panel.url {
             appState.openVideo(url: url)
+        }
+    }
+}
+
+// MARK: - 工作流步骤指示徽标
+struct StepBadge: View {
+    let step: Int
+    let isCompleted: Bool
+    let isActive: Bool
+
+    var body: some View {
+        ZStack {
+            if isCompleted {
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 18, height: 18)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.white)
+            } else if isActive {
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 18, height: 18)
+                Text("\(step)")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+            } else {
+                Circle()
+                    .fill(Color.secondary.opacity(0.2))
+                    .frame(width: 18, height: 18)
+                Text("\(step)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
         }
     }
 }
