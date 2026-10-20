@@ -1,19 +1,19 @@
 import Foundation
 
 /// 项目当前处理状态与数据持有
-public final class ProjectState: ObservableObject {
-    @Published public var videoURL: URL?
-    @Published public var audioURL: URL?
-    @Published public var subtitles: [SubtitleItem] = []
-    @Published public var selectedSubtitleID: UUID?
+public struct ProjectState: Equatable {
+    public var videoURL: URL?
+    public var audioURL: URL?
+    public var subtitles: [SubtitleItem] = []
+    public var selectedSubtitleID: UUID?
 
-    @Published public var isProcessing: Bool = false
-    @Published public var currentStepName: String = ""
-    @Published public var progress: Double = 0.0
+    public var isProcessing: Bool = false
+    public var currentStepName: String = ""
+    public var progress: Double = 0.0
 
-    @Published public var llmConfig: LLMConfiguration = LLMConfiguration()
-    @Published public var asrConfig: ASRConfiguration = ASRConfiguration()
-    @Published public var modelStorageConfig: ModelStorageConfig = ModelStorageConfig()
+    public var llmConfig: LLMConfiguration = LLMConfiguration()
+    public var asrConfig: ASRConfiguration = ASRConfiguration()
+    public var modelStorageConfig: ModelStorageConfig = ModelStorageConfig()
 
     public init(videoURL: URL? = nil, subtitles: [SubtitleItem] = []) {
         self.videoURL = videoURL
@@ -21,7 +21,7 @@ public final class ProjectState: ObservableObject {
     }
 
     /// 重置工程状态
-    public func reset() {
+    public mutating func reset() {
         videoURL = nil
         audioURL = nil
         subtitles.removeAll()

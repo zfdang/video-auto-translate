@@ -29,6 +29,7 @@ public final class AppState: ObservableObject {
     @Published public var showSettings: Bool = false
     @Published public var showExportSheet: Bool = false
     @Published public var statusMessage: String = "就绪"
+    @Published public var errorMessage: String? = nil
 
     private var timeObserverToken: Any?
 
@@ -118,6 +119,7 @@ public final class AppState: ObservableObject {
         project.isProcessing = true
         project.currentStepName = "正在提取音频..."
         project.progress = 0.1
+        statusMessage = "正在提取音频..."
 
         do {
             let tempDir = FileManager.default.temporaryDirectory
@@ -127,11 +129,13 @@ public final class AppState: ObservableObject {
 
             project.currentStepName = "正在按需准备本地 ASR 推理引擎..."
             project.progress = 0.25
+            statusMessage = "正在按需准备本地 ASR 推理引擎..."
             _ = await sidecarManager.ensureRunning()
             await probeLocalASR()
 
             project.currentStepName = "正在调用 Qwen3-ASR 执行转录与词级对齐..."
             project.progress = 0.4
+            statusMessage = "正在识别语音并生成逐词时间戳..."
 
             let asrService = LocalASRService(config: project.asrConfig)
             let items = try await asrService.transcribe(audioURL: wavURL) { progress in
@@ -147,6 +151,7 @@ public final class AppState: ObservableObject {
         } catch {
             project.isProcessing = false
             statusMessage = "识别失败: \(error.localizedDescription)"
+            errorMessage = "转录识别失败: \(error.localizedDescription)"
         }
     }
 

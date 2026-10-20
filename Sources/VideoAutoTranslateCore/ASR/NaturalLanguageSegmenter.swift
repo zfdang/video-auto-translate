@@ -52,9 +52,7 @@ public final class NaturalLanguageSegmenter {
             if shouldSplit && !currentTokens.isEmpty {
                 let startTime = currentTokens.first!.startCMTime
                 let endTime = currentTokens.last!.endCMTime
-                let lineText = currentTokens.map { $0.text }.joined(separator: " ")
-                    .replacingOccurrences(of: "  ", with: " ")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let lineText = Self.joinTokensText(currentTokens)
 
                 let item = SubtitleItem(
                     startTime: startTime,
@@ -70,5 +68,31 @@ public final class NaturalLanguageSegmenter {
         }
 
         return result
+    }
+
+    /// 智能拼接词条文本（支持中日文紧凑排版与西文空格间隔）
+    public static func joinTokensText(_ tokens: [WordToken]) -> String {
+        guard !tokens.isEmpty else { return "" }
+        var result = ""
+        for (i, token) in tokens.enumerated() {
+            let text = token.text
+            if i == 0 {
+                result += text
+                continue
+            }
+            let prev = tokens[i - 1].text
+            let prevLast = prev.last
+            let currFirst = text.first
+            let isCJK = { (c: Character?) -> Bool in
+                guard let u = c?.unicodeScalars.first?.value else { return false }
+                return (0x4E00...0x9FFF).contains(u) || (0x3040...0x30FF).contains(u)
+            }
+            if let p = prevLast, let c = currFirst, isCJK(p) && isCJK(c) {
+                result += text
+            } else {
+                result += " " + text
+            }
+        }
+        return result.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

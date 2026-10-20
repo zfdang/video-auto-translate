@@ -55,11 +55,20 @@ public struct SubtitleListView: View {
             if filteredSubtitles.isEmpty {
                 VStack(spacing: 12) {
                     Spacer()
-                    Image(systemName: "text.bubble")
-                        .font(.system(size: 40))
-                        .foregroundColor(.secondary)
-                    Text(appState.project.videoURL == nil ? "请先打开或拖拽视频文件" : "尚未提取字幕，点击上方「语音转录」开始")
-                        .foregroundColor(.secondary)
+                    if appState.project.isProcessing {
+                        ProgressView(value: appState.project.progress)
+                            .progressViewStyle(.linear)
+                            .frame(maxWidth: 220)
+                        Text(appState.project.currentStepName)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Image(systemName: "text.bubble")
+                            .font(.system(size: 40))
+                            .foregroundColor(.secondary)
+                        Text(appState.project.videoURL == nil ? "请先打开或拖拽视频文件" : "尚未提取字幕，点击上方「一键转录」开始")
+                            .foregroundColor(.secondary)
+                    }
                     Spacer()
                 }
             } else {
