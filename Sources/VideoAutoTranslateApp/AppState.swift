@@ -40,6 +40,30 @@ public final class AppState: ObservableObject {
             await probeLocalOllama()
             await probeLocalASR()
         }
+
+        // 监听外部打开视频文件事件
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("com.videoautotranslate.openVideoFile"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            if let url = note.object as? URL {
+                Task { @MainActor in
+                    self?.openVideo(url: url)
+                }
+            }
+        }
+
+        // 自动检测命令行传入的视频路径参数
+        for arg in CommandLine.arguments.dropFirst() {
+            if !arg.hasPrefix("-") && FileManager.default.fileExists(atPath: arg) {
+                let ext = (arg as NSString).pathExtension.lowercased()
+                if ["mp4", "mov", "m4v", "mkv", "avi", "webm"].contains(ext) {
+                    openVideo(url: URL(fileURLWithPath: arg))
+                    break
+                }
+            }
+        }
     }
 
     /// 探测本地 ASR 服务
@@ -172,11 +196,14 @@ public final class AppState: ObservableObject {
                     self.project.progress = progress
                 }
             }
+            project.subtitles = Array(project.subtitles)
             project.isProcessing = false
+            project.progress = 1.0
             statusMessage = "翻译完成，已为 \(project.subtitles.count) 行字幕生成译文"
         } catch {
             project.isProcessing = false
             statusMessage = "翻译失败: \(error.localizedDescription)"
+            errorMessage = "翻译失败: \(error.localizedDescription)"
         }
     }
 

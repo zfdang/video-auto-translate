@@ -41,9 +41,11 @@ public final class OllamaProbe {
         }
     }
 
-    /// 寻找推荐的 Qwen 模型（优先推荐 qwen2.5）
+    /// 寻找推荐的 Qwen 模型（优先推荐纯文本大模型 qwen2.5:latest，其次视觉模型）
     public func findPreferredQwenModel(in models: [String]) -> String? {
-        // 优先匹配 qwen2.5:latest, qwen2.5:7b, qwen2.5:14b 等
+        if let match = models.first(where: { $0.contains("qwen2.5") && !$0.contains("vl") }) {
+            return match
+        }
         if let match = models.first(where: { $0.contains("qwen2.5") }) {
             return match
         }
