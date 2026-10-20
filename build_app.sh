@@ -1,0 +1,65 @@
+#!/bin/bash
+set -e
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$DIR"
+
+DIST_DIR="$DIR/dist"
+APP_NAME="VideoAutoTranslate.app"
+APP_DIR="$DIST_DIR/$APP_NAME"
+
+echo "==> 1. 正在以 Release 模式编译 macOS 原生应用..."
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release
+
+echo "==> 2. 正在打包为原生应用至 dist 目录: $APP_DIR"
+mkdir -p "$DIST_DIR"
+rm -rf "$APP_DIR"
+mkdir -p "$APP_DIR/Contents/MacOS"
+mkdir -p "$APP_DIR/Contents/Resources"
+
+cp "$DIR/.build/arm64-apple-macosx/release/VideoAutoTranslateApp" "$APP_DIR/Contents/MacOS/VideoAutoTranslateApp"
+chmod +x "$APP_DIR/Contents/MacOS/VideoAutoTranslateApp"
+
+# 复制 ASR 依赖脚本与资源
+mkdir -p "$APP_DIR/Contents/Resources/scripts"
+cp -r "$DIR/scripts/"* "$APP_DIR/Contents/Resources/scripts/"
+
+if [ -f "$DIR/assets/AppIcon.icns" ]; then
+    cp "$DIR/assets/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+fi
+
+cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>VideoAutoTranslateApp</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.videoautotranslate.macos</string>
+    <key>CFBundleName</key>
+    <string>VideoAutoTranslate</string>
+    <key>CFBundleDisplayName</key>
+    <string>VideoAutoTranslate</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.video</string>
+</dict>
+</plist>
+EOF
+
+echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
+
+echo "==> 3. 打包完成！应用位于: $APP_DIR"
+echo "您可以直接运行: open \"$APP_DIR\""
