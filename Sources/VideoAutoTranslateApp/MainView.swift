@@ -43,6 +43,14 @@ public struct MainView: View {
         .sheet(isPresented: $appState.showExportSheet) {
             ExportView(appState: appState)
         }
+        .alert("提示", isPresented: Binding(
+            get: { appState.errorMessage != nil },
+            set: { if !$0 { appState.errorMessage = nil } }
+        )) {
+            Button("确定", role: .cancel) { appState.errorMessage = nil }
+        } message: {
+            Text(appState.errorMessage ?? "")
+        }
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargetedForDrop) { providers in
             guard let provider = providers.first else { return false }
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
