@@ -88,31 +88,9 @@ public struct ASRModelPreset: Identifiable, Hashable {
         note: "提供字词级别毫秒精确时间戳与发音对齐"
     )
 
-    public static let whisperSmall = ASRModelPreset(
-        id: "whisper-small-ggml",
-        displayName: "Whisper Small (GGML Metal)",
-        repoOrFileName: "ggml-small.bin",
-        sizeDescription: "465 MB",
-        approxSizeBytes: 488_000_000,
-        isRepo: false,
-        note: "单文件 Whisper 经典权重，通用性高"
-    )
-
-    public static let whisperTiny = ASRModelPreset(
-        id: "whisper-tiny-ggml",
-        displayName: "Whisper Tiny (GGML Metal)",
-        repoOrFileName: "ggml-tiny.bin",
-        sizeDescription: "74 MB",
-        approxSizeBytes: 77_000_000,
-        isRepo: false,
-        note: "极轻量备用模型，秒级下载"
-    )
-
     public static let allPresets: [ASRModelPreset] = [
         .qwen3ASR,
-        .qwen3Aligner,
-        .whisperSmall,
-        .whisperTiny
+        .qwen3Aligner
     ]
 }
 

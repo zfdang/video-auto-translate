@@ -66,20 +66,6 @@ PRESET_MODELS = [
         "repoId": "mlx-community/Qwen3-ForcedAligner-0.6B-8bit",
         "isRepo": True,
         "size": "~600 MB"
-    },
-    {
-        "id": "whisper-small-ggml",
-        "displayName": "Whisper Small (GGML Metal)",
-        "repoId": "ggml-small.bin",
-        "isRepo": False,
-        "size": "465 MB"
-    },
-    {
-        "id": "whisper-tiny-ggml",
-        "displayName": "Whisper Tiny (GGML Metal)",
-        "repoId": "ggml-tiny.bin",
-        "isRepo": False,
-        "size": "74 MB"
     }
 ]
 
@@ -88,8 +74,7 @@ def find_model_path(repo_or_filename: str, is_repo: bool = True) -> Optional[Pat
     candidate_dirs = [
         CURRENT_STORAGE_DIR,
         DEFAULT_SHARED_DIR,
-        DEFAULT_DEDICATED_DIR,
-        HOME / "Library" / "Application Support" / "Memo" / "models"
+        DEFAULT_DEDICATED_DIR
     ]
 
     safe_repo = "models--" + repo_or_filename.replace("/", "--")

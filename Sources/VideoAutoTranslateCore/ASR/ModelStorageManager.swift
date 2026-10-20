@@ -95,9 +95,6 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
         }
 
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? home
-        let memoDir = appSupport.appendingPathComponent("Memo/models")
-        candidateDirs.append(memoDir)
-
         let dedicatedDir = appSupport.appendingPathComponent("VideoAutoTranslate/models")
         if targetDir.path != dedicatedDir.path {
             candidateDirs.append(dedicatedDir)
