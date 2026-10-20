@@ -58,7 +58,7 @@ public struct SubtitleRowView: View {
                 .cornerRadius(4)
 
             // 译文字幕编辑框 (中文/目标语种)
-            TextField("译文内容 (未翻译，可直接编辑或点击上方「智能翻译」)", text: $item.translatedText)
+            TextField("译文内容 (未翻译，可直接编辑或点击上方「字幕翻译」)", text: $item.translatedText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.accentColor)

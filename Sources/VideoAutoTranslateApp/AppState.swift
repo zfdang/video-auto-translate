@@ -136,7 +136,7 @@ public final class AppState: ObservableObject {
         player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
-    /// 一键执行：本地音频提取与 Qwen 语音识别
+    /// 执行本地音频提取与语音转录
     public func runTranscription() async {
         guard let videoURL = project.videoURL else { return }
 
@@ -179,7 +179,7 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 一键执行：Qwen/LLM 智能翻译
+    /// 执行字幕翻译
     public func runTranslation() async {
         guard !project.subtitles.isEmpty else { return }
 
@@ -207,7 +207,7 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 一键执行：多语言自动配音与混音
+    /// 执行多语言配音与混音
     public func runFullDubbing() async {
         guard !project.subtitles.isEmpty else { return }
 

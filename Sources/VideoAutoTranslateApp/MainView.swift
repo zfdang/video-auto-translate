@@ -75,16 +75,30 @@ public struct MainView: View {
                     isActive: appState.project.videoURL == nil
                 )
 
-                Button(action: openVideoFilePicker) {
-                    Label(appState.project.videoURL == nil ? "打开视频" : "更换视频", systemImage: "folder.fill")
+                if appState.project.videoURL == nil {
+                    Button(action: openVideoFilePicker) {
+                        Label("打开视频", systemImage: "folder.fill")
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .fixedSize()
+                    .help("打开本地待处理视频文件")
+                } else {
+                    Button(action: openVideoFilePicker) {
+                        Label("更换视频", systemImage: "folder.fill")
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.bordered)
+                    .fixedSize()
+                    .help("更换当前本地待处理视频文件")
                 }
-                .buttonStyle(.bordered)
-                .help("打开或更换本地待处理视频文件")
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
             .background(Color.secondary.opacity(0.06))
             .cornerRadius(8)
+            .fixedSize()
+            .layoutPriority(1)
 
             workflowArrow
 
@@ -93,7 +107,7 @@ public struct MainView: View {
                 StepBadge(
                     step: 2,
                     isCompleted: !appState.project.subtitles.isEmpty,
-                    isActive: appState.project.videoURL != nil && appState.project.subtitles.isEmpty
+                    isActive: isStep2Active
                 )
 
                 Menu {
@@ -114,36 +128,56 @@ public struct MainView: View {
                         Image(systemName: "globe")
                         Text(currentASRLanguageName)
                             .font(.subheadline)
+                            .lineLimit(1)
                     }
                 }
                 .menuStyle(.borderedButton)
                 .fixedSize()
                 .help("指定待识别音视频的原语言 (默认自动检测)")
 
-                Button(action: {
-                    Task {
-                        await appState.runTranscription()
+                if isStep2Active {
+                    Button(action: {
+                        Task {
+                            await appState.runTranscription()
+                        }
+                    }) {
+                        Label("语音转录", systemImage: "waveform.and.mic")
+                            .lineLimit(1)
                     }
-                }) {
-                    Label("一键转录", systemImage: "waveform.and.mic")
+                    .buttonStyle(.borderedProminent)
+                    .fixedSize()
+                    .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
+                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳并切分字幕")
+                } else {
+                    Button(action: {
+                        Task {
+                            await appState.runTranscription()
+                        }
+                    }) {
+                        Label("语音转录", systemImage: "waveform.and.mic")
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.bordered)
+                    .fixedSize()
+                    .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
+                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳并切分字幕")
                 }
-                .buttonStyle(.bordered)
-                .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
-                .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳并智能断句")
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
             .background(Color.secondary.opacity(0.06))
             .cornerRadius(8)
+            .fixedSize()
+            .layoutPriority(1)
 
             workflowArrow
 
-            // 步骤 3: 智能翻译
+            // 步骤 3: 字幕翻译
             HStack(spacing: 4) {
                 StepBadge(
                     step: 3,
                     isCompleted: hasTranslations,
-                    isActive: !appState.project.subtitles.isEmpty && !hasTranslations
+                    isActive: isStep3Active
                 )
 
                 Menu {
@@ -164,27 +198,47 @@ public struct MainView: View {
                         Image(systemName: "character.bubble")
                         Text(shortTargetLanguageName)
                             .font(.subheadline)
+                            .lineLimit(1)
                     }
                 }
                 .menuStyle(.borderedButton)
                 .fixedSize()
                 .help("选择字幕翻译的目标语言")
 
-                Button(action: {
-                    Task {
-                        await appState.runTranslation()
+                if isStep3Active {
+                    Button(action: {
+                        Task {
+                            await appState.runTranslation()
+                        }
+                    }) {
+                        Label("字幕翻译", systemImage: "character.book.closed.fill")
+                            .lineLimit(1)
                     }
-                }) {
-                    Label("智能翻译", systemImage: "character.book.closed.fill")
+                    .buttonStyle(.borderedProminent)
+                    .fixedSize()
+                    .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
+                    .help("使用本地大模型生成精准口语化双语字幕")
+                } else {
+                    Button(action: {
+                        Task {
+                            await appState.runTranslation()
+                        }
+                    }) {
+                        Label("字幕翻译", systemImage: "character.book.closed.fill")
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.bordered)
+                    .fixedSize()
+                    .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
+                    .help("使用本地大模型生成精准口语化双语字幕")
                 }
-                .buttonStyle(.bordered)
-                .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
-                .help("使用本地 Qwen2.5 或大模型生成精准口语化双语字幕")
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
             .background(Color.secondary.opacity(0.06))
             .cornerRadius(8)
+            .fixedSize()
+            .layoutPriority(1)
 
             workflowArrow
 
@@ -209,6 +263,7 @@ public struct MainView: View {
                     Label("自动配音", systemImage: "speaker.wave.2.fill")
                 }
                 .buttonStyle(.bordered)
+                .fixedSize()
                 .disabled(!hasTranslations || appState.project.isProcessing)
                 .help("可选步骤：合成新语言配音，并执行自适应语速对齐与背景音自动闪避混音（可跳过直接进入第5步导出成片）")
 
@@ -220,6 +275,8 @@ public struct MainView: View {
             .padding(.vertical, 4)
             .background(Color.secondary.opacity(0.06))
             .cornerRadius(8)
+            .fixedSize()
+            .layoutPriority(1)
 
             workflowArrow
 
@@ -237,6 +294,7 @@ public struct MainView: View {
                     Label("导出成片", systemImage: "square.and.arrow.up.fill")
                 }
                 .buttonStyle(.borderedProminent)
+                .fixedSize()
                 .disabled(appState.project.subtitles.isEmpty)
                 .help("导出双语字幕文件 (SRT/VTT) 或全新压制音画同步视频")
             }
@@ -244,6 +302,8 @@ public struct MainView: View {
             .padding(.vertical, 4)
             .background(Color.secondary.opacity(0.06))
             .cornerRadius(8)
+            .fixedSize()
+            .layoutPriority(1)
 
             Spacer()
 
@@ -267,6 +327,14 @@ public struct MainView: View {
             .font(.system(size: 11, weight: .bold))
             .foregroundColor(.secondary.opacity(0.45))
             .padding(.horizontal, 2)
+    }
+
+    private var isStep2Active: Bool {
+        appState.project.videoURL != nil && appState.project.subtitles.isEmpty
+    }
+
+    private var isStep3Active: Bool {
+        !appState.project.subtitles.isEmpty && !hasTranslations
     }
 
     private var hasTranslations: Bool {

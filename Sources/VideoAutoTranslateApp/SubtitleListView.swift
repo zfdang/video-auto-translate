@@ -66,7 +66,7 @@ public struct SubtitleListView: View {
                         Image(systemName: "text.bubble")
                             .font(.system(size: 40))
                             .foregroundColor(.secondary)
-                        Text(appState.project.videoURL == nil ? "请先打开或拖拽视频文件" : "尚未提取字幕，点击上方「一键转录」开始")
+                        Text(appState.project.videoURL == nil ? "请先打开或拖拽视频文件" : "尚未提取字幕，点击上方「语音转录」开始")
                             .foregroundColor(.secondary)
                     }
                     Spacer()
