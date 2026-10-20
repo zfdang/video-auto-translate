@@ -307,6 +307,12 @@ public struct SettingsView: View {
                     }
                 }
                 TextField("默认 ASR 模型标识", text: $appState.project.asrConfig.model)
+
+                Picker("默认原语言策略", selection: $appState.project.asrConfig.language) {
+                    ForEach(ASRLanguagePreset.presets) { preset in
+                        Text(preset.displayName).tag(preset.code)
+                    }
+                }
             }
         }
         .formStyle(.grouped)

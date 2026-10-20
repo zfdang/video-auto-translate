@@ -118,7 +118,14 @@ public final class LocalASRService: ASREngineProtocol {
         body.append("Content-Disposition: form-data; name=\"timestamp_granularities[]\"\r\n\r\n".data(using: .utf8)!)
         body.append("word\r\n".data(using: .utf8)!)
 
-        // 4. 添加音频文件
+        // 4. 添加可选参数 language (非 auto 时显式指定)
+        if config.language != "auto" && !config.language.isEmpty {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"language\"\r\n\r\n".data(using: .utf8)!)
+            body.append("\(config.language)\r\n".data(using: .utf8)!)
+        }
+
+        // 5. 添加音频文件
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(audioURL.lastPathComponent)\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
