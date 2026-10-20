@@ -31,22 +31,54 @@ public final class AudioMixer {
         to outputURL: URL,
         duckingVolume: Float = 0.35
     ) async throws {
-        try? FileManager.default.removeItem(at: outputURL)
+        // 安全检查：严禁输出路径与背景音频或配音片段相同 (R01)
+        let stdOutput = outputURL.standardizedFileURL
+        if let bgURL = backgroundAudioURL {
+            guard stdOutput != bgURL.standardizedFileURL else {
+                throw AudioMixerError.exportFailed("输出文件路径不能与背景音频输入路径相同")
+            }
+        }
+        for item in subtitles {
+            if let snip = item.dubbedAudioURL, stdOutput == snip.standardizedFileURL {
+                throw AudioMixerError.exportFailed("输出文件路径不能与配音切片路径相同")
+            }
+        }
+
+        let tempDirectory = outputURL.deletingLastPathComponent()
+        let tempFilename = ".\(UUID().uuidString)_\(outputURL.lastPathComponent).tmp"
+        let tempOutputURL = tempDirectory.appendingPathComponent(tempFilename)
+        try? FileManager.default.removeItem(at: tempOutputURL)
 
         let composition = AVMutableComposition()
 
-        // 1. 配音音轨
-        guard let voiceTrack = composition.addMutableTrack(
-            withMediaType: .audio,
-            preferredTrackID: kCMPersistentTrackID_Invalid
-        ) else {
-            throw AudioMixerError.cannotCreateComposition
+        // 1. 配音音轨池：支持多轨道叠混，防止重叠片段在单轨插入时推移时间轴 (R18)
+        var voiceTracks: [AVMutableCompositionTrack] = []
+        var trackEndTimes: [CMTime] = []
+
+        func getTrack(for startTime: CMTime) -> AVMutableCompositionTrack? {
+            for (idx, endTime) in trackEndTimes.enumerated() {
+                if startTime >= endTime {
+                    return voiceTracks[idx]
+                }
+            }
+            guard let newTrack = composition.addMutableTrack(
+                withMediaType: .audio,
+                preferredTrackID: kCMPersistentTrackID_Invalid
+            ) else {
+                return nil
+            }
+            voiceTracks.append(newTrack)
+            trackEndTimes.append(.zero)
+            return newTrack
         }
 
         // 记录所有配音说话的区间，用于背景音闪避
         var speechIntervals: [CMTimeRange] = []
 
-        for item in subtitles {
+        // 按起始时间排序，确保轨道插入顺序单调递增
+        let sortedSubtitles = subtitles.sorted { $0.startTime < $1.startTime }
+
+        for item in sortedSubtitles {
             guard let snippetURL = item.dubbedAudioURL,
                   FileManager.default.fileExists(atPath: snippetURL.path) else {
                 continue
@@ -58,16 +90,24 @@ public final class AudioMixer {
             }
 
             let snippetDuration = try await snippetAsset.load(.duration)
-            // 说话时长不应超过字幕结束时间
-            let actualDuration = min(snippetDuration, item.duration)
+            // R10: 保留完整发音长度，避免末尾语音被粗暴裁断丢失
+            let actualDuration = snippetDuration
             let snippetRange = CMTimeRange(start: .zero, duration: actualDuration)
 
+            guard let targetTrack = getTrack(for: item.startTime) else {
+                print("创建配音轨道失败 [\(item.originalText)]")
+                continue
+            }
+
             do {
-                try voiceTrack.insertTimeRange(
+                try targetTrack.insertTimeRange(
                     snippetRange,
                     of: snippetAudioTrack,
                     at: item.startTime
                 )
+                if let trackIdx = voiceTracks.firstIndex(where: { $0 === targetTrack }) {
+                    trackEndTimes[trackIdx] = CMTimeAdd(item.startTime, actualDuration)
+                }
                 speechIntervals.append(CMTimeRange(start: item.startTime, duration: actualDuration))
             } catch {
                 print("插入配音切片失败 [\(item.originalText)]: \(error)")
@@ -100,7 +140,26 @@ public final class AudioMixer {
 
                 let rampDuration = CMTime(value: 150, timescale: 1000) // 150ms 平滑过渡
 
-                for interval in speechIntervals {
+                // 合并重叠或间隔小于 300ms 的语音区间，生成平滑统一的闪避包络 (R18)
+                var mergedIntervals: [CMTimeRange] = []
+                let sortedIntervals = speechIntervals.sorted { $0.start < $1.start }
+                for interval in sortedIntervals {
+                    if let last = mergedIntervals.last {
+                        let lastEnd = CMTimeAdd(last.start, last.duration)
+                        let gap = CMTimeSubtract(interval.start, lastEnd)
+                        if interval.start <= lastEnd || gap.secondsValue <= 0.3 {
+                            let newEnd = max(lastEnd, CMTimeAdd(interval.start, interval.duration))
+                            mergedIntervals[mergedIntervals.count - 1] = CMTimeRange(
+                                start: last.start,
+                                duration: CMTimeSubtract(newEnd, last.start)
+                            )
+                            continue
+                        }
+                    }
+                    mergedIntervals.append(interval)
+                }
+
+                for interval in mergedIntervals {
                     let duckStart = interval.start
                     let duckEnd = CMTimeAdd(interval.start, interval.duration)
 
@@ -126,15 +185,16 @@ public final class AudioMixer {
             }
         }
 
-        // 3. 导出成片音频
+        // 3. 导出成片音频 (输出至临时文件，成功后原子替换，R01)
         guard let exportSession = AVAssetExportSession(
             asset: composition,
             presetName: AVAssetExportPresetAppleM4A
         ) else {
+            try? FileManager.default.removeItem(at: tempOutputURL)
             throw AudioMixerError.exportFailed("无法创建导出任务")
         }
 
-        exportSession.outputURL = outputURL
+        exportSession.outputURL = tempOutputURL
         exportSession.outputFileType = .m4a
         if let audioMix = audioMix {
             exportSession.audioMix = audioMix
@@ -143,7 +203,20 @@ public final class AudioMixer {
         await exportSession.export()
 
         if exportSession.status != .completed {
+            try? FileManager.default.removeItem(at: tempOutputURL)
             throw AudioMixerError.exportFailed(exportSession.error?.localizedDescription ?? "导出未知错误")
+        }
+
+        // 原子替换目标文件
+        do {
+            if FileManager.default.fileExists(atPath: outputURL.path) {
+                _ = try FileManager.default.replaceItemAt(outputURL, withItemAt: tempOutputURL)
+            } else {
+                try FileManager.default.moveItem(at: tempOutputURL, to: outputURL)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: tempOutputURL)
+            throw AudioMixerError.exportFailed("替换混音目标文件失败: \(error.localizedDescription)")
         }
     }
 }

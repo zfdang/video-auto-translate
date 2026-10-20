@@ -26,11 +26,17 @@ from pydantic import BaseModel
 
 app = FastAPI(title="VideoAutoTranslate Local ASR Service", version="1.1.0")
 
+# R12: 收紧 CORS，仅允许本机 Loopback 来源，杜绝任意第三方网页跨域发起的未授权请求
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://127.0.0.1",
+        "http://localhost",
+        "http://127.0.0.1:8765",
+        "http://localhost:8765"
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -41,6 +47,9 @@ try:
     HAS_MLX = True
 except ImportError:
     pass
+
+# 全局模拟开关 (默认关闭，仅在传入 --mock 时启用，杜绝生产环境伪造识别结果，R02)
+ENABLE_MOCK_FALLBACK = False
 
 # 全局存储配置与下载状态跟踪
 HOME = Path.home()
@@ -69,21 +78,45 @@ PRESET_MODELS = [
     }
 ]
 
+def has_valid_model_files(p: Path) -> bool:
+    """R26: 严格检验模型完整性，仅当存在配置文件和权重文件时才视为就绪"""
+    if not p.exists() or not p.is_dir():
+        return False
+    # 检查当前目录
+    has_cfg = (p / "config.json").exists()
+    has_w = any(p.glob("*.safetensors")) or any(p.glob("*.bin")) or any(p.glob("*.npz"))
+    if has_cfg and has_w:
+        return True
+    # 检查 snapshots 目录
+    snapshots_dir = p / "snapshots"
+    if snapshots_dir.exists() and snapshots_dir.is_dir():
+        for snap in snapshots_dir.iterdir():
+            if snap.is_dir():
+                s_cfg = (snap / "config.json").exists()
+                s_w = any(snap.glob("*.safetensors")) or any(snap.glob("*.bin")) or any(snap.glob("*.npz"))
+                if s_cfg and s_w:
+                    return True
+    return False
+
+
 def find_model_path(repo_or_filename: str, is_repo: bool = True) -> Optional[Path]:
-    """多目录扫描模型是否存在并自动定位快照或实体目录"""
+    """多目录扫描模型是否存在并自动定位快照或实体目录 (R26: 增加完整性校验)"""
     candidate_dirs = [
         CURRENT_STORAGE_DIR,
         DEFAULT_SHARED_DIR,
         DEFAULT_DEDICATED_DIR
     ]
 
-    def resolve_snapshot_or_target(p: Path) -> Path:
+    def resolve_snapshot_or_target(p: Path) -> Optional[Path]:
         snapshots_dir = p / "snapshots"
         if snapshots_dir.exists() and any(snapshots_dir.iterdir()):
             snapshots = sorted(snapshots_dir.glob("*"), key=os.path.getmtime)
-            if snapshots:
-                return snapshots[-1]
-        return p
+            for snap in reversed(snapshots):
+                if snap.is_dir() and (snap / "config.json").exists() and (any(snap.glob("*.safetensors")) or any(snap.glob("*.bin")) or any(snap.glob("*.npz"))):
+                    return snap
+        if (p / "config.json").exists() and (any(p.glob("*.safetensors")) or any(p.glob("*.bin")) or any(p.glob("*.npz"))):
+            return p
+        return None
 
     safe_repo = "models--" + repo_or_filename.replace("/", "--")
     for d in candidate_dirs:
@@ -91,11 +124,15 @@ def find_model_path(repo_or_filename: str, is_repo: bool = True) -> Optional[Pat
             continue
         if is_repo:
             target = d / safe_repo
-            if target.exists() and any(target.iterdir()):
-                return resolve_snapshot_or_target(target)
+            if target.exists():
+                resolved = resolve_snapshot_or_target(target)
+                if resolved:
+                    return resolved
             direct = d / repo_or_filename
-            if direct.exists() and any(direct.iterdir()):
-                return resolve_snapshot_or_target(direct)
+            if direct.exists():
+                resolved = resolve_snapshot_or_target(direct)
+                if resolved:
+                    return resolved
         else:
             file_path = d / repo_or_filename
             if file_path.exists() and file_path.stat().st_size > 1024 * 1024:
@@ -157,6 +194,10 @@ def get_storage():
 def set_storage(req: StorageConfigRequest):
     global CURRENT_STORAGE_DIR
     target = Path(req.storage_dir).expanduser().resolve()
+    # R12: 限制目录范围，仅允许设置在用户主目录或 /Volumes 外接磁盘下，拒绝系统关键目录
+    home_path = Path.home().resolve()
+    if not (str(target).startswith(str(home_path)) or str(target).startswith("/Volumes/")):
+        raise HTTPException(status_code=403, detail="模型存储目录只能设置在当前用户主目录或 /Volumes 下")
     target.mkdir(parents=True, exist_ok=True)
     CURRENT_STORAGE_DIR = target
     return {"status": "ok", "current_dir": str(CURRENT_STORAGE_DIR)}
@@ -304,7 +345,7 @@ async def create_transcription(
 ):
     """
     处理标准 OpenAI Audio API 转录请求
-    返回带有每个词精确时间戳的 verbose_json
+    返回带有每个词精确时间戳的 verbose_json (R21: 异步线程池执行，不阻塞事件循环)
     """
     suffix = os.path.splitext(file.filename or "audio.wav")[1] or ".wav"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -313,7 +354,8 @@ async def create_transcription(
         tmp.write(content)
 
     try:
-        result = run_local_transcription(tmp_path, model=model, language=language)
+        # R21: 移至工作线程执行 CPU/GPU 同步密集型推理，避免卡死 ASGI 事件循环导致 /health 离线
+        result = await asyncio.to_thread(run_local_transcription, tmp_path, model=model, language=language)
         return result
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -325,109 +367,8 @@ async def create_transcription(
                 pass
 
 
-def run_local_transcription(audio_path: str, model: str = "qwen3-asr", language: Optional[str] = None) -> dict:
-    """
-    执行物理音频转录并提取逐词时间戳 (使用 Qwen3-ASR 与 Qwen3-ForcedAligner)
-    """
-    qwen_asr_path = find_model_path("mlx-community/Qwen3-ASR-1.7B-8bit", is_repo=True)
-    qwen_aligner_path = find_model_path("mlx-community/Qwen3-ForcedAligner-0.6B-8bit", is_repo=True)
-
-    if HAS_MLX and qwen_asr_path:
-        try:
-            asr_model = get_loaded_model(str(qwen_asr_path))
-            kwargs = {}
-            if language and language != "auto":
-                kwargs["language"] = language
-
-            print(f"[ASR Server] 开始转录音频: {audio_path}, 参数: {kwargs}", flush=True)
-            res = asr_model.generate(audio_path, **kwargs)
-            transcribed_text = res.text.strip() if hasattr(res, "text") and res.text else ""
-            
-            detected_lang = getattr(res, "language", None)
-            if isinstance(detected_lang, list) and detected_lang:
-                detected_lang = detected_lang[0]
-            print(f"[ASR Server] 转录完成 (文本字数: {len(transcribed_text)}, 检测语种: {detected_lang})", flush=True)
-
-            words = []
-            # 如果转录产生文本且对齐模型就绪，使用 Qwen3-ForcedAligner 提取精确逐词时间戳
-            if transcribed_text and qwen_aligner_path:
-                try:
-                    aligner_model = get_loaded_model(str(qwen_aligner_path))
-                    align_lang = "English"
-                    if language and language != "auto":
-                        align_lang = LANGUAGE_NAMES.get(language, language)
-                    elif detected_lang:
-                        align_lang = LANGUAGE_NAMES.get(detected_lang, str(detected_lang))
-
-                    print(f"[ASR Server] 开始词级时间戳强制对齐 (对齐语言: {align_lang})...", flush=True)
-                    aligned = aligner_model.generate(audio_path, text=transcribed_text, language=align_lang)
-
-                    align_items = getattr(aligned, "items", []) or []
-                    if not align_items and hasattr(aligned, "segments"):
-                        align_items = aligned.segments or []
-
-                    for it in align_items:
-                        it_text = getattr(it, "text", "") if hasattr(it, "text") else it.get("text", "")
-                        it_start = getattr(it, "start_time", None) if hasattr(it, "start_time") else it.get("start", 0.0)
-                        it_end = getattr(it, "end_time", None) if hasattr(it, "end_time") else it.get("end", 0.0)
-
-                        if it_text and str(it_text).strip():
-                            words.append({
-                                "word": str(it_text).strip(),
-                                "start": round(float(it_start), 3),
-                                "end": round(float(it_end), 3)
-                            })
-                    print(f"[ASR Server] 强制对齐完成，共提取 {len(words)} 个词/字时间序列", flush=True)
-                except Exception as align_err:
-                    print(f"[ASR Server] 词级对齐异常 (回退至 ASR 片段): {align_err}", file=sys.stderr)
-
-            # 提取 segments
-            segments = []
-            if hasattr(res, "segments") and res.segments:
-                for idx, s in enumerate(res.segments):
-                    s_text = s.get("text", "") if isinstance(s, dict) else getattr(s, "text", "")
-                    s_start = s.get("start", 0.0) if isinstance(s, dict) else getattr(s, "start", 0.0)
-                    s_end = s.get("end", 0.0) if isinstance(s, dict) else getattr(s, "end", 0.0)
-                    segments.append({
-                        "id": idx,
-                        "text": s_text,
-                        "start": round(float(s_start), 3),
-                        "end": round(float(s_end), 3),
-                        "words": []
-                    })
-
-            if words:
-                start_t = words[0]["start"]
-                end_t = words[-1]["end"]
-                if not segments:
-                    segments = [{
-                        "id": 0,
-                        "text": transcribed_text,
-                        "start": start_t,
-                        "end": end_t,
-                        "words": words
-                    }]
-                return {
-                    "text": transcribed_text,
-                    "words": words,
-                    "segments": segments
-                }
-            elif transcribed_text:
-                return {
-                    "text": transcribed_text,
-                    "words": [],
-                    "segments": segments if segments else [{
-                        "id": 0,
-                        "text": transcribed_text,
-                        "start": 0.0,
-                        "end": 5.0,
-                        "words": []
-                    }]
-                }
-        except Exception as e:
-            print(f"[ASR Server] MLX 识别处理失败，回退至模拟时序: {e}", file=sys.stderr)
-
-    # 轻量化通用回退切分逻辑 (带真实音频时长适配)
+def generate_mock_transcription(audio_path: str) -> dict:
+    """仅在显式传入 --mock 时启用的模拟数据生成器 (R02)"""
     import wave
     import contextlib
 
@@ -463,6 +404,7 @@ def run_local_transcription(audio_path: str, model: str = "qwen3-asr", language:
     return {
         "text": full_text,
         "words": words,
+        "is_mock": True,
         "segments": [
             {
                 "id": 0,
@@ -475,14 +417,141 @@ def run_local_transcription(audio_path: str, model: str = "qwen3-asr", language:
     }
 
 
+def run_local_transcription(audio_path: str, model: str = "qwen3-asr", language: Optional[str] = None) -> dict:
+    """
+    执行物理音频转录并提取逐词时间戳 (使用 Qwen3-ASR 与 Qwen3-ForcedAligner)
+    R02: 杜绝在生产中伪造成功，无模型或异常时明确抛错，仅显式开启 --mock 时允许模拟
+    """
+    qwen_asr_path = find_model_path("mlx-community/Qwen3-ASR-1.7B-8bit", is_repo=True)
+    qwen_aligner_path = find_model_path("mlx-community/Qwen3-ForcedAligner-0.6B-8bit", is_repo=True)
+
+    if not HAS_MLX:
+        if ENABLE_MOCK_FALLBACK:
+            return generate_mock_transcription(audio_path)
+        raise RuntimeError("mlx_audio 依赖库未就绪，无法在 Apple Silicon 上执行物理模型转录")
+
+    if not qwen_asr_path:
+        if ENABLE_MOCK_FALLBACK:
+            return generate_mock_transcription(audio_path)
+        raise RuntimeError("未在本地模型目录中找到 Qwen3-ASR-1.7B 识别模型，请先下载模型")
+
+    try:
+        asr_model = get_loaded_model(str(qwen_asr_path))
+        kwargs = {}
+        if language and language != "auto":
+            kwargs["language"] = language
+
+        print(f"[ASR Server] 开始转录音频: {audio_path}, 参数: {kwargs}", flush=True)
+        res = asr_model.generate(audio_path, **kwargs)
+        transcribed_text = res.text.strip() if hasattr(res, "text") and res.text else ""
+        
+        detected_lang = getattr(res, "language", None)
+        if isinstance(detected_lang, list) and detected_lang:
+            detected_lang = detected_lang[0]
+        print(f"[ASR Server] 转录完成 (文本字数: {len(transcribed_text)}, 检测语种: {detected_lang})", flush=True)
+
+        words = []
+        # 如果转录产生文本且对齐模型就绪，使用 Qwen3-ForcedAligner 提取精确逐词时间戳
+        if transcribed_text and qwen_aligner_path:
+            try:
+                aligner_model = get_loaded_model(str(qwen_aligner_path))
+                align_lang = "English"
+                if language and language != "auto":
+                    align_lang = LANGUAGE_NAMES.get(language, language)
+                elif detected_lang:
+                    align_lang = LANGUAGE_NAMES.get(detected_lang, str(detected_lang))
+
+                print(f"[ASR Server] 开始词级时间戳强制对齐 (对齐语言: {align_lang})...", flush=True)
+                aligned = aligner_model.generate(audio_path, text=transcribed_text, language=align_lang)
+
+                align_items = getattr(aligned, "items", []) or []
+                if not align_items and hasattr(aligned, "segments"):
+                    align_items = aligned.segments or []
+
+                for it in align_items:
+                    it_text = getattr(it, "text", "") if hasattr(it, "text") else it.get("text", "")
+                    it_start = getattr(it, "start_time", None) if hasattr(it, "start_time") else it.get("start", 0.0)
+                    it_end = getattr(it, "end_time", None) if hasattr(it, "end_time") else it.get("end", 0.0)
+
+                    if it_text and str(it_text).strip():
+                        words.append({
+                            "word": str(it_text).strip(),
+                            "start": round(float(it_start), 3),
+                            "end": round(float(it_end), 3)
+                        })
+                print(f"[ASR Server] 强制对齐完成，共提取 {len(words)} 个词/字时间序列", flush=True)
+            except Exception as align_err:
+                print(f"[ASR Server] 词级对齐异常 (回退至 ASR 片段): {align_err}", file=sys.stderr)
+
+        # 提取 segments
+        segments = []
+        if hasattr(res, "segments") and res.segments:
+            for idx, s in enumerate(res.segments):
+                s_text = s.get("text", "") if isinstance(s, dict) else getattr(s, "text", "")
+                s_start = s.get("start", 0.0) if isinstance(s, dict) else getattr(s, "start", 0.0)
+                s_end = s.get("end", 0.0) if isinstance(s, dict) else getattr(s, "end", 0.0)
+                segments.append({
+                    "id": idx,
+                    "text": s_text,
+                    "start": round(float(s_start), 3),
+                    "end": round(float(s_end), 3),
+                    "words": []
+                })
+
+        if words:
+            start_t = words[0]["start"]
+            end_t = words[-1]["end"]
+            if not segments:
+                segments = [{
+                    "id": 0,
+                    "text": transcribed_text,
+                    "start": start_t,
+                    "end": end_t,
+                    "words": words
+                }]
+            return {
+                "text": transcribed_text,
+                "words": words,
+                "segments": segments
+            }
+        elif transcribed_text:
+            return {
+                "text": transcribed_text,
+                "words": [],
+                "segments": segments if segments else [{
+                    "id": 0,
+                    "text": transcribed_text,
+                    "start": 0.0,
+                    "end": 5.0,
+                    "words": []
+                }]
+            }
+        else:
+            return {
+                "text": "",
+                "words": [],
+                "segments": []
+            }
+    except Exception as e:
+        if ENABLE_MOCK_FALLBACK:
+            print(f"[ASR Server] MLX 识别处理失败，回退至模拟时序 (--mock 已启用): {e}", file=sys.stderr)
+            return generate_mock_transcription(audio_path)
+        raise RuntimeError(f"ASR 识别处理失败: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="VideoAutoTranslate Local Lightweight ASR Service")
     parser.add_argument("--host", default="127.0.0.1", help="绑定监听 IP")
     parser.add_argument("--port", type=int, default=8765, help="监听端口 (默认 8765)")
     parser.add_argument("--models-dir", default=None, help="模型存储目录 (默认 ~/.cache/huggingface/hub)")
+    parser.add_argument("--mock", action="store_true", help="允许在无模型或异常时回退至模拟数据 (仅限开发调试)")
     args = parser.parse_args()
 
-    global CURRENT_STORAGE_DIR
+    global CURRENT_STORAGE_DIR, ENABLE_MOCK_FALLBACK
+    if args.mock:
+        ENABLE_MOCK_FALLBACK = True
+        print("[ASR Server] 警告: 已开启 --mock 模拟回退模式 (开发调试专属)", file=sys.stderr)
+
     if args.models_dir:
         CURRENT_STORAGE_DIR = Path(args.models_dir).expanduser().resolve()
         CURRENT_STORAGE_DIR.mkdir(parents=True, exist_ok=True)

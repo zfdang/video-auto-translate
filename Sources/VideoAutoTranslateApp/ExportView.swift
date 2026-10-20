@@ -153,12 +153,33 @@ public struct ExportView: View {
 
         panel.begin { response in
             if response == .OK, let destinationURL = panel.url {
+                // R01: 校验输出路径与源视频不同
+                if destinationURL.standardizedFileURL == sourceVideo.standardizedFileURL {
+                    exportMessage = "导出目标路径不能与原视频文件相同，请选择其他文件名或目录"
+                    return
+                }
+
+                // R28: 冻结当前工程快照，防止导出期间异步翻译或人工修改导致混合错乱
+                let frozenSourceAudio = appState.project.audioURL
+                let frozenSubtitles = appState.project.subtitles.map { item in
+                    SubtitleItem(
+                        id: item.id,
+                        startTime: item.startTime,
+                        endTime: item.endTime,
+                        originalText: item.originalText,
+                        translatedText: item.translatedText,
+                        words: item.words,
+                        dubbedAudioURL: item.dubbedAudioURL
+                    )
+                }
+                let currentMode = videoSubtitleMode
+
                 isExporting = true
                 exportMessage = "正在渲染画面字幕与音频，并执行硬件硬编导出..."
 
                 Task {
                     do {
-                        let hasDubbing = appState.project.subtitles.contains(where: { $0.dubbedAudioURL != nil })
+                        let hasDubbing = frozenSubtitles.contains(where: { $0.dubbedAudioURL != nil })
                         var audioToUse: URL? = nil
 
                         if hasDubbing {
@@ -166,8 +187,8 @@ public struct ExportView: View {
                             let mixedAudio = tempDir.appendingPathComponent("final_mix_\(UUID().uuidString).m4a")
 
                             try await appState.audioMixer.mix(
-                                backgroundAudioURL: appState.project.audioURL,
-                                subtitles: appState.project.subtitles,
+                                backgroundAudioURL: frozenSourceAudio,
+                                subtitles: frozenSubtitles,
                                 to: mixedAudio
                             )
                             audioToUse = mixedAudio
@@ -177,8 +198,8 @@ public struct ExportView: View {
                             videoURL: sourceVideo,
                             newAudioURL: audioToUse,
                             outputURL: destinationURL,
-                            subtitles: appState.project.subtitles,
-                            subtitleMode: videoSubtitleMode
+                            subtitles: frozenSubtitles,
+                            subtitleMode: currentMode
                         )
 
                         await MainActor.run {

@@ -30,25 +30,36 @@ public final class SRTExporter {
     public func exportSRT(items: [SubtitleItem], mode: SubtitleExportMode = .bilingual) -> String {
         if mode == .none { return "" }
         var output = ""
+        var cueIndex = 1
 
-        for (index, item) in items.enumerated() {
-            output += "\(index + 1)\n"
-            output += "\(item.startTime.srtFormat) --> \(item.endTime.srtFormat)\n"
+        for item in items {
+            // R27: 过滤时间轴异常的无效行（如 end <= start）
+            guard item.endTime > item.startTime else { continue }
 
+            let textContent: String
             switch mode {
             case .originalOnly:
-                output += "\(item.originalText)\n\n"
+                textContent = item.originalText
             case .translatedOnly:
-                let text = item.translatedText.isEmpty ? item.originalText : item.translatedText
-                output += "\(text)\n\n"
+                // R31: 仅译文模式不静默回退填入原文
+                let trans = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                textContent = trans
             case .bilingual:
                 if !item.translatedText.isEmpty {
-                    output += "\(item.translatedText)\n"
+                    textContent = "\(item.translatedText)\n\(item.originalText)"
+                } else {
+                    textContent = item.originalText
                 }
-                output += "\(item.originalText)\n\n"
             case .none:
-                break
+                continue
             }
+
+            guard !textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+
+            output += "\(cueIndex)\n"
+            output += "\(item.startTime.srtFormat) --> \(item.endTime.srtFormat)\n"
+            output += "\(textContent)\n\n"
+            cueIndex += 1
         }
 
         return output
@@ -58,25 +69,36 @@ public final class SRTExporter {
     public func exportVTT(items: [SubtitleItem], mode: SubtitleExportMode = .bilingual) -> String {
         if mode == .none { return "WEBVTT\n\n" }
         var output = "WEBVTT\n\n"
+        var cueIndex = 1
 
-        for (index, item) in items.enumerated() {
-            output += "\(index + 1)\n"
-            output += "\(item.startTime.vttFormat) --> \(item.endTime.vttFormat)\n"
+        for item in items {
+            // R27: 过滤时间轴异常的无效行
+            guard item.endTime > item.startTime else { continue }
 
+            let textContent: String
             switch mode {
             case .originalOnly:
-                output += "\(item.originalText)\n\n"
+                textContent = item.originalText
             case .translatedOnly:
-                let text = item.translatedText.isEmpty ? item.originalText : item.translatedText
-                output += "\(text)\n\n"
+                // R31: 仅译文模式不静默回退填入原文
+                let trans = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                textContent = trans
             case .bilingual:
                 if !item.translatedText.isEmpty {
-                    output += "\(item.translatedText)\n"
+                    textContent = "\(item.translatedText)\n\(item.originalText)"
+                } else {
+                    textContent = item.originalText
                 }
-                output += "\(item.originalText)\n\n"
             case .none:
-                break
+                continue
             }
+
+            guard !textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+
+            output += "\(cueIndex)\n"
+            output += "\(item.startTime.vttFormat) --> \(item.endTime.vttFormat)\n"
+            output += "\(textContent)\n\n"
+            cueIndex += 1
         }
 
         return output

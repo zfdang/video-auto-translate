@@ -245,7 +245,12 @@ def main():
         print("-" * 50)
 
     total_time = (t1 - t0) + (t3 - t2) + (t5 - t4)
-    print(f"\n★ 端到端全流程测试全部成功！总处理耗时: {total_time:.2f}s")
+    translated_count = sum(1 for s in subtitles if s.get("translation", "").strip())
+    if not subtitles or (len(subtitles) > 0 and translated_count == 0):
+        print(f"\n❌ 端到端测试失败: 字幕集为空或未成功生成任何译文！", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"\n★ 端到端全流程测试全部成功！(成功翻译 {translated_count}/{len(subtitles)} 行，总处理耗时: {total_time:.2f}s)")
     print("=" * 68)
 
 

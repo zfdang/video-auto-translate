@@ -79,6 +79,7 @@ public struct SubtitleListView: View {
                                 SubtitleRowView(
                                     item: item,
                                     isSelected: appState.project.selectedSubtitleID == item.id || selectedIDs.contains(item.id),
+                                    isPlaying: appState.project.playingSubtitleID == item.id,
                                     onSeek: {
                                         appState.seek(to: item.startTime)
                                         appState.project.selectedSubtitleID = item.id
@@ -89,9 +90,9 @@ public struct SubtitleListView: View {
                                         }
                                     },
                                     onSplit: {
-                                        // 默认从中间字数拆分
+                                        // 默认从中间字数拆分 (R14: 精准绑定本行 item.id)
                                         let mid = max(1, item.originalText.count / 2)
-                                        appState.splitCurrentSubtitle(atCharIndex: mid)
+                                        appState.splitSubtitle(id: item.id, atCharIndex: mid)
                                     }
                                 )
                                 .id(item.id)

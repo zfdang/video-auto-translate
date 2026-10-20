@@ -209,4 +209,134 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertFalse(subtitles.isEmpty)
         XCTAssertEqual(subtitles.first?.words.count, 2) // "Hello world" split by pause
     }
+
+    // MARK: - Code Review (2026-10-21) Regression Tests
+
+    func testR01_VideoComposerRejectsSameSourceAndDestination() async {
+        let composer = VideoComposer()
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("dummy_\(UUID().uuidString).mp4")
+        FileManager.default.createFile(atPath: tempURL.path, contents: Data("test".utf8))
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        do {
+            try await composer.compose(videoURL: tempURL, outputURL: tempURL)
+            XCTFail("同路径导出应该抛出错误")
+        } catch {
+            // 验证源文件未被删除
+            XCTAssertTrue(FileManager.default.fileExists(atPath: tempURL.path), "同路径被拒绝后源文件必须完整保留")
+        }
+    }
+
+    func testR05_R06_SubtitleSplittingPreservesTranslationAndEnforcesMinDuration() {
+        let manager = SubtitleManager()
+
+        let item = SubtitleItem(
+            startTime: CMTime.from(seconds: 1.0),
+            endTime: CMTime.from(seconds: 3.0),
+            originalText: "Hello world this is a test",
+            translatedText: "你好世界这是一个测试"
+        )
+
+        // 拆分
+        let res = manager.split(item: item, atCharIndex: 11) // "Hello world"
+        XCTAssertNotNil(res)
+        guard let (part1, part2) = res else { return }
+
+        // R05: 译文不应被粗暴清空
+        XCTAssertFalse(part1.translatedText.isEmpty, "拆分后第一部分应保留已有译文劳动成果")
+        XCTAssertEqual(part1.translatedText, "你好世界这是一个测试")
+
+        // R06: 最小时长校验，两段时长均应大于 0
+        XCTAssertGreaterThan(part1.durationSeconds, 0.05)
+        XCTAssertGreaterThan(part2.durationSeconds, 0.05)
+        XCTAssertEqual(part1.endTime.secondsValue, part2.startTime.secondsValue, accuracy: 0.001)
+
+        // 测试极短无法拆分的情况 (小于 160ms)
+        let tinyItem = SubtitleItem(
+            startTime: CMTime.from(seconds: 0.0),
+            endTime: CMTime.from(seconds: 0.05),
+            originalText: "Hi"
+        )
+        XCTAssertNil(manager.split(item: tinyItem, atCharIndex: 1), "超短切片应当拒绝拆分以防产生0时长")
+    }
+
+    func testR15_SubtitleMergingNestedIntervals() {
+        let manager = SubtitleManager()
+
+        let itemLong = SubtitleItem(
+            startTime: CMTime.from(seconds: 0.0),
+            endTime: CMTime.from(seconds: 10.0),
+            originalText: "Long sentence"
+        )
+        let itemNested = SubtitleItem(
+            startTime: CMTime.from(seconds: 1.0),
+            endTime: CMTime.from(seconds: 2.0),
+            originalText: "Nested short"
+        )
+
+        let merged = manager.merge(items: [itemLong, itemNested])
+        XCTAssertNotNil(merged)
+        // R15: 嵌套区间的结束时间应为 10.0，而非 2.0
+        XCTAssertEqual(merged?.startTime.secondsValue, 0.0)
+        XCTAssertEqual(merged?.endTime.secondsValue, 10.0)
+    }
+
+    func testR27_TimeTypesAccuracyAndBounds() {
+        // 浮点毫秒四舍五入，消除截断 1ms 误差
+        let t1 = CMTime.from(seconds: 1.001)
+        XCTAssertEqual(t1.srtFormat, "00:00:01,001")
+
+        let t2 = CMTime.from(seconds: 1.003)
+        XCTAssertEqual(t2.srtFormat, "00:00:01,003")
+
+        // 极端超大数值防溢出崩溃
+        let huge = CMTime.from(seconds: 1e300)
+        XCTAssertTrue(huge.secondsValue.isFinite)
+        XCTAssertNoThrow(huge.srtFormat)
+
+        // NaN 或负值安全
+        let nanTime = CMTime.from(seconds: Double.nan)
+        XCTAssertEqual(nanTime.secondsValue, 0.0)
+    }
+
+    func testR31_TranslatedOnlyModeDoesNotFallbackToOriginalText() {
+        let exporter = SRTExporter()
+        let itemWithoutTranslation = SubtitleItem(
+            startTime: CMTime.from(seconds: 0.0),
+            endTime: CMTime.from(seconds: 2.0),
+            originalText: "Hello there",
+            translatedText: ""
+        )
+
+        let srt = exporter.exportSRT(items: [itemWithoutTranslation], mode: .translatedOnly)
+        // 仅译文模式下，未翻译的行不得输出原文
+        XCTAssertFalse(srt.contains("Hello there"), "仅译文模式下未翻译项不能静默输出原文")
+    }
+
+    func testR04_ProjectPersistenceSerialization() throws {
+        let item = SubtitleItem(
+            startTime: CMTime.from(seconds: 1.0),
+            endTime: CMTime.from(seconds: 3.5),
+            originalText: "Test persistence",
+            translatedText: "测试持久化"
+        )
+        var project = ProjectState(
+            videoURL: URL(fileURLWithPath: "/tmp/sample.mp4"),
+            subtitles: [item]
+        )
+        project.isDirty = true
+
+        let data = try project.encodeDocument()
+        XCTAssertFalse(data.isEmpty)
+
+        var newProject = ProjectState()
+        let doc = try ProjectState.decodeDocument(from: data)
+        newProject.restore(from: doc)
+
+        XCTAssertEqual(newProject.videoURL?.path, "/tmp/sample.mp4")
+        XCTAssertEqual(newProject.subtitles.count, 1)
+        XCTAssertEqual(newProject.subtitles.first?.originalText, "Test persistence")
+        XCTAssertEqual(newProject.subtitles.first?.translatedText, "测试持久化")
+        XCTAssertFalse(newProject.isDirty)
+    }
 }
