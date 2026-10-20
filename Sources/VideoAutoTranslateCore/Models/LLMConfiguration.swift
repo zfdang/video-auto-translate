@@ -103,6 +103,40 @@ public struct LLMConfiguration: Codable, Equatable {
         }
     }
 
+    /// R19: 依据当前所选目标语言解析对应的系统语音合成音色 BCP-47 代码
+    public var targetLanguageVoiceCode: String {
+        let matched = TargetLanguagePreset.defaultPresets.first {
+            $0.name == targetLanguage || $0.code == targetLanguage || targetLanguage.contains($0.name)
+        }
+        guard let code = matched?.code else {
+            if targetLanguage.contains("中") || targetLanguage.contains("华") { return "zh-CN" }
+            if targetLanguage.lowercased().contains("en") { return "en-US" }
+            if targetLanguage.contains("日") { return "ja-JP" }
+            if targetLanguage.contains("韩") { return "ko-KR" }
+            if targetLanguage.contains("法") { return "fr-FR" }
+            if targetLanguage.contains("德") { return "de-DE" }
+            if targetLanguage.contains("西") { return "es-ES" }
+            return "zh-CN"
+        }
+        switch code {
+        case "zh-Hans": return "zh-CN"
+        case "zh-Hant": return "zh-TW"
+        case "en": return "en-US"
+        case "ja": return "ja-JP"
+        case "ko": return "ko-KR"
+        case "fr": return "fr-FR"
+        case "de": return "de-DE"
+        case "es": return "es-ES"
+        case "ru": return "ru-RU"
+        case "pt": return "pt-BR"
+        case "it": return "it-IT"
+        case "ar": return "ar-SA"
+        case "th": return "th-TH"
+        case "vi": return "vi-VN"
+        default: return code
+        }
+    }
+
     /// 获取当前生效的 API Key
     public var effectiveAPIKey: String {
         switch providerType {

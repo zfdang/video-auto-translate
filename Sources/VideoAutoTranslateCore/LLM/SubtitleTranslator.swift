@@ -87,6 +87,8 @@ public final class SubtitleTranslator {
         ]
         """
 
+        let snapshot = chunk.map { (id: $0.id, orig: $0.originalText, trans: $0.translatedText) }
+
         let userPrompt = """
         待翻译字幕列表：
         \(inputJSONString)
@@ -106,12 +108,21 @@ public final class SubtitleTranslator {
         // 解析返回的 JSON 数组
         let entries = try parseTranslationEntries(from: responseText)
 
-        // 回填至各 SubtitleItem
+        // 回填至各 SubtitleItem (R07: 保护人工在途修改; R08: 安全合并去重，杜绝 fatalError 崩溃)
         await MainActor.run {
-            let entryDict = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0.translation) })
-            for item in chunk {
-                if let translated = entryDict[item.id.uuidString] {
-                    item.translatedText = translated.trimmingCharacters(in: .whitespacesAndNewlines)
+            let entryDict = Dictionary(
+                entries.map { ($0.id, $0.translation) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            for snap in snapshot {
+                guard let item = chunk.first(where: { $0.id == snap.id }),
+                      let translated = entryDict[item.id.uuidString] else {
+                    continue
+                }
+                // 若用户在在途期间手动修改了原文或已有译文，则保留用户的人工成果，不粗暴覆盖 (R07)
+                let cleanTranslation = translated.trimmingCharacters(in: .whitespacesAndNewlines)
+                if item.originalText == snap.orig && (item.translatedText == snap.trans || item.translatedText.isEmpty) {
+                    item.translatedText = cleanTranslation
                 }
             }
         }
@@ -143,9 +154,16 @@ public final class SubtitleTranslator {
                 var entries: [TranslationEntry] = []
                 for dict in jsonArray {
                     let idVal = dict["id"] ?? dict["ID"] ?? dict["index"] ?? ""
-                    let idStr = String(describing: idVal)
-                    let transVal = dict["translation"] ?? dict["translated"] ?? dict["target"] ?? dict["translated_text"] ?? dict["chinese"] ?? dict["text"] ?? ""
-                    let transStr = String(describing: transVal)
+                    let idStr = String(describing: idVal).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let transVal = dict["translation"] ?? dict["translated"] ?? dict["target"] ?? dict["translated_text"] ?? dict["chinese"] ?? dict["text"]
+                    let transStr: String
+                    if let s = transVal as? String {
+                        transStr = s
+                    } else if let num = transVal as? NSNumber {
+                        transStr = num.stringValue
+                    } else {
+                        transStr = ""
+                    }
                     if !idStr.isEmpty && !transStr.isEmpty {
                         entries.append(TranslationEntry(id: idStr, translation: transStr))
                     }
@@ -168,9 +186,16 @@ public final class SubtitleTranslator {
                         var entries: [TranslationEntry] = []
                         for item in arr {
                             let idVal = item["id"] ?? item["ID"] ?? item["index"] ?? ""
-                            let idStr = String(describing: idVal)
-                            let transVal = item["translation"] ?? item["translated"] ?? item["target"] ?? item["translated_text"] ?? item["chinese"] ?? item["text"] ?? ""
-                            let transStr = String(describing: transVal)
+                            let idStr = String(describing: idVal).trimmingCharacters(in: .whitespacesAndNewlines)
+                            let transVal = item["translation"] ?? item["translated"] ?? item["target"] ?? item["translated_text"] ?? item["chinese"] ?? item["text"]
+                            let transStr: String
+                            if let s = transVal as? String {
+                                transStr = s
+                            } else if let num = transVal as? NSNumber {
+                                transStr = num.stringValue
+                            } else {
+                                transStr = ""
+                            }
                             if !idStr.isEmpty && !transStr.isEmpty {
                                 entries.append(TranslationEntry(id: idStr, translation: transStr))
                             }

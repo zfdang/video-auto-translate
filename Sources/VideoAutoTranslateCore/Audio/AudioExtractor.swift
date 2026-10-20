@@ -27,8 +27,15 @@ public final class AudioExtractor {
 
     /// 从本地视频提取 16kHz 单声道 PCM WAV 格式音频
     public func extract16kMonoWav(from videoURL: URL, to outputWavURL: URL) async throws {
-        // 若输出文件已存在则先删除
-        try? FileManager.default.removeItem(at: outputWavURL)
+        // 安全检查：严禁输出路径与输入视频相同，防止覆盖源视频 (R01)
+        guard outputWavURL.standardizedFileURL != videoURL.standardizedFileURL else {
+            throw AudioExtractorError.writerFailed("输出音频路径不能与源视频路径相同")
+        }
+
+        let tempDirectory = outputWavURL.deletingLastPathComponent()
+        let tempFilename = ".\(UUID().uuidString)_\(outputWavURL.lastPathComponent).tmp"
+        let tempOutputWavURL = tempDirectory.appendingPathComponent(tempFilename)
+        try? FileManager.default.removeItem(at: tempOutputWavURL)
 
         let asset = AVURLAsset(url: videoURL)
         guard let audioTrack = try await asset.loadTracks(withMediaType: .audio).first else {
@@ -55,7 +62,7 @@ public final class AudioExtractor {
         }
         reader.add(readerOutput)
 
-        let writer = try AVAssetWriter(outputURL: outputWavURL, fileType: .wav)
+        let writer = try AVAssetWriter(outputURL: tempOutputWavURL, fileType: .wav)
         let writerInput = AVAssetWriterInput(mediaType: .audio, outputSettings: outputSettings)
         writerInput.expectsMediaDataInRealTime = false
         guard writer.canAdd(writerInput) else {
@@ -64,23 +71,46 @@ public final class AudioExtractor {
         writer.add(writerInput)
 
         guard reader.startReading() else {
+            try? FileManager.default.removeItem(at: tempOutputWavURL)
             throw AudioExtractorError.readerFailed(reader.error?.localizedDescription ?? "读取器启动失败")
         }
         guard writer.startWriting() else {
+            try? FileManager.default.removeItem(at: tempOutputWavURL)
             throw AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "写入器启动失败")
         }
         writer.startSession(atSourceTime: .zero)
 
-        // 异步将 sample buffer 从 reader 泵送至 writer
+        // 异步将 sample buffer 从 reader 泵送至 writer (带 exactly-once 保护)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let queue = DispatchQueue(label: "com.videoautotranslate.audioextract", qos: .userInitiated)
+            let lock = NSLock()
+            var hasResumed = false
+
+            func safeResume(throwing error: Error) {
+                lock.lock()
+                defer { lock.unlock() }
+                if !hasResumed {
+                    hasResumed = true
+                    continuation.resume(throwing: error)
+                }
+            }
+
+            func safeResumeSuccess() {
+                lock.lock()
+                defer { lock.unlock() }
+                if !hasResumed {
+                    hasResumed = true
+                    continuation.resume()
+                }
+            }
+
             writerInput.requestMediaDataWhenReady(on: queue) {
                 while writerInput.isReadyForMoreMediaData {
                     if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
                         if !writerInput.append(sampleBuffer) {
                             reader.cancelReading()
                             writer.cancelWriting()
-                            continuation.resume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "数据写入失败"))
+                            safeResume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "数据写入失败"))
                             return
                         }
                     } else {
@@ -88,15 +118,27 @@ public final class AudioExtractor {
                         writerInput.markAsFinished()
                         writer.finishWriting {
                             if writer.status == .completed {
-                                continuation.resume()
+                                safeResumeSuccess()
                             } else {
-                                continuation.resume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "写入结束异常"))
+                                safeResume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "写入结束异常"))
                             }
                         }
                         return
                     }
                 }
             }
+        }
+
+        // 提取成功后原子替换目标文件
+        do {
+            if FileManager.default.fileExists(atPath: outputWavURL.path) {
+                _ = try FileManager.default.replaceItemAt(outputWavURL, withItemAt: tempOutputWavURL)
+            } else {
+                try FileManager.default.moveItem(at: tempOutputWavURL, to: outputWavURL)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: tempOutputWavURL)
+            throw AudioExtractorError.writerFailed("替换导出目标音频失败: \(error.localizedDescription)")
         }
     }
 }

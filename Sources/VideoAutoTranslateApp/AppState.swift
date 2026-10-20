@@ -31,6 +31,15 @@ public final class AppState: ObservableObject {
     @Published public var statusMessage: String = "就绪"
     @Published public var errorMessage: String? = nil
 
+    // R20: 持有试听播放器实例，防止局部变量析构导致播放被打断
+    public var auditionPlayer: AVPlayer?
+
+    // R03: 任务代际与句柄持有，防止更换视频后旧任务写入新项目
+    private var projectGeneration: Int = 0
+    private var transcriptionTask: Task<Void, Never>?
+    private var translationTask: Task<Void, Never>?
+    private var dubbingTask: Task<Void, Never>?
+
     private var timeObserverToken: Any?
 
     public init() {
@@ -100,12 +109,14 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 自动根据时间选中高亮当前发音字幕
+    /// 自动根据时间高亮当前发音字幕 (R30: 仅更新 playingSubtitleID，不抢占用户的 selectedSubtitleID)
     private func updateSelectedSubtitle(for time: CMTime) {
         if let current = project.subtitles.first(where: { time >= $0.startTime && time <= $0.endTime }) {
-            if project.selectedSubtitleID != current.id {
-                project.selectedSubtitleID = current.id
+            if project.playingSubtitleID != current.id {
+                project.playingSubtitleID = current.id
             }
+        } else {
+            project.playingSubtitleID = nil
         }
     }
 
@@ -121,8 +132,21 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 打开本地视频文件
+    /// 取消所有正在执行的后台任务 (R03)
+    public func cancelAllTasks() {
+        transcriptionTask?.cancel()
+        transcriptionTask = nil
+        translationTask?.cancel()
+        translationTask = nil
+        dubbingTask?.cancel()
+        dubbingTask = nil
+    }
+
+    /// 打开本地视频文件 (R03: 递增代际，终止旧任务)
     public func openVideo(url: URL) {
+        cancelAllTasks()
+        projectGeneration += 1
+
         project.reset()
         project.videoURL = url
 
@@ -136,9 +160,12 @@ public final class AppState: ObservableObject {
         player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
-    /// 执行本地音频提取与语音转录
+    /// 执行本地音频提取与语音转录 (R03: 严格代际校验与取消保护)
     public func runTranscription() async {
         guard let videoURL = project.videoURL else { return }
+
+        transcriptionTask?.cancel()
+        let currentGen = projectGeneration
 
         project.isProcessing = true
         project.currentStepName = "正在提取音频..."
@@ -149,6 +176,7 @@ public final class AppState: ObservableObject {
             let tempDir = FileManager.default.temporaryDirectory
             let wavURL = tempDir.appendingPathComponent("extracted_\(UUID().uuidString).wav")
             try await audioExtractor.extract16kMonoWav(from: videoURL, to: wavURL)
+            guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.audioURL = wavURL
 
             project.currentStepName = "正在按需准备本地 ASR 推理引擎..."
@@ -157,31 +185,40 @@ public final class AppState: ObservableObject {
             _ = await sidecarManager.ensureRunning()
             await probeLocalASR()
 
+            guard currentGen == projectGeneration, !Task.isCancelled else { return }
+
             project.currentStepName = "正在调用 Qwen3-ASR 执行转录与词级对齐..."
             project.progress = 0.4
             statusMessage = "正在识别语音并生成逐词时间戳..."
 
             let asrService = LocalASRService(config: project.asrConfig)
-            let items = try await asrService.transcribe(audioURL: wavURL) { progress in
-                Task { @MainActor in
+            let items = try await asrService.transcribe(audioURL: wavURL) { [weak self] progress in
+                Task { @MainActor [weak self] in
+                    guard let self = self, self.projectGeneration == currentGen, !Task.isCancelled else { return }
                     self.project.progress = 0.4 + progress * 0.5
                 }
             }
 
+            guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.subtitles = items
             project.isProcessing = false
             project.progress = 1.0
+            project.isDirty = true
             statusMessage = "识别完成，共生成 \(items.count) 行字幕"
         } catch {
+            guard currentGen == projectGeneration else { return }
             project.isProcessing = false
             statusMessage = "识别失败: \(error.localizedDescription)"
             errorMessage = "转录识别失败: \(error.localizedDescription)"
         }
     }
 
-    /// 执行字幕翻译
+    /// 执行字幕翻译 (R03 & R07: 任务防交叉与脏状态标记)
     public func runTranslation() async {
         guard !project.subtitles.isEmpty else { return }
+
+        translationTask?.cancel()
+        let currentGen = projectGeneration
 
         project.isProcessing = true
         project.currentStepName = "正在使用 \(project.llmConfig.effectiveModel) 翻译字幕..."
@@ -191,36 +228,48 @@ public final class AppState: ObservableObject {
             try await translator.translate(
                 items: project.subtitles,
                 config: project.llmConfig
-            ) { progress in
-                Task { @MainActor in
+            ) { [weak self] progress in
+                Task { @MainActor [weak self] in
+                    guard let self = self, self.projectGeneration == currentGen, !Task.isCancelled else { return }
                     self.project.progress = progress
                 }
             }
+            guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.subtitles = Array(project.subtitles)
             project.isProcessing = false
             project.progress = 1.0
+            project.isDirty = true
             statusMessage = "翻译完成，已为 \(project.subtitles.count) 行字幕生成译文"
         } catch {
+            guard currentGen == projectGeneration else { return }
             project.isProcessing = false
             statusMessage = "翻译失败: \(error.localizedDescription)"
             errorMessage = "翻译失败: \(error.localizedDescription)"
         }
     }
 
-    /// 执行多语言配音与混音
+    /// 执行多语言配音与混音 (R19: 传入所选目标语言音色代码)
     public func runFullDubbing() async {
         guard !project.subtitles.isEmpty else { return }
+
+        dubbingTask?.cancel()
+        let currentGen = projectGeneration
 
         project.isProcessing = true
         project.currentStepName = "正在合成新语言配音片段..."
         project.progress = 0.0
 
+        let voice = project.llmConfig.targetLanguageVoiceCode
+
         do {
             let total = Double(project.subtitles.count)
             for (idx, item) in project.subtitles.enumerated() {
-                try await subtitleManager.reDub(item: item, ttsService: ttsService)
+                guard currentGen == projectGeneration, !Task.isCancelled else { return }
+                try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
                 project.progress = Double(idx + 1) / total
             }
+
+            guard currentGen == projectGeneration, !Task.isCancelled else { return }
 
             project.currentStepName = "正在执行音频无损伸缩与闪避混音..."
             let tempDir = FileManager.default.temporaryDirectory
@@ -232,57 +281,110 @@ public final class AppState: ObservableObject {
                 to: mixedAudioURL
             )
 
+            guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
+            project.isDirty = true
             statusMessage = "配音合成完成！可导出新视频"
         } catch {
+            guard currentGen == projectGeneration else { return }
             project.isProcessing = false
             statusMessage = "配音生成失败: \(error.localizedDescription)"
         }
     }
 
-    /// 试听单句配音音频
+    /// 试听单句配音音频 (R19: 传入对应目标语言音色; R20: 持有 player 实例)
     public func auditionSubtitle(_ item: SubtitleItem) async {
         do {
+            let voice = project.llmConfig.targetLanguageVoiceCode
             if item.dubbedAudioURL == nil || !FileManager.default.fileExists(atPath: item.dubbedAudioURL!.path) {
-                try await subtitleManager.reDub(item: item, ttsService: ttsService)
+                try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
             }
             if let audioURL = item.dubbedAudioURL {
-                let tempPlayer = AVPlayer(url: audioURL)
-                tempPlayer.play()
+                let p = AVPlayer(url: audioURL)
+                self.auditionPlayer = p
+                p.play()
             }
         } catch {
             statusMessage = "试听生成失败: \(error.localizedDescription)"
         }
     }
 
-    /// 拆分字幕 (Cmd+B)
-    public func splitCurrentSubtitle(atCharIndex: Int) {
-        guard let selectedID = project.selectedSubtitleID,
-              let index = project.subtitles.firstIndex(where: { $0.id == selectedID }) else {
-            return
-        }
+    /// 拆分指定字幕 (R14: 绑定确切行 ID，防止错位拆分)
+    public func splitSubtitle(id: UUID, atCharIndex: Int) {
+        guard let index = project.subtitles.firstIndex(where: { $0.id == id }) else { return }
         let target = project.subtitles[index]
         if let (part1, part2) = subtitleManager.split(item: target, atCharIndex: atCharIndex) {
             project.subtitles.remove(at: index)
             project.subtitles.insert(part2, at: index)
             project.subtitles.insert(part1, at: index)
             project.selectedSubtitleID = part1.id
+            project.isDirty = true
             statusMessage = "已成功拆分字幕"
         }
     }
 
-    /// 合并选中的字幕 (Cmd+J)
-    public func mergeSubtitles(ids: Set<UUID>) {
-        let selectedItems = project.subtitles.filter { ids.contains($0.id) }
-        guard selectedItems.count >= 2 else { return }
+    /// 拆分当前选中的字幕 (Cmd+B)
+    public func splitCurrentSubtitle(atCharIndex: Int) {
+        guard let selectedID = project.selectedSubtitleID else { return }
+        splitSubtitle(id: selectedID, atCharIndex: atCharIndex)
+    }
 
+    /// 合并选中的字幕 (Cmd+J) (R15: 严格连续性校验)
+    public func mergeSubtitles(ids: Set<UUID>) {
+        guard ids.count >= 2 else { return }
+
+        // 获取被选中的索引并排序
+        let indices = project.subtitles.enumerated()
+            .filter { ids.contains($1.id) }
+            .map { $0.offset }
+            .sorted()
+
+        guard indices.count >= 2 else { return }
+
+        // 校验连续性：不允许跨越未选中项合并
+        for i in 0..<(indices.count - 1) {
+            if indices[i+1] != indices[i] + 1 {
+                errorMessage = "只能合并相邻连续的字幕项"
+                statusMessage = "合并失败：所选字幕不连续"
+                return
+            }
+        }
+
+        let selectedItems = indices.map { project.subtitles[$0] }
         if let merged = subtitleManager.merge(items: selectedItems) {
-            let firstIndex = project.subtitles.firstIndex(where: { ids.contains($0.id) }) ?? 0
+            let firstIndex = indices.first!
             project.subtitles.removeAll(where: { ids.contains($0.id) })
             project.subtitles.insert(merged, at: firstIndex)
             project.selectedSubtitleID = merged.id
+            project.isDirty = true
             statusMessage = "已合并 \(selectedItems.count) 条字幕"
         }
+    }
+
+    // MARK: - 工程持久化与存取 (R04)
+
+    /// 保存当前工程 (Cmd+S)
+    public func saveProject(to url: URL) throws {
+        let data = try project.encodeDocument()
+        try data.write(to: url, options: .atomic)
+        project.isDirty = false
+        statusMessage = "工程已保存: \(url.lastPathComponent)"
+    }
+
+    /// 从文件加载工程
+    public func loadProject(from url: URL) throws {
+        let data = try Data(contentsOf: url)
+        let decoder = JSONDecoder()
+        let doc = try decoder.decode(ProjectDocument.self, from: data)
+        cancelAllTasks()
+        projectGeneration += 1
+        project.reset()
+        project.restore(from: doc)
+        if let video = project.videoURL {
+            let item = AVPlayerItem(url: video)
+            player.replaceCurrentItem(with: item)
+        }
+        statusMessage = "已加载工程: \(url.lastPathComponent)"
     }
 
     // MARK: - 模型存储与下载管理
@@ -324,14 +426,22 @@ public final class AppState: ObservableObject {
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir.path)
     }
 
-    /// 触发指定模型的下载
+    /// 触发指定模型的下载 (R23: 首次下载先准备 sidecar 服务，避免连接失败或遗留下载中状态)
     public func downloadModel(preset: ASRModelPreset) {
-        if preset.isRepo {
-            Task {
-                try? await modelStorageManager.triggerServerRepoDownload(preset: preset)
+        Task {
+            if preset.isRepo {
+                _ = await sidecarManager.ensureRunning()
+                do {
+                    try await modelStorageManager.triggerServerRepoDownload(preset: preset)
+                } catch {
+                    await MainActor.run {
+                        self.errorMessage = "启动模型下载失败: \(error.localizedDescription)"
+                        self.statusMessage = "模型下载启动失败"
+                    }
+                }
+            } else {
+                modelStorageManager.startDirectDownload(for: preset)
             }
-        } else {
-            modelStorageManager.startDirectDownload(for: preset)
         }
     }
 }

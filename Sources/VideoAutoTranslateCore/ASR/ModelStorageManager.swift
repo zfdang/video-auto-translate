@@ -105,13 +105,13 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
             let folderSafeName = "models--" + preset.repoOrFileName.replacingOccurrences(of: "/", with: "--")
             for dir in candidateDirs {
                 let repoFolder = dir.appendingPathComponent(folderSafeName)
-                if fileManager.fileExists(atPath: repoFolder.path) {
+                if fileManager.fileExists(atPath: repoFolder.path) && isDirectoryValidModel(at: repoFolder) {
                     let sizeStr = calculateDirectorySize(at: repoFolder)
                     return .ready(localPath: repoFolder.path, sizeDescription: sizeStr)
                 }
                 // 也检查直接仓库名子目录
                 let directSub = dir.appendingPathComponent(preset.repoOrFileName)
-                if fileManager.fileExists(atPath: directSub.path) {
+                if fileManager.fileExists(atPath: directSub.path) && isDirectoryValidModel(at: directSub) {
                     let sizeStr = calculateDirectorySize(at: directSub)
                     return .ready(localPath: directSub.path, sizeDescription: sizeStr)
                 }
@@ -305,6 +305,28 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
     }
 
     // MARK: - 工具方法
+
+    /// R26: 校验目录是否包含真实有效的模型文件（配置与权重文件，或总大小大于 50MB）
+    private func isDirectoryValidModel(at folderURL: URL) -> Bool {
+        let fileManager = FileManager.default
+        guard let enumerator = fileManager.enumerator(at: folderURL, includingPropertiesForKeys: [.fileSizeKey]) else { return false }
+        var hasConfig = false
+        var hasWeights = false
+        var totalBytes: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            if fileURL.lastPathComponent == "config.json" {
+                hasConfig = true
+            }
+            let ext = fileURL.pathExtension.lowercased()
+            if ["safetensors", "bin", "npz"].contains(ext) {
+                hasWeights = true
+            }
+            if let res = try? fileURL.resourceValues(forKeys: [.fileSizeKey]), let s = res.fileSize {
+                totalBytes += Int64(s)
+            }
+        }
+        return (hasConfig && hasWeights) || totalBytes > 50 * 1024 * 1024
+    }
 
     private func calculateDirectorySize(at url: URL) -> String {
         let fileManager = FileManager.default

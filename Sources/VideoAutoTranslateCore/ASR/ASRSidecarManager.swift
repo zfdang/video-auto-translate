@@ -63,15 +63,31 @@ public final class ASRSidecarManager: ObservableObject {
         return await startSidecar()
     }
 
-    /// 查找 Python 路径
+    /// 查找 Python 路径 (R13: 移除硬编码私人路径，支持环境变量、应用支持目录及系统环境)
     public func resolvePythonPath() -> String {
-        let candidates = [
-            "/Users/zfdang/workspaces/VideoLingo/.venv/bin/python",
-            "/opt/homebrew/bin/python3",
-            "/usr/local/bin/python3",
-            "/usr/bin/python3"
-        ]
         let fileManager = FileManager.default
+
+        // 1. 优先读取环境变量 VAT_PYTHON_PATH
+        if let envPath = ProcessInfo.processInfo.environment["VAT_PYTHON_PATH"],
+           fileManager.fileExists(atPath: envPath) {
+            return envPath
+        }
+
+        // 2. 检查本地工作区或 Application Support 下的标准独立 venv
+        var candidates: [String] = []
+        if let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            candidates.append(appSupport.appendingPathComponent("VideoAutoTranslate/venv/bin/python").path)
+            candidates.append(appSupport.appendingPathComponent("VideoAutoTranslate/venv/bin/python3").path)
+        }
+
+        // 3. 当前目录下的 .venv
+        candidates.append(URL(fileURLWithPath: fileManager.currentDirectoryPath).appendingPathComponent(".venv/bin/python").path)
+
+        // 4. 标准系统与 Homebrew 路径
+        candidates.append("/opt/homebrew/bin/python3")
+        candidates.append("/usr/local/bin/python3")
+        candidates.append("/usr/bin/python3")
+
         for path in candidates {
             if fileManager.fileExists(atPath: path) {
                 return path
@@ -139,6 +155,12 @@ public final class ASRSidecarManager: ObservableObject {
             // 轮询等待健康检查就绪 (最多等待 8 秒)
             for _ in 0..<16 {
                 try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+                if !p.isRunning {
+                    await MainActor.run {
+                        self.status = .error("ASR 子进程异常退出 (PID: \(pid))")
+                    }
+                    return false
+                }
                 if await checkHealth(port: defaultPort) {
                     await MainActor.run {
                         self.status = .running(pid: pid, port: defaultPort)
@@ -147,10 +169,12 @@ public final class ASRSidecarManager: ObservableObject {
                 }
             }
 
+            // R22: 严禁在超时未响应时伪报 running 状态，终止进程并返回明确失败
+            p.terminate()
             await MainActor.run {
-                self.status = .running(pid: pid, port: defaultPort)
+                self.status = .error("ASR 服务健康检查超时（8秒内未响应就绪）")
             }
-            return true
+            return false
         } catch {
             await MainActor.run {
                 self.status = .error("启动子进程失败: \(error.localizedDescription)")
@@ -174,11 +198,17 @@ public final class ASRSidecarManager: ObservableObject {
         return false
     }
 
-    /// 应用完全退出时由 AppDelegate 调用以清理子进程
+    /// 应用完全退出时由 AppDelegate 调用以清理子进程 (R22: 有界退出，不卡死主线程)
     public func stop() {
         if let p = process, p.isRunning {
             p.terminate()
-            p.waitUntilExit()
+            let deadline = Date().addingTimeInterval(1.5)
+            while p.isRunning && Date() < deadline {
+                usleep(50_000)
+            }
+            if p.isRunning {
+                kill(p.processIdentifier, SIGKILL)
+            }
             self.process = nil
         }
         status = .idle

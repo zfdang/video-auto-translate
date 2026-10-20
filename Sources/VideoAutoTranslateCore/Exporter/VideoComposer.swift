@@ -38,7 +38,16 @@ public final class VideoComposer {
         subtitles: [SubtitleItem] = [],
         subtitleMode: SubtitleExportMode = .bilingual
     ) async throws {
-        try? FileManager.default.removeItem(at: outputURL)
+        // 安全检查：严禁输出路径与输入视频或输入音频相同，防止误删源文件 (R01)
+        let stdOutput = outputURL.standardizedFileURL
+        guard stdOutput != videoURL.standardizedFileURL else {
+            throw VideoComposerError.exportFailed("输出文件路径不能与源视频路径相同，避免覆盖源素材")
+        }
+        if let newAudio = newAudioURL {
+            guard stdOutput != newAudio.standardizedFileURL else {
+                throw VideoComposerError.exportFailed("输出文件路径不能与输入音频路径相同")
+            }
+        }
 
         let videoAsset = AVURLAsset(url: videoURL)
 
@@ -100,7 +109,7 @@ public final class VideoComposer {
             }
         }
 
-        // 3. 构建硬件硬编导出会话
+        // 3. 构建硬件硬编导出会话（输出至同目录临时文件，导出成功后再原子替换，R01）
         guard let exportSession = AVAssetExportSession(
             asset: composition,
             presetName: AVAssetExportPresetHighestQuality
@@ -108,7 +117,12 @@ public final class VideoComposer {
             throw VideoComposerError.exportFailed("无法初始化导出引擎")
         }
 
-        exportSession.outputURL = outputURL
+        let tempDirectory = outputURL.deletingLastPathComponent()
+        let tempFilename = ".\(UUID().uuidString)_\(outputURL.lastPathComponent).tmp"
+        let tempOutputURL = tempDirectory.appendingPathComponent(tempFilename)
+        try? FileManager.default.removeItem(at: tempOutputURL)
+
+        exportSession.outputURL = tempOutputURL
         exportSession.outputFileType = .mp4
         exportSession.shouldOptimizeForNetworkUse = true
 
@@ -141,7 +155,8 @@ public final class VideoComposer {
                         secondaryText = ""
                     }
                 case .translatedOnly:
-                    primaryText = item.translatedText.isEmpty ? item.originalText : item.translatedText
+                    // R31: 仅译文模式下不静默回退填入原文，若未翻译则不展示
+                    primaryText = item.translatedText
                     secondaryText = ""
                 case .originalOnly:
                     primaryText = item.originalText
@@ -225,7 +240,20 @@ public final class VideoComposer {
         await exportSession.export()
 
         if exportSession.status != .completed {
+            try? FileManager.default.removeItem(at: tempOutputURL)
             throw VideoComposerError.exportFailed(exportSession.error?.localizedDescription ?? "未知导出错误")
+        }
+
+        // R01: 校验导出结果并原子替换目标文件
+        do {
+            if FileManager.default.fileExists(atPath: outputURL.path) {
+                _ = try FileManager.default.replaceItemAt(outputURL, withItemAt: tempOutputURL)
+            } else {
+                try FileManager.default.moveItem(at: tempOutputURL, to: outputURL)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: tempOutputURL)
+            throw VideoComposerError.exportFailed("替换导出目标文件失败: \(error.localizedDescription)")
         }
     }
 

@@ -16,24 +16,38 @@ public final class SubtitleManager {
         let text = item.originalText
         guard charIndex > 0 && charIndex < text.count else { return nil }
 
+        let minDuration = CMTime(value: 80, timescale: 1000) // 最少 80ms，避免产生 0 时长或超短无意义切片 (R06)
+        guard item.duration >= CMTime(value: 160, timescale: 1000) else { return nil }
+
         let index = text.index(text.startIndex, offsetBy: charIndex)
         let firstPartText = String(text[..<index]).trimmingCharacters(in: .whitespaces)
         let secondPartText = String(text[index...]).trimmingCharacters(in: .whitespaces)
 
         guard !firstPartText.isEmpty, !secondPartText.isEmpty else { return nil }
 
-        // 若拥有精准的词级时间戳序列，则根据词长度累计找到最佳切分时间
-        var accumulated = 0
         var splitTime = item.startTime
         var firstWords: [WordToken] = []
         var secondWords: [WordToken] = []
 
+        // 若拥有词级时间序列，根据在文本中的实际出现范围精准映射词与时间 (R06)
         if !item.words.isEmpty {
+            var searchRange = text.startIndex..<text.endIndex
             for word in item.words {
-                accumulated += word.text.count
-                if accumulated <= charIndex {
-                    firstWords.append(word)
-                    splitTime = word.endCMTime
+                if let found = text.range(of: word.text, options: [], range: searchRange) {
+                    let wordEndOffset = text.distance(from: text.startIndex, to: found.upperBound)
+                    let wordStartOffset = text.distance(from: text.startIndex, to: found.lowerBound)
+                    searchRange = found.upperBound..<text.endIndex
+
+                    if charIndex >= wordEndOffset {
+                        firstWords.append(word)
+                        splitTime = word.endCMTime
+                    } else if charIndex <= wordStartOffset {
+                        secondWords.append(word)
+                    } else {
+                        // 光标落在词中间，该词归属前半部分
+                        firstWords.append(word)
+                        splitTime = word.endCMTime
+                    }
                 } else {
                     secondWords.append(word)
                 }
@@ -45,16 +59,32 @@ public final class SubtitleManager {
             splitTime = CMTimeAdd(item.startTime, CMTime.from(seconds: durationSeconds * ratio))
         }
 
-        // 确保切分点严格位于 [startTime, endTime] 内部
-        if splitTime <= item.startTime || splitTime >= item.endTime {
-            splitTime = CMTimeAdd(item.startTime, CMTime(value: item.duration.value / 2, timescale: item.duration.timescale))
+        // 确保切分点严格位于 [startTime + minDuration, endTime - minDuration] 内部，防止 0 时长 (R06)
+        let earliestValid = CMTimeAdd(item.startTime, minDuration)
+        let latestValid = CMTimeSubtract(item.endTime, minDuration)
+
+        if splitTime < earliestValid {
+            splitTime = earliestValid
+        } else if splitTime > latestValid {
+            splitTime = latestValid
+        }
+
+        // R05: 保存人工译文成果，将原译文保留在前半句，防止拆分直接清空丢失劳动成果
+        let existingTrans = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let (part1Trans, part2Trans): (String, String)
+        if !existingTrans.isEmpty {
+            part1Trans = existingTrans
+            part2Trans = ""
+        } else {
+            part1Trans = ""
+            part2Trans = ""
         }
 
         let part1 = SubtitleItem(
             startTime: item.startTime,
             endTime: splitTime,
             originalText: firstPartText,
-            translatedText: "",
+            translatedText: part1Trans,
             words: firstWords
         )
 
@@ -62,7 +92,7 @@ public final class SubtitleManager {
             startTime: splitTime,
             endTime: item.endTime,
             originalText: secondPartText,
-            translatedText: "",
+            translatedText: part2Trans,
             words: secondWords
         )
 
@@ -75,18 +105,22 @@ public final class SubtitleManager {
 
         // 依据起始时间严格排序
         let sorted = items.sorted { $0.startTime < $1.startTime }
-        guard let first = sorted.first, let last = sorted.last else { return nil }
+        guard let first = sorted.first else { return nil }
+
+        // R15: 计算所有选中区间的最大终点，防止嵌套区间反而缩短总时长
+        let minStart = sorted.map { $0.startTime }.min() ?? first.startTime
+        let maxEnd = sorted.map { $0.endTime }.max() ?? first.endTime
 
         let combinedOriginal = sorted.map { $0.originalText.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
         let combinedTranslated = sorted.map { $0.translatedText.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
 
-        let combinedWords = sorted.flatMap { $0.words }
+        let combinedWords = sorted.flatMap { $0.words }.sorted { $0.startCMTime < $1.startCMTime }
 
         return SubtitleItem(
-            startTime: first.startTime,
-            endTime: last.endTime,
+            startTime: minStart,
+            endTime: maxEnd,
             originalText: combinedOriginal,
             translatedText: combinedTranslated,
             words: combinedWords
