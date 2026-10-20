@@ -36,23 +36,49 @@ public final class LocalASRService: ASREngineProtocol {
 
     /// 快速检测本地 ASR 服务是否在线
     public func checkHealth() async -> Bool {
-        guard let url = URL(string: config.serviceURL) else { return false }
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        components?.path = "/health"
-        guard let healthURL = components?.url else { return false }
+        let (success, _) = await Self.testConnection(urlString: config.serviceURL)
+        return success
+    }
 
-        var request = URLRequest(url: healthURL)
-        request.timeoutInterval = 2.0
-
-        do {
-            let (_, response) = try await session.data(for: request)
-            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
-                return true
-            }
-            return false
-        } catch {
-            return false
+    /// 详细测试 ASR 接口连通性并返回耗时与状态说明
+    public static func testConnection(urlString: String) async -> (success: Bool, message: String) {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), let scheme = url.scheme, ["http", "https"].contains(scheme.lowercased()) else {
+            return (false, "URL 格式不合法，请输入有效的 http:// 或 https:// 地址")
         }
+
+        var testURLs: [URL] = []
+        if var comp = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            comp.path = "/health"
+            if let u = comp.url { testURLs.append(u) }
+            comp.path = "/v1/models"
+            if let u = comp.url { testURLs.append(u) }
+        }
+        testURLs.append(url)
+
+        let start = Date()
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.timeoutIntervalForRequest = 2.0
+        let session = URLSession(configuration: sessionConfig)
+
+        for target in testURLs {
+            var req = URLRequest(url: target)
+            req.httpMethod = "GET"
+            do {
+                let (_, response) = try await session.data(for: req)
+                if let http = response as? HTTPURLResponse {
+                    let elapsed = Int(Date().timeIntervalSince(start) * 1000)
+                    if (200...299).contains(http.statusCode) || http.statusCode == 405 {
+                        return (true, "连接成功 (HTTP \(http.statusCode) · 延迟 \(elapsed)ms)")
+                    }
+                }
+            } catch {
+                continue
+            }
+        }
+
+        let elapsed = Int(Date().timeIntervalSince(start) * 1000)
+        return (false, "连接失败: 无法连接至服务 (耗时 \(elapsed)ms，连接被拒绝或超时)")
     }
 
     public func transcribe(
