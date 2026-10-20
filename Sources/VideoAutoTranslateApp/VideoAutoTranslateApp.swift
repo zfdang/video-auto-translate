@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import VideoAutoTranslateCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -27,6 +28,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let window = NSApp.keyWindow ?? NSApp.windows.first {
             window.makeKeyAndOrderFront(nil)
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // 应用退出时终止静默托管的后台 ASR 进程，释放显存与端口
+        ASRSidecarManager.shared.stop()
     }
 }
 

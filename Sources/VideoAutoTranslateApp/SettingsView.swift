@@ -225,22 +225,48 @@ public struct SettingsView: View {
 
     private var asrServiceSettingsView: some View {
         Form {
-            Section(header: Text("本地轻量 ASR 语音识别服务接口").font(.headline)) {
+            Section(header: Text("本地 ASR 语音识别引擎托管").font(.headline)) {
+                HStack {
+                    Circle()
+                        .fill(appState.sidecarManager.status.isRunning ? Color.green : Color.orange)
+                        .frame(width: 8, height: 8)
+                    Text(appState.sidecarManager.status.displayString)
+                        .font(.subheadline)
+                    Spacer()
+                    if !appState.sidecarManager.status.isRunning {
+                        Button("预先唤醒引擎") {
+                            Task {
+                                await appState.sidecarManager.ensureRunning()
+                                await appState.probeLocalASR()
+                            }
+                        }
+                        .font(.caption)
+                    } else {
+                        Button("重启引擎") {
+                            Task {
+                                appState.sidecarManager.stop()
+                                await appState.sidecarManager.ensureRunning()
+                                await appState.probeLocalASR()
+                            }
+                        }
+                        .font(.caption)
+                    }
+                }
+                .padding(.vertical, 4)
+
+                Text("运行机制：本应用采用按需延迟静默托管模式。启动 App 时不预先占用显存；当您开始首个转录任务时，应用会自动唤醒推理引擎并保持热驻留，后续任务秒级响应，并在完全退出应用时自动释放销毁。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Divider()
+
                 HStack {
                     TextField("ASR 接口 URL", text: $appState.project.asrConfig.serviceURL)
-                    Button("测试连接") {
+                    Button("测试连通") {
                         Task {
                             await appState.probeLocalASR()
                         }
                     }
-                }
-                HStack {
-                    Circle()
-                        .fill(appState.isASRServerOnline ? Color.green : Color.red)
-                        .frame(width: 8, height: 8)
-                    Text(appState.isASRServerOnline ? "ASR 服务正常运行中 (端口: 8765)" : "未连接 (可在终端执行: python3 scripts/asr_server.py)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
                 TextField("默认 ASR 模型标识", text: $appState.project.asrConfig.model)
             }

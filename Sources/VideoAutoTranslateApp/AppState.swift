@@ -21,6 +21,7 @@ public final class AppState: ObservableObject {
     public let ttsService = SystemTTSService()
     public let ollamaProbe = OllamaProbe()
     @Published public var modelStorageManager = ModelStorageManager()
+    @Published public var sidecarManager = ASRSidecarManager.shared
 
     // 设置与探测
     @Published public var availableOllamaModels: [String] = []
@@ -34,6 +35,7 @@ public final class AppState: ObservableObject {
     public init() {
         setupTimeObserver()
         Task {
+            await sidecarManager.probeExistingStatus()
             await probeLocalOllama()
             await probeLocalASR()
         }
@@ -41,10 +43,12 @@ public final class AppState: ObservableObject {
 
     /// 探测本地 ASR 服务
     public func probeLocalASR() async {
-        let service = LocalASRService(config: project.asrConfig)
-        let online = await service.checkHealth()
+        let online = await sidecarManager.checkHealth(port: sidecarManager.defaultPort)
         await MainActor.run {
             self.isASRServerOnline = online
+            if online && !self.sidecarManager.status.isRunning {
+                self.sidecarManager.status = .running(pid: 0, port: self.sidecarManager.defaultPort)
+            }
         }
     }
 
@@ -116,7 +120,12 @@ public final class AppState: ObservableObject {
             try await audioExtractor.extract16kMonoWav(from: videoURL, to: wavURL)
             project.audioURL = wavURL
 
-            project.currentStepName = "正在调用本地 ASR 接口执行转录与词级对齐..."
+            project.currentStepName = "正在按需准备本地 ASR 推理引擎..."
+            project.progress = 0.25
+            _ = await sidecarManager.ensureRunning()
+            await probeLocalASR()
+
+            project.currentStepName = "正在调用 Qwen3-ASR 执行转录与词级对齐..."
             project.progress = 0.4
 
             let asrService = LocalASRService(config: project.asrConfig)

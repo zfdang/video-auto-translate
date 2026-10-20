@@ -20,6 +20,14 @@ mkdir -p "$APP_DIR/Contents/Resources"
 cp "$DIR/.build/arm64-apple-macosx/release/VideoAutoTranslateApp" "$APP_DIR/Contents/MacOS/VideoAutoTranslateApp"
 chmod +x "$APP_DIR/Contents/MacOS/VideoAutoTranslateApp"
 
+# 复制 ASR 依赖脚本与资源
+mkdir -p "$APP_DIR/Contents/Resources/scripts"
+cp -r "$DIR/scripts/"* "$APP_DIR/Contents/Resources/scripts/"
+
+if [ -f "$DIR/assets/AppIcon.icns" ]; then
+    cp "$DIR/assets/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+fi
+
 cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -33,6 +41,8 @@ cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
     <string>VideoAutoTranslate</string>
     <key>CFBundleDisplayName</key>
     <string>VideoAutoTranslate</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
