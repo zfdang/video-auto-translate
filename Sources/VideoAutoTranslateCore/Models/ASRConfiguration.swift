@@ -12,7 +12,7 @@ public struct ASRLanguagePreset: Identifiable, Hashable {
     }
 
     public static let presets: [ASRLanguagePreset] = [
-        ASRLanguagePreset(code: "auto", displayName: "自动识别语种 (Auto)"),
+        ASRLanguagePreset(code: "auto", displayName: "自动检测 (Auto)"),
         ASRLanguagePreset(code: "zh", displayName: "中文 / 普通话 (Chinese)"),
         ASRLanguagePreset(code: "en", displayName: "英语 (English)"),
         ASRLanguagePreset(code: "ja", displayName: "日语 (Japanese)"),

@@ -99,7 +99,7 @@ public struct MainView: View {
                         await appState.runTranscription()
                     }
                 }) {
-                    Label("语音转录", systemImage: "waveform.and.mic")
+                    Label("一键转录", systemImage: "waveform.and.mic")
                 }
                 .buttonStyle(.bordered)
                 .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
@@ -185,7 +185,14 @@ public struct MainView: View {
     }
 
     private var currentASRLanguageName: String {
-        ASRLanguagePreset.presets.first(where: { $0.code == appState.project.asrConfig.language })?.displayName ?? "自动识别"
+        let code = appState.project.asrConfig.language
+        if code == "auto" { return "自动检测" }
+        if code == "zh" { return "中文" }
+        if code == "en" { return "英语" }
+        if code == "ja" { return "日语" }
+        if code == "ko" { return "韩语" }
+        if code == "yue" { return "粤语" }
+        return ASRLanguagePreset.presets.first(where: { $0.code == code })?.displayName.components(separatedBy: " ").first ?? "自动检测"
     }
 
     private var shortTargetLanguageName: String {
