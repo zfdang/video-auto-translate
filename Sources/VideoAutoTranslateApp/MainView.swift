@@ -188,12 +188,17 @@ public struct MainView: View {
 
             workflowArrow
 
-            // 步骤 4: 自动配音
-            HStack(spacing: 4) {
+            // 步骤 4: 自动配音 (可选步骤，用括号括起来表示可跳过)
+            HStack(spacing: 3) {
+                Text("(")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.secondary.opacity(0.6))
+
                 StepBadge(
                     step: 4,
                     isCompleted: hasDubbing,
-                    isActive: hasTranslations && !hasDubbing
+                    isActive: hasTranslations && !hasDubbing,
+                    isOptional: true
                 )
 
                 Button(action: {
@@ -205,7 +210,11 @@ public struct MainView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(!hasTranslations || appState.project.isProcessing)
-                .help("合成新语言配音，并执行自适应语速对齐与背景音自动闪避混音")
+                .help("可选步骤：合成新语言配音，并执行自适应语速对齐与背景音自动闪避混音（可跳过直接进入第5步导出成片）")
+
+                Text(")")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.secondary.opacity(0.6))
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
@@ -374,6 +383,7 @@ struct StepBadge: View {
     let step: Int
     let isCompleted: Bool
     let isActive: Bool
+    var isOptional: Bool = false
 
     var body: some View {
         ZStack {
@@ -386,7 +396,7 @@ struct StepBadge: View {
                     .foregroundColor(.white)
             } else if isActive {
                 Circle()
-                    .fill(Color.accentColor)
+                    .fill(isOptional ? Color.accentColor.opacity(0.85) : Color.accentColor)
                     .frame(width: 18, height: 18)
                 Text("\(step)")
                     .font(.system(size: 11, weight: .bold))
