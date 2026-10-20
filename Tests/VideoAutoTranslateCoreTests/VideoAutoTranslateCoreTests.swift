@@ -73,10 +73,70 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
             translatedText: "欢迎观看视频"
         )
 
-        let srt = exporter.exportSRT(items: [item], mode: .bilingual)
-        XCTAssertTrue(srt.contains("00:00:01,000 --> 00:00:02,500"))
-        XCTAssertTrue(srt.contains("欢迎观看视频"))
-        XCTAssertTrue(srt.contains("Welcome to video"))
+        // 双语对照
+        let bilingualSRT = exporter.exportSRT(items: [item], mode: .bilingual)
+        XCTAssertTrue(bilingualSRT.contains("00:00:01,000 --> 00:00:02,500"))
+        XCTAssertTrue(bilingualSRT.contains("欢迎观看视频"))
+        XCTAssertTrue(bilingualSRT.contains("Welcome to video"))
+
+        // 仅译文
+        let translatedSRT = exporter.exportSRT(items: [item], mode: .translatedOnly)
+        XCTAssertTrue(translatedSRT.contains("欢迎观看视频"))
+        XCTAssertFalse(translatedSRT.contains("Welcome to video"))
+
+        // 仅原文
+        let originalSRT = exporter.exportSRT(items: [item], mode: .originalOnly)
+        XCTAssertFalse(originalSRT.contains("欢迎观看视频"))
+        XCTAssertTrue(originalSRT.contains("Welcome to video"))
+
+        // 不内嵌/无
+        let noneSRT = exporter.exportSRT(items: [item], mode: .none)
+        XCTAssertEqual(noneSRT, "")
+    }
+
+    func testVideoComposerWithSubtitleEmbedding() async throws {
+        let testVideoPath = "/Users/zfdang/workspaces/video-auto-translate/Tests/Fme9C5ShSr2fuWQ8_Translated.mp4"
+        guard FileManager.default.fileExists(atPath: testVideoPath) else { return }
+
+        let composer = VideoComposer()
+        let item = SubtitleItem(
+            startTime: CMTime.from(seconds: 0.5),
+            endTime: CMTime.from(seconds: 2.0),
+            originalText: "Bonjour",
+            translatedText: "你好，巴黎！"
+        )
+
+        let tempDir = FileManager.default.temporaryDirectory
+
+        // 1. 测试双语内嵌导出
+        let bilingualOut = tempDir.appendingPathComponent("test_bilingual_\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: bilingualOut) }
+
+        try await composer.compose(
+            videoURL: URL(fileURLWithPath: testVideoPath),
+            newAudioURL: nil,
+            outputURL: bilingualOut,
+            subtitles: [item],
+            subtitleMode: .bilingual
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bilingualOut.path))
+        let bilingualSize = (try? FileManager.default.attributesOfItem(atPath: bilingualOut.path)[.size] as? UInt64) ?? 0
+        XCTAssertGreaterThan(bilingualSize, 1000)
+
+        // 2. 测试不内嵌字幕导出
+        let noneOut = tempDir.appendingPathComponent("test_none_\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: noneOut) }
+
+        try await composer.compose(
+            videoURL: URL(fileURLWithPath: testVideoPath),
+            newAudioURL: nil,
+            outputURL: noneOut,
+            subtitles: [item],
+            subtitleMode: .none
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: noneOut.path))
+        let noneSize = (try? FileManager.default.attributesOfItem(atPath: noneOut.path)[.size] as? UInt64) ?? 0
+        XCTAssertGreaterThan(noneSize, 1000)
     }
 
     func testLLMConfigurationEffectiveValues() {

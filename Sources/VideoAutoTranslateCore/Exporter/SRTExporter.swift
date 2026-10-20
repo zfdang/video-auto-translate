@@ -1,9 +1,25 @@
 import Foundation
 
-public enum SubtitleExportMode {
-    case originalOnly
-    case translatedOnly
+public enum SubtitleExportMode: String, CaseIterable, Identifiable {
     case bilingual
+    case translatedOnly
+    case originalOnly
+    case none
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .bilingual:
+            return "双语对照"
+        case .translatedOnly:
+            return "仅目标语言 (译文)"
+        case .originalOnly:
+            return "仅原始语言 (原文)"
+        case .none:
+            return "不内嵌字幕"
+        }
+    }
 }
 
 /// 字幕文件导出器 (.srt / .vtt)
@@ -12,6 +28,7 @@ public final class SRTExporter {
 
     /// 导出为 SRT 字符串
     public func exportSRT(items: [SubtitleItem], mode: SubtitleExportMode = .bilingual) -> String {
+        if mode == .none { return "" }
         var output = ""
 
         for (index, item) in items.enumerated() {
@@ -29,6 +46,8 @@ public final class SRTExporter {
                     output += "\(item.translatedText)\n"
                 }
                 output += "\(item.originalText)\n\n"
+            case .none:
+                break
             }
         }
 
@@ -37,6 +56,7 @@ public final class SRTExporter {
 
     /// 导出为 WebVTT 字符串
     public func exportVTT(items: [SubtitleItem], mode: SubtitleExportMode = .bilingual) -> String {
+        if mode == .none { return "WEBVTT\n\n" }
         var output = "WEBVTT\n\n"
 
         for (index, item) in items.enumerated() {
@@ -54,6 +74,8 @@ public final class SRTExporter {
                     output += "\(item.translatedText)\n"
                 }
                 output += "\(item.originalText)\n\n"
+            case .none:
+                break
             }
         }
 
