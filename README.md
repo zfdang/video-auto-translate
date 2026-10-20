@@ -1,66 +1,25 @@
-# VideoAutoTranslate (macOS 原生视频自动字幕与语言替换工作站)
+# VideoAutoTranslate
 
 <img src="assets/app-icon.png" width="128" height="128" alt="VideoAutoTranslate 应用图标">
 
-专为 **macOS Apple Silicon (ARM64)** 原生打造的高性能、超轻量（安装包仅约 1.4MB）本地视频字幕制作与多语言配音工作站。
+面向 **macOS Apple Silicon** 的原生视频字幕编辑与多语言配音工作站。
 
----
+当前处于设计阶段，仓库尚无应用实现。首先建立可校对、可拆分合并、可人工调时并能保存恢复的字幕编辑闭环，再扩展上下文翻译、视频导出和增量配音。
 
-## 🌟 核心特性
+## 产品方向
 
-1. **纯本地视频处理，拒绝臃肿链路**：
-   - 不依赖任何外部网络视频下载器（不集成 `yt-dlp`），专注于处理用户本地已有的音视频文件；
-   - 彻底摆脱网络反爬、Cookie 失效等问题。
-2. **端云协同，本地 Qwen 优先 (Local-First)**：
-   - **听（ASR 识别）**：本地芯片级加速的 **Qwen3-ASR** 模型，提取毫秒级逐词时间戳；
-   - **译（语义翻译）**：**默认优先连接本地 Ollama (Qwen2.5)**，100% 离线、免费、无隐私顾虑；同时无缝支持在线大模型（如 DeepSeek、OpenAI、Claude 等）作为云端备选；
-   - **说（语言替换配音）**：保留原视频环境背景音，新语言配音利用系统级 `AVAudioUnitTimePitch` 智能自适应伸缩对齐原画面，配合背景音自动闪避混音（Audio Ducking）。
-3. **灵活的模型存储与一键下载管理**：
-   - **多种存储路径支持**：
-     - **共享缓存目录**（`~/.cache/huggingface/hub`）：与其他 AI 工具共用，不重复占用磁盘空间；
-     - **应用独立目录**（`~/Library/Application Support/VideoAutoTranslate/models`）：隔离独立存储；
-     - **自定义目录**：自由指定外置高速 SSD 或 NAS 挂载路径，带磁盘空间感知。
-   - **国内极速下载加速**：内置支持 `hf-mirror.com`、Hugging Face 官方源及魔搭社区，支持在新设备上一键下载 Qwen3-ASR、Aligner 及 Whisper 模型。
-4. **原生剪辑级交互**：
-   - 基于时间轴的行内双语字幕即时修改；
-   - 词级毫秒智能拆分（`Cmd+B`）与多选相邻字幕合并（`Cmd+J`）；
-   - **单句局部增量配音**：修改某一句，0.5 秒内仅重算该句并即时试听，无需整部视频从头重算。
+- **本地媒体输入**：处理用户已有音视频文件，不集成网络视频下载器。
+- **本地优先**：候选 ASR / 对齐引擎为 Qwen3-ASR / Qwen3-ForcedAligner，翻译优先连接本地 Ollama / Qwen；云端服务由用户主动选择。模型准备完成后支持相应离线流程。
+- **字幕编辑为核心**：视频预览、双语字幕列表与波形时间轴联动；明确区分排版换行、拆分字幕和时间调整，支持词边界建议及人工修正。
+- **可靠的编辑状态**：保留人工译文和时间调整，提供撤销/重做、自动保存、问题定位及过期生成结果防护。
+- **逐步扩展配音**：后续提供单句生成/试听、保调变速和背景闪避，对配音超时给出可操作的处理方式。
 
----
+模型兼容性、支持格式、最低系统/内存和性能指标需要技术验证；不以时间存储精度承诺识别准确度，也不承诺任意模型即时合成。
 
-## 🏗️ 技术架构
+## 设计文档
 
-- **UI 界面**：SwiftUI (原生 macOS 14/15 交互，ProMotion 120Hz 流畅刷新)
-- **多媒体引擎**：AVFoundation (AVPlayer, AVAssetReader, AVVideoComposition)
-- **音频变速引擎**：AVAudioEngine + AVAudioUnitTimePitch (保持音调不变的高性能离线变速渲染)
-- **硬件加速编解码**：Apple VideoToolbox (M系列芯片硬编硬解)
-- **自然语言处理**：Apple NaturalLanguage.framework (语义边界与断句分析)
+- [产品需求（PRD）](docs/PRD.md)：阶段范围、编辑语义、模型与服务配置、导出规则和验收场景。
+- [技术架构](docs/architecture.md)：时间与数据模型、版本化编辑事务、异步结果校验、持久化及媒体处理管道。
+- [UI 与交互设计](docs/ui-design.md)：工作台线框、双语编辑、拆分预览、波形操作、焦点/快捷键、问题面板与无障碍。
 
----
-
-## 🚀 编译与运行
-
-### 1. 一键编译并打包为原生 App（推荐）
-在项目根目录下执行：
-```bash
-./build_app.sh
-```
-该脚本会自动以 Release 模式编译并打包成标准的 macOS 应用，生成于 **`dist/VideoAutoTranslate.app`**。
-
-您可直接通过命令或在 Finder 中双击运行：
-```bash
-open dist/VideoAutoTranslate.app
-```
-
-### 2. 运行工程单元测试
-包含对本地 Ollama Qwen2.5 的真实翻译调用测试：
-```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
-```
-
----
-
-## 📚 详细设计文档
-
-- 📋 [**产品与功能需求文档 (PRD.md)**](docs/PRD.md)：详细业务场景、功能清单、交互流程与配置规范。
-- 🏗️ [**技术架构设计文档 (architecture.md)**](docs/architecture.md)：系统分层架构、数据结构（基于精确 `CMTime`）、核心处理管道与 Swift 原生工程实现细节。
+外部参考包括本机 Memo 1.8.8 的界面组织及 [AutoSubtitle](https://github.com/Linwei-Chen/AutoSubtitle) 的处理流程；采用范围与限制记录在设计文档中。
