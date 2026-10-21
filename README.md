@@ -89,6 +89,7 @@ VAT_REAL_DUBBING_SAMPLE=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Develop
 
 ## 📚 详细设计文档
 
+- [**“匹配译文时间轴”算法简介**](doc/translation-timeline-algorithm.md)：局部语境分组、组内时间共享、语速处理与当前边界。
 - 📋 [**产品与功能需求文档 (PRD.md)**](docs/PRD.md)：详细业务场景、功能清单、交互流程与配置规范。
 - 🏗️ [**技术架构设计文档 (architecture.md)**](docs/architecture.md)：系统分层架构、数据结构（基于精确 `CMTime`）、核心处理管道与 Swift 原生工程实现细节。
 - 🎨 [**UI 与交互设计文档 (ui-design.md)**](docs/ui-design.md)：工作台线框、双语编辑、拆分预览、快捷键与无障碍。
