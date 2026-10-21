@@ -116,13 +116,7 @@ public final class TimelineAligner {
         }
         for row in planned where row.currentNaturalSpeech != nil {
             try Task.checkCancellation()
-            // Infeasible sentences remain reviewable conflicts. Do not render a
-            // rushed substitute or shift another sentence to hide the problem.
-            guard row.dubbingTimingIssue == nil else {
-                row.dubbedAudioURL = nil
-                row.dubbedAudioSignature = nil
-                continue
-            }
+            // Pacing is advisory: every translated sentence gets playable audio.
             let previousURL = row.dubbedAudioURL
             try await manager.renderMatchedSpeech(item: row, voice: voice)
             if let url = row.dubbedAudioURL, url != previousURL { rendered.append(url) }

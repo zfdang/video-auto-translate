@@ -21,7 +21,7 @@ struct EditProposalView: View {
             Text("预览修改前后的时间与内容；应用后可撤销。")
                 .foregroundStyle(.secondary)
             if conflicts > 0 {
-                Label("\(conflicts) 句配音超长。应用时间建议后，仍需精简译文或手动调时才能配音。", systemImage: "exclamationmark.triangle")
+                Label("\(conflicts) 句语速偏快，已自动匹配。可试听后应用并继续配音、导出。", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }
             ScrollView {

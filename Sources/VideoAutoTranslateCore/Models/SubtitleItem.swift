@@ -41,8 +41,10 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
 
     public var dubbingTimingIssue: String? {
         guard let audio = currentNaturalSpeech else { return nil }
-        do { _ = try DubbingPacing.rate(naturalDuration: audio.duration, availableDuration: durationSeconds); return nil }
-        catch { return error.localizedDescription }
+        guard durationSeconds > 0 else { return "字幕时长无效。" }
+        let rate = audio.duration / durationSeconds
+        guard rate > DubbingPacing.maximumRate + 0.005 else { return nil }
+        return String(format: "此句配音约 %.2f 倍语速，可试听；不会阻止继续配音或导出。", rate)
     }
 
     // 配音缓存状态

@@ -1006,7 +1006,7 @@ public final class AppState: ObservableObject {
         scheduleRecovery()
         editProposal = nil
         let conflicts = proposal.after.filter { $0.dubbingTimingIssue != nil }.count
-        statusMessage = conflicts == 0 ? "已应用建议，可撤销；请试听" : "已应用时间建议；\(conflicts) 句配音超长，请精简译文或手动调时"
+        statusMessage = conflicts == 0 ? "已应用建议，可撤销；请试听" : "已应用时间建议；\(conflicts) 句语速偏快，可试听；可直接继续配音和导出"
         if previewAudioTrack != .original {
             previewAudioTrack = .original
             Task { await self.updatePreviewPlayerItem() }

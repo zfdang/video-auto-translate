@@ -202,7 +202,7 @@ final class AnchoredDubbingTests: XCTestCase {
         catch { XCTAssertNil(item.naturalSpeech) }
     }
 
-    @MainActor func testUnchangedTimingStillProducesReviewableMeasuredConflictAndUndo() async throws {
+    @MainActor func testUnchangedTimingProducesPlayableAudioWithAdvisoryPacingAndUndo() async throws {
         let app = AppState(probeServices: false)
         let rows = [row(0, 1)]
         app.project.subtitles = rows
@@ -214,6 +214,7 @@ final class AnchoredDubbingTests: XCTestCase {
         }
         let proposal = try XCTUnwrap(app.editProposal)
         XCTAssertNotNil(proposal.after[0].dubbingTimingIssue)
+        XCTAssertTrue(proposal.after[0].hasCurrentAudio(voice: app.project.llmConfig.targetLanguageVoiceCode))
         XCTAssertNil(app.project.subtitles[0].naturalSpeech)
         app.applyEditProposal()
         XCTAssertNotNil(app.project.subtitles[0].dubbingTimingIssue)
@@ -326,7 +327,7 @@ final class AnchoredDubbingTests: XCTestCase {
     func testRatePolicyNeverSlowsAndRejectsInvalidOrExcessiveRates() throws {
         XCTAssertEqual(try DubbingPacing.rate(naturalDuration: 1, availableDuration: 5), 1)
         XCTAssertEqual(try DubbingPacing.rate(naturalDuration: 1.1, availableDuration: 1), 1.1, accuracy: 0.001)
-        XCTAssertThrowsError(try DubbingPacing.rate(naturalDuration: 2, availableDuration: 1))
+        XCTAssertEqual(try DubbingPacing.rate(naturalDuration: 2, availableDuration: 1), 2)
         XCTAssertThrowsError(try DubbingPacing.rate(naturalDuration: .nan, availableDuration: 1))
     }
 }
