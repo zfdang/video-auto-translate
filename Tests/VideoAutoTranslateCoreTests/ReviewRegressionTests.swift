@@ -34,4 +34,19 @@ final class ReviewRegressionTests: XCTestCase {
         }
     }
 
+    func testSegmentationCannotChangeWordsAndSupportsUnspacedText() {
+        let tokens = ["Hello", "world"].enumerated().map { i, word in
+            WordToken(text: word, startTime: .from(seconds: Double(i)), endTime: .from(seconds: Double(i+1)))
+        }
+        let segmenter = LLMSegmenter()
+        let rejected = segmenter.alignLinesToTokens(lines: ["Goodbye moon"], tokens: tokens)
+        XCTAssertEqual(rejected.map(\.originalText).joined(separator: " "), "Hello world")
+        let chinese = ["你好", "世界"].enumerated().map { i, word in
+            WordToken(text: word, startTime: .from(seconds: Double(i)), endTime: .from(seconds: Double(i+1)))
+        }
+        let result = segmenter.alignLinesToTokens(lines: ["你好世界"], tokens: chinese)
+        XCTAssertEqual(result.first?.words.count, 2)
+        XCTAssertEqual(result.first?.endTime.secondsValue, 2)
+    }
+
 }

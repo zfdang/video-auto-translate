@@ -747,6 +747,10 @@ public final class AppState: ObservableObject {
     /// 执行大模型语义智能分句规整 (将每个词的精确定位发给大模型重构断句时间轴)
     public func runSmartSegmentation() async {
         guard !project.subtitles.isEmpty, !project.isProcessing else { return }
+        guard !project.subtitles.contains(where: { !$0.translatedText.isEmpty }) else {
+            errorMessage = "为保护已有译文，请在翻译前执行智能分句；已有译文可用行内拆分与合并调整。"
+            return
+        }
         let snapshot = createSubtitlesSnapshot()
         let tokens = snapshot.flatMap { item in
             item.words.isEmpty ? [WordToken(text: item.originalText, startTime: item.startTime, endTime: item.endTime)] : item.words

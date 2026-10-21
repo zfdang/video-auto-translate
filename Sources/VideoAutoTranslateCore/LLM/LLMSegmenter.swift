@@ -119,30 +119,26 @@ public final class LLMSegmenter {
     }
 
     /// 将断句文本对齐到词级时间戳，由首词与末词获得物理时间
-    private func alignLinesToTokens(lines: [String], tokens: [WordToken]) -> [SubtitleItem] {
+    internal func alignLinesToTokens(lines: [String], tokens: [WordToken]) -> [SubtitleItem] {
         var items: [SubtitleItem] = []
         var tokenIdx = 0
 
         for line in lines {
             guard tokenIdx < tokens.count else { break }
 
-            let wordsInLine = line
-                .components(separatedBy: .whitespacesAndNewlines)
-                .map { $0.trimmingCharacters(in: .punctuationCharacters).lowercased() }
-                .filter { !$0.isEmpty }
-
-            guard !wordsInLine.isEmpty else { continue }
-
-            let startIdx = tokenIdx
-            var matchedCount = 0
-
-            while tokenIdx < tokens.count && matchedCount < wordsInLine.count {
-                let tokenWord = tokens[tokenIdx].text.trimmingCharacters(in: .punctuationCharacters).lowercased()
-                if !tokenWord.isEmpty {
-                    matchedCount += 1
-                }
-                tokenIdx += 1
+            func normalized(_ value: String) -> String {
+                String(value.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
             }
+            let target = normalized(line)
+            guard !target.isEmpty else { continue }
+            let startIdx = tokenIdx
+            var consumed = ""
+            while tokenIdx < tokens.count && consumed != target {
+                consumed += normalized(tokens[tokenIdx].text)
+                tokenIdx += 1
+                guard target.hasPrefix(consumed) else { return fallbackSegmenter.segment(tokens: tokens) }
+            }
+            guard consumed == target else { return fallbackSegmenter.segment(tokens: tokens) }
 
             let endIdx = max(startIdx, tokenIdx - 1)
             let lineTokens = Array(tokens[startIdx...endIdx])
@@ -154,7 +150,7 @@ public final class LLMSegmenter {
             items.append(SubtitleItem(
                 startTime: startCM,
                 endTime: endCM,
-                originalText: line,
+                originalText: NaturalLanguageSegmenter.joinTokensText(lineTokens),
                 words: lineTokens
             ))
         }
