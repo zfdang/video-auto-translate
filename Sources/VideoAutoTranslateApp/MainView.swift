@@ -10,19 +10,6 @@ public struct MainView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Menu("工程") {
-                    Button("打开工程…") { appState.openProjectInteractively() }
-                    Button("保存工程") { appState.saveProjectInteractively() }
-                    Button("另存为…") { appState.saveProjectInteractively(chooseNewURL: true) }
-                    Button("重新定位媒体…") { appState.relinkMedia() }
-                }
-                Text(appState.documentURL?.lastPathComponent ?? appState.project.videoURL?.lastPathComponent ?? "未命名工程")
-                    .lineLimit(1)
-                Text(appState.project.isDirty ? "有未保存修改 · \(appState.saveStatus)" : appState.saveStatus)
-                    .font(.caption).foregroundColor(.secondary)
-                Spacer()
-            }.padding(.horizontal, 12).padding(.vertical, 6)
             if appState.recoveryAvailable {
                 HStack {
                     Text("发现上次编辑的恢复副本")
@@ -63,6 +50,7 @@ public struct MainView: View {
             // 底部状态栏与进度
             bottomStatusBar
         }
+        .navigationTitle(windowTitle)
         .focusedSceneObject(appState)
         .background(WindowCloseGuard(appState: appState).frame(width: 0, height: 0))
         .sheet(item: $appState.editProposal) { proposal in EditProposalView(appState: appState, proposal: proposal) }
@@ -105,6 +93,11 @@ public struct MainView: View {
             }
             return true
         }
+    }
+
+    private var windowTitle: String {
+        let name = appState.documentURL?.lastPathComponent ?? appState.project.videoURL?.lastPathComponent ?? "VideoAutoTranslate"
+        return appState.project.isDirty ? "\(name) — 未保存" : name
     }
 
     // MARK: - 顶部一体化工作流工具栏
