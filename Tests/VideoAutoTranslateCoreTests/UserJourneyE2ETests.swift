@@ -12,7 +12,7 @@ final class UserJourneySimulator {
     let subtitleManager = SubtitleManager()
     let timelineAligner = TimelineAligner()
     let srtExporter = SRTExporter()
-    let ttsService = SystemTTSService()
+    let ttsService: TTSServiceProtocol = ProcessInfo.processInfo.environment["CI"] == "true" ? JourneyFixtureTTS() : SystemTTSService()
 
     /// 步骤 1: 用户打开视频文件
     func openVideo(url: URL) {
@@ -398,5 +398,18 @@ final class UserJourneyE2ETests: XCTestCase {
         print("  ✓ 双语 SRT 字幕导出校验成功")
 
         print("====== [User Journey E2E] 测试全部圆满通过！ ======")
+    }
+}
+
+/// Explicit test-only audio producer for headless environments. Production never uses it.
+private struct JourneyFixtureTTS: TTSServiceProtocol {
+    func synthesize(text: String, voice: String, outputURL: URL) async throws -> URL {
+        let format = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!
+        let file = try AVAudioFile(forWriting: outputURL, settings: format.settings)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8000)!
+        buffer.frameLength = 8000
+        for index in 0..<8000 { buffer.floatChannelData![0][index] = Float(sin(Double(index) * .pi * 2 * 440 / 16000)) * 0.2 }
+        try file.write(from: buffer)
+        return outputURL
     }
 }

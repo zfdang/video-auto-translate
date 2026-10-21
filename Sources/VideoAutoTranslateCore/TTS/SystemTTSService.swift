@@ -40,7 +40,12 @@ public final class SystemTTSService: TTSServiceProtocol {
 
         let engine = try await MainActor.run { try SpeechEngine(text: cleanText, language: voice) }
         let cancellation = SpeechCancellation()
-        defer { try? FileManager.default.removeItem(at: tempOutputURL) }
+        let activity = SpeechActivity()
+        let watchdog = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        watchdog.setEventHandler { }
+        watchdog.schedule(deadline: .now() + 30, repeating: 1)
+        watchdog.resume()
+        defer { watchdog.cancel(); try? FileManager.default.removeItem(at: tempOutputURL) }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
             final class ContinuationGuard: @unchecked Sendable {
@@ -84,37 +89,11 @@ public final class SystemTTSService: TTSServiceProtocol {
             var audioFile: AVAudioFile? = nil
             var frameCount: AVAudioFrameCount = 0
 
-            // 增加防挂起看门狗保护（针对 GitHub Actions 等无音频硬件/无中文语音包的 headless 虚拟机节点）
-            let timeoutWork = DispatchWorkItem {
-                if !guardWrapper.isCompleted {
-                    do {
-                        let sampleRate = 16000.0
-                        let settings: [String: Any] = [
-                            AVFormatIDKey: kAudioFormatLinearPCM,
-                            AVSampleRateKey: sampleRate,
-                            AVNumberOfChannelsKey: 1,
-                            AVLinearPCMBitDepthKey: 16,
-                            AVLinearPCMIsBigEndianKey: false,
-                            AVLinearPCMIsFloatKey: false
-                        ]
-                        let fallbackFile = try AVAudioFile(forWriting: tempOutputURL, settings: settings)
-                        let frames = AVAudioFrameCount(sampleRate * 0.5) // 0.5 秒标准静音 PCM 帧
-                        if let buf = AVAudioPCMBuffer(pcmFormat: fallbackFile.processingFormat, frameCapacity: frames) {
-                            buf.frameLength = frames
-                            try fallbackFile.write(from: buf)
-                        }
-                        if FileManager.default.fileExists(atPath: outputURL.path) {
-                            _ = try FileManager.default.replaceItemAt(outputURL, withItemAt: tempOutputURL)
-                        } else {
-                            try FileManager.default.moveItem(at: tempOutputURL, to: outputURL)
-                        }
-                        guardWrapper.resume(returning: outputURL)
-                    } catch {
-                        guardWrapper.resume(throwing: TTSError.synthesisFailed("Headless CI 环境兜底失败: \(error.localizedDescription)"))
-                    }
-                }
+            watchdog.setEventHandler {
+                guard !guardWrapper.isCompleted, activity.stalled else { return }
+                guardWrapper.resume(throwing: TTSError.synthesisFailed("30 秒未收到语音数据，请检查系统音色后重试；未生成替代音频。"))
+                DispatchQueue.main.async { engine.synthesizer.stopSpeaking(at: .immediate) }
             }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 3.5, execute: timeoutWork)
 
             DispatchQueue.main.async {
             guard !guardWrapper.isCompleted else { return }
@@ -124,6 +103,7 @@ public final class SystemTTSService: TTSServiceProtocol {
                 }
 
                 guard let pcmBuffer = buffer as? AVAudioPCMBuffer else { return }
+                activity.touch()
 
                 if pcmBuffer.frameLength == 0 {
                     audioFile = nil // Flush the complete file before publishing its URL.
@@ -199,4 +179,14 @@ private final class SpeechCancellation: @unchecked Sendable {
         lock.unlock()
         action?()
     }
+}
+
+private final class SpeechActivity: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastBuffer = Date()
+    var stalled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return Date().timeIntervalSince(lastBuffer) >= 30
+    }
+    func touch() { lock.lock(); lastBuffer = Date(); lock.unlock() }
 }
