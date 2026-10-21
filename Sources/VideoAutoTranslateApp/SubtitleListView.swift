@@ -8,7 +8,10 @@ public struct SubtitleListView: View {
         nonmutating set { appState.selectedSubtitleIDs = newValue }
     }
     @State private var lastClickedIndex: Int? = nil
-    @State private var showTiming = false
+    private var showTiming: Bool {
+        get { appState.showTimingInspector }
+        nonmutating set { appState.showTimingInspector = newValue }
+    }
     @State private var searchText: String = ""
 
     public var body: some View {

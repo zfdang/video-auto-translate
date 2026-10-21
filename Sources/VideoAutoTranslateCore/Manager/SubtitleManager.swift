@@ -54,6 +54,7 @@ public final class SubtitleManager {
                 }
             }
 
+            guard wordRanges.count == item.words.count, wordRanges.count >= 2 else { return nil }
             if wordRanges.count >= 2 {
                 // 寻找最符合用户光标意图的切分词边界 (0 <= bestSplitIdx < wordRanges.count - 1)
                 // Select one boundary from the complete set, including the first word.

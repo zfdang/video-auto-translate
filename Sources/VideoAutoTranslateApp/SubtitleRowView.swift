@@ -134,6 +134,7 @@ public struct SubtitleRowView: View {
                 .help("在光标所在字词位置拆分此行字幕 (快捷键 Cmd+B)")
             }
 
+            if item.words.isEmpty { Text("无词级对齐 · 拆分时间需人工复核").font(.caption2).foregroundColor(.secondary) }
             // 原文字幕编辑框 (英文/源语种)
             TextField("原文内容", text: $item.originalText, axis: .vertical)
                 .lineLimit(2...8)

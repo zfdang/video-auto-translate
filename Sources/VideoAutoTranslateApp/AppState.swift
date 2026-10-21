@@ -42,6 +42,7 @@ public final class AppState: ObservableObject {
     @Published public var currentTime: CMTime = .zero
     @Published public var selectedSubtitleIDs: Set<UUID> = []
     @Published public var originalEditingID: UUID?
+    @Published public var showTimingInspector = false
 
     // 引擎与管理实例
     public let audioExtractor = AudioExtractor()
@@ -785,7 +786,7 @@ public final class AppState: ObservableObject {
             errorMessage = "无法在此处安全拆分；请检查词对齐和两侧 100ms 最小时长。可先用时间检查器修正。"
             return
         }
-        if item.translatedText.isEmpty { splitSubtitle(id: id, atCharIndex: index) }
+        if item.translatedText.isEmpty && !item.words.isEmpty { splitSubtitle(id: id, atCharIndex: index) }
         else { splitDraft = SplitDraft(source: item.snapshot(), index: index, left: parts.0, right: parts.1) }
     }
 
@@ -796,6 +797,7 @@ public final class AppState: ObservableObject {
             return
         }
         splitSubtitle(id: current.id, atCharIndex: draft.index, translatedParts: (left, right))
+        if draft.source.words.isEmpty { showTimingInspector = true }
         splitDraft = nil
     }
 
@@ -856,6 +858,10 @@ public final class AppState: ObservableObject {
             return
         }
         let snapshot = createSubtitlesSnapshot()
+        guard snapshot.allSatisfy({ !$0.words.isEmpty }) else {
+            errorMessage = "智能分句需要字词对齐；请准备对齐模型，或使用调时面板人工修正。"
+            return
+        }
         let tokens = snapshot.flatMap { item in
             item.words.isEmpty ? [WordToken(text: item.originalText, startTime: item.startTime, endTime: item.endTime)] : item.words
         }
