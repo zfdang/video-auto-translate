@@ -408,20 +408,55 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 试听单句配音音频 (R19: 传入对应目标语言音色; R20: 持有 player 实例)
-    public func auditionSubtitle(_ item: SubtitleItem) async {
-        do {
-            let voice = project.llmConfig.targetLanguageVoiceCode
-            if item.dubbedAudioURL == nil || !FileManager.default.fileExists(atPath: item.dubbedAudioURL!.path) {
-                try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
+    /// 试听目标类型
+    public enum AuditionTarget {
+        case original
+        case translated
+    }
+
+    /// 试听单句音频 (支持原声片段与译文配音智能切换)
+    /// - Parameters:
+    ///   - item: 字幕项
+    ///   - target: .original 播放原声片段；.translated 播放翻译配音
+    public func auditionSubtitle(_ item: SubtitleItem, target: AuditionTarget = .original) async {
+        // 1. 停止上一次未完成的试听播放及视频主播放器，避免混音杂糅
+        self.player.pause()
+        self.isPlaying = false
+        self.auditionPlayer?.pause()
+        self.auditionPlayer = nil
+
+        if target == .translated && !item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // 播放翻译后的配音语音 (TTS)
+            do {
+                item.isGeneratingAudio = true
+                defer { item.isGeneratingAudio = false }
+                let voice = project.llmConfig.targetLanguageVoiceCode
+                if item.dubbedAudioURL == nil || !FileManager.default.fileExists(atPath: item.dubbedAudioURL!.path) {
+                    try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
+                }
+                if let audioURL = item.dubbedAudioURL {
+                    let p = AVPlayer(url: audioURL)
+                    self.auditionPlayer = p
+                    p.play()
+                    statusMessage = "正在试听译文配音: \(item.translatedText.prefix(25))..."
+                }
+            } catch {
+                statusMessage = "试听生成失败: \(error.localizedDescription)"
             }
-            if let audioURL = item.dubbedAudioURL {
-                let p = AVPlayer(url: audioURL)
-                self.auditionPlayer = p
-                p.play()
+        } else {
+            // 播放原声语音 (Rule 1 & Rule 3: 未选择或选择在原文时)
+            guard let mediaURL = project.audioURL ?? project.videoURL else {
+                statusMessage = "未找到可播放的原声音频素材"
+                return
             }
-        } catch {
-            statusMessage = "试听生成失败: \(error.localizedDescription)"
+            let playerItem = AVPlayerItem(url: mediaURL)
+            playerItem.forwardPlaybackEndTime = item.endTime
+            let p = AVPlayer(playerItem: playerItem)
+            self.auditionPlayer = p
+            await p.seek(to: item.startTime, toleranceBefore: .zero, toleranceAfter: .zero)
+            p.play()
+            self.seek(to: item.startTime)
+            statusMessage = "正在试听原声: [\(item.startTime.displayFormat) ➔ \(item.endTime.displayFormat)] \(item.originalText.prefix(25))..."
         }
     }
 
