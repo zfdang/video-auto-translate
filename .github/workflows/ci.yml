@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-scripts:
+    name: Test Release Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Run script tests
+        run: |
+          python3 scripts/test-release-metadata.py
+          python3 scripts/test-release-notes.py
+
+  build-and-test:
+    name: Build & Test (macOS arm64)
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Compute release metadata
+        id: version
+        run: |
+          scripts/release-metadata.sh | tee "$RUNNER_TEMP/release-version"
+          cat "$RUNNER_TEMP/release-version" >> "$GITHUB_ENV"
+
+      - name: Test release scripts
+        run: |
+          python3 scripts/test-release-metadata.py
+          python3 scripts/test-release-notes.py
+
+      - name: Swift Test
+        run: swift test
+
+      - name: Build macOS App
+        run: ./build_app.sh
+
+      - name: Package Release
+        run: ./scripts/package-release.sh
+
+      - name: Verify build artifacts
+        run: |
+          ls -lh dist/release
+          test -d "dist/VideoAutoTranslate.app"
+          test -f "dist/VideoAutoTranslate.app/Contents/MacOS/VideoAutoTranslateApp"
+          test -f "dist/release/VideoAutoTranslate_${RELEASE_TAG}_macOS_arm64.dmg"
+          test -f "dist/release/VideoAutoTranslate_${RELEASE_TAG}_macOS_arm64.zip"
+          test -f "dist/release/SHA256SUMS.txt"
+
+      - name: Upload CI Artifacts
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: VideoAutoTranslate-CI-${{ github.sha }}
+          path: dist/release/*
+          retention-days: 7

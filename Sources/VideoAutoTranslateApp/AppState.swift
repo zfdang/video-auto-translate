@@ -108,7 +108,7 @@ public final class AppState: ObservableObject {
             queue: .main
         ) { [weak self] note in
             if let url = note.object as? URL {
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     self?.openVideo(url: url)
                 }
             }
@@ -204,7 +204,7 @@ public final class AppState: ObservableObject {
             }
             do {
                 try await ollamaProbe.pullModel(name: name, baseURL: project.llmConfig.ollamaBaseURL) { [weak self] progress, speed in
-                    Task { @MainActor in
+                    Task { @MainActor [weak self] in
                         self?.ollamaPullStates[name] = .downloading(progress: progress, speed: speed)
                     }
                 }

@@ -286,8 +286,9 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
         if let cancelURL = URL(string: "\(asrBaseURL)/v1/models/download/cancel?model_id=\(presetId)") {
             var request = URLRequest(url: cancelURL)
             request.httpMethod = "POST"
+            let finalRequest = request
             Task {
-                _ = try? await URLSession.shared.data(for: request)
+                _ = try? await URLSession.shared.data(for: finalRequest)
             }
         }
     }
