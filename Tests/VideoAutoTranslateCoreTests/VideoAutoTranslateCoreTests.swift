@@ -339,4 +339,89 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertEqual(newProject.subtitles.first?.translatedText, "测试持久化")
         XCTAssertFalse(newProject.isDirty)
     }
+
+    func testSubtitleTranslatorResilientParsing() throws {
+        let translator = SubtitleTranslator()
+        let item1 = SubtitleItem(startTime: .zero, endTime: .from(seconds: 1), originalText: "Bonjour")
+        let item2 = SubtitleItem(startTime: .from(seconds: 1), endTime: .from(seconds: 2), originalText: "How are you")
+        let chunk = [item1, item2]
+
+        // 1. 标准 Markdown 代码块
+        let mdJSON = """
+        ```json
+        [
+          {"id": "\(item1.id.uuidString)", "translation": "你好"},
+          {"id": "\(item2.id.uuidString)", "translation": "你好吗"}
+        ]
+        ```
+        """
+        let res1 = try translator.parseTranslationEntries(from: mdJSON, chunk: chunk)
+        XCTAssertEqual(res1.count, 2)
+        XCTAssertEqual(res1[0].translation, "你好")
+
+        // 2. 包含非法转义序列 \' 以及尾随逗号
+        let brokenEscapeJSON = """
+        [
+          {"id": "\(item1.id.uuidString)", "translation": "c\\'est la vie"},
+          {"id": "\(item2.id.uuidString)", "translation": "fine",}
+        ]
+        """
+        let res2 = try translator.parseTranslationEntries(from: brokenEscapeJSON, chunk: chunk)
+        XCTAssertEqual(res2.count, 2)
+        XCTAssertEqual(res2[0].translation, "c'est la vie")
+
+        // 3. 包含尾随注释及带括号的引用 [1]
+        let trailingCommentJSON = """
+        [
+          {"id": "\(item1.id.uuidString)", "translation": "你好"}
+        ]
+        Note: [1] The word Bonjour was translated colloquially.
+        """
+        let res3 = try translator.parseTranslationEntries(from: trailingCommentJSON, chunk: chunk)
+        XCTAssertEqual(res3.count, 1)
+        XCTAssertEqual(res3[0].translation, "你好")
+
+        // 4. 对象包裹结构 (translations, data, items)
+        let wrappedJSON = """
+        {
+          "translations": [
+            {"id": "\(item1.id.uuidString)", "translation": "你好"}
+          ]
+        }
+        """
+        let res4 = try translator.parseTranslationEntries(from: wrappedJSON, chunk: chunk)
+        XCTAssertEqual(res4.count, 1)
+
+        // 5. 序号回退映射 (模型未原样返回 UUID，返回 1, 2 序号)
+        let indexJSON = """
+        [
+          {"id": "1", "translation": "你好"},
+          {"id": "2", "translation": "你好吗"}
+        ]
+        """
+        let res5 = try translator.parseTranslationEntries(from: indexJSON, chunk: chunk)
+        XCTAssertEqual(res5.count, 2)
+        XCTAssertEqual(res5[0].id, item1.id.uuidString)
+        XCTAssertEqual(res5[1].id, item2.id.uuidString)
+
+        // 6. 纯字符串数组对应映射
+        let strArrayJSON = """
+        ["你好", "你好吗"]
+        """
+        let res6 = try translator.parseTranslationEntries(from: strArrayJSON, chunk: chunk)
+        XCTAssertEqual(res6.count, 2)
+        XCTAssertEqual(res6[0].id, item1.id.uuidString)
+        XCTAssertEqual(res6[0].translation, "你好")
+
+        // 7. 单个对象容错提取（兄弟对象含未转义引号）
+        let brokenQuotesJSON = """
+        [
+          {"id": "\(item1.id.uuidString)", "translation": "Bonjour"},
+          {"id": "\(item2.id.uuidString)", "translation": "He said \\"yes\\" to me"}
+        ]
+        """
+        let res7 = try translator.parseTranslationEntries(from: brokenQuotesJSON, chunk: chunk)
+        XCTAssertFalse(res7.isEmpty)
+        XCTAssertEqual(res7[0].translation, "Bonjour")
+    }
 }

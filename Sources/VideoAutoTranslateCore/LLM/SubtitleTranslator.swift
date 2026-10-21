@@ -79,6 +79,8 @@ public final class SubtitleTranslator {
         1. 保持原文的语气、情感和语境，口语化、接地气，绝不要生硬直译。
         2. 字符长度限制：每行译文长度必须适中，杜绝长篇大论，方便观众快速阅读。
         3. 必须输出严格的 JSON 数组格式，不要输出任何其他的解释或 Markdown 代码块以外的内容。
+        4. 严格保留每一项的原始 "id"，禁止随意修改或遗漏 "id"。
+        5. 译文中如需使用引号，请使用中文双引号“”或英文单引号，不要在 JSON 字符串内部使用未转义的英文双引号。
         
         输出示例：
         [
@@ -105,24 +107,33 @@ public final class SubtitleTranslator {
             temperature: temperature
         )
 
-        // 解析返回的 JSON 数组
-        let entries = try parseTranslationEntries(from: responseText)
+        // 解析返回的 JSON 数组 (传入当前 chunk 辅助序号或属性兜底匹配)
+        let entries = try parseTranslationEntries(from: responseText, chunk: chunk)
 
         // 回填至各 SubtitleItem (R07 / FU06: 严格快照校验保护人工在途修改; R08: 安全合并去重; R17: 校验批次有效性)
-        let entryDict = Dictionary(
+        var entryDict = Dictionary(
             entries.map { ($0.id, $0.translation) },
             uniquingKeysWith: { first, _ in first }
         )
 
-        let matchedCount = chunk.filter { entryDict[$0.id.uuidString] != nil }.count
+        var matchedCount = chunk.filter { entryDict[$0.id.uuidString] != nil }.count
+        // 兜底：若按 UUID 无法匹配（例如模型重排或改写了 ID），但返回项数与批次项数一致，按序对应匹配
+        if matchedCount == 0 && entries.count == chunk.count {
+            for (idx, item) in chunk.enumerated() {
+                entryDict[item.id.uuidString] = entries[idx].translation
+            }
+            matchedCount = chunk.count
+        }
+
         guard matchedCount > 0 else {
             throw LLMError.parsingFailed("模型返回内容中未包含当前批次的任何字幕 ID (请求 \(chunk.count) 条，匹配 0 条)")
         }
 
+        let finalDict = entryDict
         await MainActor.run {
             for snap in snapshot {
                 guard let item = chunk.first(where: { $0.id == snap.id }),
-                      let translated = entryDict[item.id.uuidString] else {
+                      let translated = finalDict[item.id.uuidString] else {
                     continue
                 }
                 // R07 / FU06: 严格比较当前值与请求发起时的快照，用户任何手动改动（包括清空）均保留，绝不覆盖
@@ -134,8 +145,8 @@ public final class SubtitleTranslator {
         }
     }
 
-    /// 提取并解析模型返回内容中的 JSON
-    private func parseTranslationEntries(from rawText: String) throws -> [TranslationEntry] {
+    /// 提取并解析模型返回内容中的 JSON (多层级容错解析器)
+    internal func parseTranslationEntries(from rawText: String, chunk: [SubtitleItem] = []) throws -> [TranslationEntry] {
         var text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // 剥离可能存在的 ```json ... ``` 包裹
@@ -150,28 +161,113 @@ public final class SubtitleTranslator {
 
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // 策略 1: 尝试找到最外层的 '[' 和 ']' 数组
-        if let firstBracket = text.firstIndex(of: "["),
-           let lastBracket = text.lastIndex(of: "]"),
-           firstBracket <= lastBracket {
-            let jsonSubstring = text[firstBracket...lastBracket]
-            if let data = String(jsonSubstring).data(using: .utf8),
-               let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                var entries: [TranslationEntry] = []
-                for dict in jsonArray {
-                    let idVal = dict["id"] ?? dict["ID"] ?? dict["index"] ?? ""
-                    let idStr = String(describing: idVal).trimmingCharacters(in: .whitespacesAndNewlines)
-                    let transVal = dict["translation"] ?? dict["translated"] ?? dict["target"] ?? dict["translated_text"] ?? dict["chinese"] ?? dict["text"]
-                    let transStr: String
-                    if let s = transVal as? String {
-                        transStr = s
-                    } else if let num = transVal as? NSNumber {
-                        transStr = num.stringValue
-                    } else {
-                        transStr = ""
+        // 预处理常见的大模型 JSON 瑕疵
+        var sanitized = text
+        // 修复非法转义序列：如 \' 替换为 '
+        sanitized = sanitized.replacingOccurrences(of: "\\'", with: "'")
+        // 移除数组或对象末尾多余逗号 (trailing comma: ", ]" 或 ", }")
+        if let commaRegex = try? NSRegularExpression(pattern: ",\\s*([\\]\\}])", options: []) {
+            let range = NSRange(location: 0, length: (sanitized as NSString).length)
+            sanitized = commaRegex.stringByReplacingMatches(in: sanitized, options: [], range: range, withTemplate: "$1")
+        }
+
+        // 辅助闭包：对提取出的单项进行标准化匹配与校验
+        func normalizeEntry(id: String, translation: String, index: Int) -> TranslationEntry? {
+            let cleanTrans = translation.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanTrans.isEmpty else { return nil }
+            let cleanId = id.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // 1. 若 ID 直接匹配 chunk 中的某项 UUID (忽略大小写)
+            if let matched = chunk.first(where: { $0.id.uuidString.caseInsensitiveCompare(cleanId) == .orderedSame }) {
+                return TranslationEntry(id: matched.id.uuidString, translation: cleanTrans)
+            }
+
+            // 2. 若 ID 是数字序号 (例如 1, 2... 或 0, 1...)
+            if let num = Int(cleanId) {
+                if num >= 1 && num <= chunk.count {
+                    return TranslationEntry(id: chunk[num - 1].id.uuidString, translation: cleanTrans)
+                } else if num == 0 && !chunk.isEmpty {
+                    return TranslationEntry(id: chunk[0].id.uuidString, translation: cleanTrans)
+                }
+            }
+
+            // 3. 若 ID 形如 "item_1", "line_1"
+            let digitsOnly = cleanId.filter { $0.isNumber }
+            if !digitsOnly.isEmpty, let num = Int(digitsOnly), num >= 1 && num <= chunk.count {
+                return TranslationEntry(id: chunk[num - 1].id.uuidString, translation: cleanTrans)
+            }
+
+            // 4. 若 ID 为空但有 index 序号
+            if cleanId.isEmpty && index >= 0 && index < chunk.count {
+                return TranslationEntry(id: chunk[index].id.uuidString, translation: cleanTrans)
+            }
+
+            // 5. 原样保留
+            if !cleanId.isEmpty {
+                return TranslationEntry(id: cleanId, translation: cleanTrans)
+            }
+            return nil
+        }
+
+        // 辅助函数：根据引号状态精确定位匹配闭合括号（避免将尾部备注中的 "[1]" 错误视作数组结束）
+        func findMatchingClosingBracket(in str: String, openChar: Character, closeChar: Character) -> String.Index? {
+            guard let start = str.firstIndex(of: openChar) else { return nil }
+            var depth = 0
+            var inString = false
+            var isEscaped = false
+
+            var idx = start
+            while idx < str.endIndex {
+                let ch = str[idx]
+                if isEscaped {
+                    isEscaped = false
+                } else if ch == "\\" {
+                    isEscaped = true
+                } else if ch == "\"" {
+                    inString.toggle()
+                } else if !inString {
+                    if ch == openChar {
+                        depth += 1
+                    } else if ch == closeChar {
+                        depth -= 1
+                        if depth == 0 {
+                            return idx
+                        }
                     }
-                    if !idStr.isEmpty && !transStr.isEmpty {
-                        entries.append(TranslationEntry(id: idStr, translation: transStr))
+                }
+                idx = str.index(after: idx)
+            }
+            return nil
+        }
+
+        // 策略 1: 尝试解析最外层的 '[' 和 ']' 数组 (精确闭合扫描)
+        if let firstBracket = sanitized.firstIndex(of: "["),
+           let closeBracket = findMatchingClosingBracket(in: sanitized, openChar: "[", closeChar: "]") ?? sanitized.lastIndex(of: "]"),
+           firstBracket <= closeBracket {
+            let jsonSubstring = String(sanitized[firstBracket...closeBracket])
+            if let data = jsonSubstring.data(using: .utf8),
+               let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [Any] {
+                var entries: [TranslationEntry] = []
+                for (idx, element) in jsonArray.enumerated() {
+                    if let dict = element as? [String: Any] {
+                        let idVal = dict["id"] ?? dict["ID"] ?? dict["index"] ?? ""
+                        let idStr = String(describing: idVal).trimmingCharacters(in: .whitespacesAndNewlines)
+                        let transVal = dict["translation"] ?? dict["translated"] ?? dict["target"] ?? dict["translated_text"] ?? dict["chinese"] ?? dict["text"]
+                        let transStr: String
+                        if let s = transVal as? String {
+                            transStr = s
+                        } else if let num = transVal as? NSNumber {
+                            transStr = num.stringValue
+                        } else {
+                            transStr = ""
+                        }
+                        if let entry = normalizeEntry(id: idStr, translation: transStr, index: idx) {
+                            entries.append(entry)
+                        }
+                    } else if let str = element as? String, idx < chunk.count {
+                        if let entry = normalizeEntry(id: chunk[idx].id.uuidString, translation: str, index: idx) {
+                            entries.append(entry)
+                        }
                     }
                 }
                 if !entries.isEmpty {
@@ -180,30 +276,37 @@ public final class SubtitleTranslator {
             }
         }
 
-        // 策略 2: 尝试找到最外层的 '{' 和 '}' 字典 (例如 {"translations": [...]} 或 {"data": [...]})
-        if let firstBrace = text.firstIndex(of: "{"),
-           let lastBrace = text.lastIndex(of: "}"),
-           firstBrace <= lastBrace {
-            let jsonSubstring = text[firstBrace...lastBrace]
-            if let data = String(jsonSubstring).data(using: .utf8),
+        // 策略 2: 尝试解析最外层的 '{' 和 '}' 字典 (例如 {"translations": [...]} 或 {"data": [...]})
+        if let firstBrace = sanitized.firstIndex(of: "{"),
+           let closeBrace = findMatchingClosingBracket(in: sanitized, openChar: "{", closeChar: "}") ?? sanitized.lastIndex(of: "}"),
+           firstBrace <= closeBrace {
+            let jsonSubstring = String(sanitized[firstBrace...closeBrace])
+            if let data = jsonSubstring.data(using: .utf8),
                let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                // 2.1 检查字典中的数组字段
                 for (_, val) in dict {
-                    if let arr = val as? [[String: Any]] {
+                    if let arr = val as? [Any] {
                         var entries: [TranslationEntry] = []
-                        for item in arr {
-                            let idVal = item["id"] ?? item["ID"] ?? item["index"] ?? ""
-                            let idStr = String(describing: idVal).trimmingCharacters(in: .whitespacesAndNewlines)
-                            let transVal = item["translation"] ?? item["translated"] ?? item["target"] ?? item["translated_text"] ?? item["chinese"] ?? item["text"]
-                            let transStr: String
-                            if let s = transVal as? String {
-                                transStr = s
-                            } else if let num = transVal as? NSNumber {
-                                transStr = num.stringValue
-                            } else {
-                                transStr = ""
-                            }
-                            if !idStr.isEmpty && !transStr.isEmpty {
-                                entries.append(TranslationEntry(id: idStr, translation: transStr))
+                        for (idx, item) in arr.enumerated() {
+                            if let itemDict = item as? [String: Any] {
+                                let idVal = itemDict["id"] ?? itemDict["ID"] ?? itemDict["index"] ?? ""
+                                let idStr = String(describing: idVal).trimmingCharacters(in: .whitespacesAndNewlines)
+                                let transVal = itemDict["translation"] ?? itemDict["translated"] ?? itemDict["target"] ?? itemDict["translated_text"] ?? itemDict["chinese"] ?? itemDict["text"]
+                                let transStr: String
+                                if let s = transVal as? String {
+                                    transStr = s
+                                } else if let num = transVal as? NSNumber {
+                                    transStr = num.stringValue
+                                } else {
+                                    transStr = ""
+                                }
+                                if let entry = normalizeEntry(id: idStr, translation: transStr, index: idx) {
+                                    entries.append(entry)
+                                }
+                            } else if let str = item as? String, idx < chunk.count {
+                                if let entry = normalizeEntry(id: chunk[idx].id.uuidString, translation: str, index: idx) {
+                                    entries.append(entry)
+                                }
                             }
                         }
                         if !entries.isEmpty {
@@ -211,6 +314,88 @@ public final class SubtitleTranslator {
                         }
                     }
                 }
+
+                // 2.2 检查字典本身是否就是单条翻译对象
+                let idVal = dict["id"] ?? dict["ID"] ?? ""
+                let idStr = String(describing: idVal).trimmingCharacters(in: .whitespacesAndNewlines)
+                let transVal = dict["translation"] ?? dict["translated"] ?? dict["target"] ?? dict["text"]
+                if let transStr = transVal as? String, !transStr.isEmpty {
+                    if let entry = normalizeEntry(id: idStr, translation: transStr, index: 0) {
+                        return [entry]
+                    }
+                }
+            }
+        }
+
+        // 策略 3: 单个对象逐个容错提取 (针对某个对象包含未转义双引号或截断导致整体 JSON 语法错误的情形)
+        if let objRegex = try? NSRegularExpression(pattern: "\\{[^{}]*?\\}", options: [.dotMatchesLineSeparators]) {
+            let nsStr = sanitized as NSString
+            let matches = objRegex.matches(in: sanitized, options: [], range: NSRange(location: 0, length: nsStr.length))
+            var entries: [TranslationEntry] = []
+            for (idx, match) in matches.enumerated() {
+                let block = nsStr.substring(with: match.range)
+                if let blockData = block.data(using: .utf8),
+                   let itemDict = try? JSONSerialization.jsonObject(with: blockData) as? [String: Any] {
+                    let idVal = itemDict["id"] ?? itemDict["ID"] ?? ""
+                    let idStr = String(describing: idVal).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let transVal = itemDict["translation"] ?? itemDict["translated"] ?? itemDict["target"] ?? itemDict["text"]
+                    if let transStr = transVal as? String,
+                       let entry = normalizeEntry(id: idStr, translation: transStr, index: idx) {
+                        entries.append(entry)
+                        continue
+                    }
+                }
+                // 若该对象块整体解析失败（如内部引号冲突），使用正则提取键值
+                let idPattern = #""id"\s*:\s*"([^"]+)""#
+                let transPattern = #""translation"\s*:\s*"((?:[^"\\]|\\.)*)""#
+                if let idReg = try? NSRegularExpression(pattern: idPattern, options: .caseInsensitive),
+                   let transReg = try? NSRegularExpression(pattern: transPattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) {
+                    let bNs = block as NSString
+                    let bRange = NSRange(location: 0, length: bNs.length)
+                    var idStr = ""
+                    var transStr = ""
+                    if let idM = idReg.firstMatch(in: block, options: [], range: bRange), idM.numberOfRanges > 1 {
+                        idStr = bNs.substring(with: idM.range(at: 1))
+                    }
+                    if let trM = transReg.firstMatch(in: block, options: [], range: bRange), trM.numberOfRanges > 1 {
+                        transStr = bNs.substring(with: trM.range(at: 1))
+                    }
+                    if !idStr.isEmpty && !transStr.isEmpty,
+                       let entry = normalizeEntry(id: idStr, translation: transStr, index: idx) {
+                        entries.append(entry)
+                    }
+                }
+            }
+            if !entries.isEmpty {
+                return entries
+            }
+        }
+
+        // 策略 4: 行级正则兜底
+        let lineIdPattern = #""id"\s*:\s*"([A-Fa-f0-9\-]+|\d+)""#
+        let lineTransPattern = #""translation"\s*:\s*"((?:[^"\\]|\\.)*)""#
+        if let idReg = try? NSRegularExpression(pattern: lineIdPattern, options: .caseInsensitive),
+           let transReg = try? NSRegularExpression(pattern: lineTransPattern, options: .caseInsensitive) {
+            let lines = sanitized.components(separatedBy: .newlines)
+            var entries: [TranslationEntry] = []
+            for (idx, line) in lines.enumerated() {
+                let lNs = line as NSString
+                let lRange = NSRange(location: 0, length: lNs.length)
+                var idStr = ""
+                var transStr = ""
+                if let idM = idReg.firstMatch(in: line, options: [], range: lRange), idM.numberOfRanges > 1 {
+                    idStr = lNs.substring(with: idM.range(at: 1))
+                }
+                if let trM = transReg.firstMatch(in: line, options: [], range: lRange), trM.numberOfRanges > 1 {
+                    transStr = lNs.substring(with: trM.range(at: 1))
+                }
+                if !idStr.isEmpty && !transStr.isEmpty,
+                   let entry = normalizeEntry(id: idStr, translation: transStr, index: idx) {
+                    entries.append(entry)
+                }
+            }
+            if !entries.isEmpty {
+                return entries
             }
         }
 

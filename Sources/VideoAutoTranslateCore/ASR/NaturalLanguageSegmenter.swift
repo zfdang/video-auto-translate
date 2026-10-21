@@ -10,11 +10,11 @@ public final class NaturalLanguageSegmenter {
     /// - Parameters:
     ///   - tokens: 词级时间戳序列
     ///   - maxCharsPerLine: 单行最大字符数（中文建议 22，西文建议 42）
-    ///   - maxPauseGapSeconds: 判定切分断句的最大静音停顿阈值（默认 0.35 秒）
+    ///   - maxPauseGapSeconds: 判定切分断句的最大静音停顿阈值（默认 0.65 秒）
     public func segment(
         tokens: [WordToken],
-        maxCharsPerLine: Int = 24,
-        maxPauseGapSeconds: Double = 0.35
+        maxCharsPerLine: Int = 42,
+        maxPauseGapSeconds: Double = 0.65
     ) -> [SubtitleItem] {
         guard !tokens.isEmpty else { return [] }
 
@@ -35,7 +35,7 @@ public final class NaturalLanguageSegmenter {
                 let nextToken = tokens[index + 1]
                 let pauseGap = nextToken.startCMTime.secondsValue - token.endCMTime.secondsValue
 
-                // 规则 1: 停顿大于阈值切分
+                // 规则 1: 停顿大于阈值切分 (放宽到 0.65 秒，避免正常说话短暂停顿被打断)
                 if pauseGap >= maxPauseGapSeconds {
                     shouldSplit = true
                 }
@@ -45,7 +45,14 @@ public final class NaturalLanguageSegmenter {
                 }
                 // 规则 3: 字符数达到单行上限
                 else if currentChars >= maxCharsPerLine {
-                    shouldSplit = true
+                    // 若当前词为常见紧密修饰词或介词，避免生硬切断（如 very, too, the, a, of）
+                    let lower = token.text.lowercased().trimmingCharacters(in: .punctuationCharacters)
+                    let modifiers = ["very", "too", "more", "most", "the", "a", "an", "to", "of", "and", "in", "on", "at", "for", "with", "so"]
+                    if modifiers.contains(lower) && currentChars < maxCharsPerLine + 12 {
+                        shouldSplit = false
+                    } else {
+                        shouldSplit = true
+                    }
                 }
             }
 
