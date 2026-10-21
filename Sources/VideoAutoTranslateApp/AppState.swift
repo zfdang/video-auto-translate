@@ -754,17 +754,32 @@ public final class AppState: ObservableObject {
 
         Task {
             if preset.isRepo {
-                if !sidecarManager.status.isRunning {
+                // 确保 ASR 服务在线就绪（若未启动或已断开，自动唤醒并等待健康就绪）
+                let isReady = await sidecarManager.ensureRunning()
+                guard isReady else {
                     await MainActor.run {
-                        self.modelStorageManager.modelStates[preset.id] = .downloading(progress: 0.0, speed: "正在唤醒 ASR 引擎...")
+                        let reason: String
+                        if case .error(let msg) = self.sidecarManager.status {
+                            reason = msg
+                        } else {
+                            reason = "本地 ASR 引擎未能成功启动，请检查 Python 依赖"
+                        }
+                        self.modelStorageManager.modelStates[preset.id] = .failed(reason)
+                        self.errorMessage = reason
+                        self.statusMessage = "ASR 引擎启动失败"
                     }
-                    _ = await sidecarManager.ensureRunning()
+                    return
                 }
+
+                await MainActor.run {
+                    self.modelStorageManager.modelStates[preset.id] = .downloading(progress: 0.0, speed: "正在连接下载镜像源...")
+                }
+
                 do {
                     try await modelStorageManager.triggerServerRepoDownload(preset: preset)
                 } catch {
                     await MainActor.run {
-                        self.modelStorageManager.modelStates[preset.id] = .failed("启动失败: \(error.localizedDescription)")
+                        self.modelStorageManager.modelStates[preset.id] = .failed("连接服务失败: \(error.localizedDescription)")
                         self.errorMessage = "启动模型下载失败: \(error.localizedDescription)"
                         self.statusMessage = "模型下载启动失败"
                     }
