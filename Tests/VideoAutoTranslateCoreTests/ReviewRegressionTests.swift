@@ -60,4 +60,18 @@ final class ReviewRegressionTests: XCTestCase {
         XCTAssertThrowsError(try translator.validatedTranslations([entries[0], entries[0]], for: rows))
     }
 
+    func testProjectAudioSurvivesTemporarySourceRemoval() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let audio = folder.appendingPathComponent("temporary.wav")
+        try Data("saved audio".utf8).write(to: audio)
+        let row = SubtitleItem(startTime: .zero, endTime: .from(seconds: 1), originalText: "hello", dubbedAudioURL: audio)
+        let url = folder.appendingPathComponent("Example.vatproject")
+        try ProjectStore.write(documentData: ProjectState(subtitles: [row]).encodeDocument(), to: url)
+        try FileManager.default.removeItem(at: audio)
+        let restored = try ProjectStore.read(from: url)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(restored.subtitles.first?.dubbedAudioURL)), Data("saved audio".utf8))
+    }
+
 }

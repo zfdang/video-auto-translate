@@ -7,9 +7,19 @@ import VideoAutoTranslateCore
 
 @MainActor
 public final class AppState: ObservableObject {
+    public static weak var current: AppState?
+    @Published public var documentURL: URL?
+    @Published public var saveStatus = "尚未保存"
+    @Published public var recoveryAvailable = false
+    private var recoveryTask: Task<Void, Never>?
+    private var recoveryWrite: Task<Void, Error>?
+    private let persistsRecovery: Bool
+    private let recoveryURL: URL
+
     @Published public var project: ProjectState = ProjectState() {
         didSet {
             bindProjectSubtitles()
+            if project.isDirty && (!oldValue.isDirty || oldValue.subtitles.map(\.id) != project.subtitles.map(\.id)) { scheduleRecovery() }
         }
     }
     public let player: AVPlayer = AVPlayer()
@@ -76,14 +86,17 @@ public final class AppState: ObservableObject {
                     self.lastTextEditSnapshotTime = Date()
                     self.lastTextEditID = itemID
                 }
-                if !self.project.isDirty {
-                    self.project.isDirty = true
-                }
+                if !self.project.isDirty { self.project.isDirty = true }
+                self.scheduleRecovery()
             }
         }
     }
 
-    public init(probeServices: Bool = true) {
+    public init(probeServices: Bool = true, recoveryURL: URL? = nil) {
+        self.persistsRecovery = probeServices || recoveryURL != nil
+        self.recoveryURL = recoveryURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("VideoAutoTranslate/Recovery.vatproject")
+        self.recoveryAvailable = probeServices && FileManager.default.fileExists(atPath: self.recoveryURL.path)
+        AppState.current = self
         setupTimeObserver()
         bindProjectSubtitles()
 
@@ -253,6 +266,10 @@ public final class AppState: ObservableObject {
 
     /// 打开本地视频文件 (R03: 递增代际，终止旧任务)
     public func openVideo(url: URL) {
+        guard confirmReplacingProject() else { return }
+        documentURL = nil
+        saveStatus = "尚未保存"
+        recoveryTask?.cancel()
         cancelAllTasks()
         projectGeneration += 1
 
@@ -278,6 +295,7 @@ public final class AppState: ObservableObject {
     public func runTranscription() async {
         guard let videoURL = project.videoURL else { return }
 
+        guard confirmReplacingProject() else { return }
         transcriptionTask?.cancel()
         activeTranscriptionTask?.cancel()
         let currentGen = projectGeneration
@@ -860,21 +878,61 @@ public final class AppState: ObservableObject {
 
     // MARK: - 工程持久化与存取 (R04)
 
-    /// 保存当前工程 (Cmd+S)
     public func saveProject(to url: URL) throws {
-        let data = try project.encodeDocument()
-        try data.write(to: url, options: .atomic)
+        try ProjectStore.write(documentData: project.encodeDocument(), to: url)
+        recoveryTask?.cancel()
+        recoveryWrite?.cancel()
+        ProjectStore.removeCheckpoint(at: recoveryURL)
+        recoveryAvailable = false
+        documentURL = url
         project.isDirty = false
-        statusMessage = "工程已保存: \(url.lastPathComponent)"
+        saveStatus = "已保存"
+        statusMessage = "工程已保存：\(url.lastPathComponent)"
     }
 
-    /// 从文件加载工程
+    @discardableResult public func saveProjectInteractively(chooseNewURL: Bool = false) -> Bool {
+        var destination = chooseNewURL ? nil : documentURL
+        if destination == nil {
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "字幕工程.vatproject"
+            guard panel.runModal() == .OK, let url = panel.url else { return false }
+            destination = url
+        }
+        do { try saveProject(to: destination!); return true }
+        catch { saveStatus = "保存失败"; errorMessage = error.localizedDescription; return false }
+    }
+
+    public func confirmReplacingProject() -> Bool {
+        guard persistsRecovery, project.isDirty else { return true }
+        let alert = NSAlert()
+        alert.messageText = "是否保存当前工程的修改？"
+        alert.informativeText = "保存工程可在下次继续校对；导出字幕不能替代工程保存。"
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: "放弃修改")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return saveProjectInteractively()
+        case .alertThirdButtonReturn:
+            recoveryTask?.cancel()
+            recoveryWrite?.cancel()
+            ProjectStore.removeCheckpoint(at: recoveryURL)
+            return true
+        default: return false
+        }
+    }
+
+    public func openProjectInteractively() {
+        guard confirmReplacingProject() else { return }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try loadProject(from: url) } catch { errorMessage = "无法打开工程：\(error.localizedDescription)" }
+    }
+
     public func loadProject(from url: URL) throws {
-        let data = try Data(contentsOf: url)
-        let decoder = JSONDecoder()
-        let doc = try decoder.decode(ProjectDocument.self, from: data)
+        let doc = try ProjectStore.read(from: url)
+        recoveryTask?.cancel()
         cancelAllTasks()
-        projectGeneration += 1
         undoStack.removeAll()
         redoStack.removeAll()
         canUndo = false
@@ -882,11 +940,60 @@ public final class AppState: ObservableObject {
         lastTextEditID = nil
         project.reset()
         project.restore(from: doc)
+        project.audioURL = project.videoURL // Original-quality audio remains available after reopening.
+        documentURL = url
+        saveStatus = "已保存"
         if let video = project.videoURL {
-            let item = AVPlayerItem(url: video)
-            player.replaceCurrentItem(with: item)
+            if FileManager.default.fileExists(atPath: video.path) {
+                player.replaceCurrentItem(with: AVPlayerItem(url: video))
+            } else { errorMessage = "工程已打开，但原视频已移动。请使用「重新定位媒体」选择原文件。" }
         }
-        statusMessage = "已加载工程: \(url.lastPathComponent)"
+        statusMessage = "已加载工程：\(url.lastPathComponent)"
+    }
+
+    public func relinkMedia() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        project.videoURL = url
+        project.audioURL = url
+        project.isDirty = true
+        player.replaceCurrentItem(with: AVPlayerItem(url: url))
+        scheduleRecovery()
+    }
+
+    public func scheduleRecovery() {
+        guard persistsRecovery else { return }
+        recoveryTask?.cancel()
+        recoveryWrite?.cancel()
+        recoveryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 700_000_000)
+                guard let self = self, self.project.isDirty else { return }
+                let data = try self.project.encodeDocument()
+                let target = self.recoveryURL
+                self.saveStatus = "正在保存恢复副本…"
+                let write = Task.detached {
+                    try Task.checkCancellation()
+                    try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try ProjectStore.write(documentData: data, to: target)
+                }
+                self.recoveryWrite = write
+                try await write.value
+                if !Task.isCancelled { self.saveStatus = "恢复副本已保存；工程有修改" }
+            } catch is CancellationError { }
+            catch { self?.saveStatus = "恢复副本保存失败，请手动保存" }
+        }
+    }
+
+    public func restoreRecovery() {
+        do {
+            try loadProject(from: recoveryURL)
+            documentURL = nil
+            project.isDirty = true
+            recoveryAvailable = false
+            statusMessage = "已恢复上次未保存的编辑，请保存工程"
+        } catch { errorMessage = "恢复失败：\(error.localizedDescription)" }
     }
 
     // MARK: - 模型存储与下载管理

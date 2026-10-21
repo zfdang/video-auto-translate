@@ -62,6 +62,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        AppState.current?.confirmReplacingProject() == false ? .terminateCancel : .terminateNow
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // 应用退出时终止静默托管的后台 ASR 进程，释放显存与端口
         ASRSidecarManager.shared.stop()
@@ -77,7 +81,19 @@ struct VideoAutoTranslateApp: App {
             MainView()
                 .frame(minWidth: 960, minHeight: 600)
         }
+        .commands { ProjectCommands() }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
+    }
+}
+
+struct ProjectCommands: Commands {
+    @FocusedObject var appState: AppState?
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("打开工程…") { appState?.openProjectInteractively() }.keyboardShortcut("o")
+            Button("保存工程") { appState?.saveProjectInteractively() }.keyboardShortcut("s")
+            Button("工程另存为…") { appState?.saveProjectInteractively(chooseNewURL: true) }.keyboardShortcut("s", modifiers: [.command, .shift])
+        }
     }
 }

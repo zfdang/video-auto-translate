@@ -38,4 +38,19 @@ import CoreMedia
         XCTAssertFalse(app.project.isProcessing)
     }
 
+    func testRecoveryContainsCommittedTextAndSaveClearsCheckpoint() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let checkpoint = directory.appendingPathComponent("Recovery.vatproject")
+        let app = AppState(probeServices: false, recoveryURL: checkpoint)
+        app.project.subtitles = [SubtitleItem(startTime: .zero, endTime: .from(seconds: 1), originalText: "Before")]
+        app.project.subtitles[0].originalText = "Edited"
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        XCTAssertEqual(try ProjectStore.read(from: checkpoint).subtitles[0].originalText, "Edited")
+        try app.saveProject(to: directory.appendingPathComponent("Saved.vatproject"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: checkpoint.path))
+        XCTAssertFalse(app.project.isDirty)
+    }
+
 }

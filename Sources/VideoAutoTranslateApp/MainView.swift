@@ -10,6 +10,26 @@ public struct MainView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
+            HStack {
+                Menu("工程") {
+                    Button("打开工程…") { appState.openProjectInteractively() }
+                    Button("保存工程") { appState.saveProjectInteractively() }
+                    Button("另存为…") { appState.saveProjectInteractively(chooseNewURL: true) }
+                    Button("重新定位媒体…") { appState.relinkMedia() }
+                }
+                Text(appState.documentURL?.lastPathComponent ?? appState.project.videoURL?.lastPathComponent ?? "未命名工程")
+                    .lineLimit(1)
+                Text(appState.project.isDirty ? "有未保存修改 · \(appState.saveStatus)" : appState.saveStatus)
+                    .font(.caption).foregroundColor(.secondary)
+                Spacer()
+            }.padding(.horizontal, 12).padding(.vertical, 6)
+            if appState.recoveryAvailable {
+                HStack {
+                    Text("发现上次编辑的恢复副本")
+                    Button("恢复") { appState.restoreRecovery() }
+                    Button("暂不恢复") { appState.recoveryAvailable = false }
+                }.padding(8)
+            }
             // 顶部一体化工作流工具栏
             topWorkflowBar
 
@@ -37,6 +57,8 @@ public struct MainView: View {
             // 底部状态栏与进度
             bottomStatusBar
         }
+        .focusedSceneObject(appState)
+        .background(WindowCloseGuard(appState: appState).frame(width: 0, height: 0))
         .sheet(isPresented: $appState.showSettings) {
             SettingsView(appState: appState)
         }
