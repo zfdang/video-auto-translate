@@ -265,13 +265,17 @@ public final class AppState: ObservableObject {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
 
             var finalItems = items
+            var usedLLMSegmentation = false
             // 若大模型可用，进一步执行大模型智能语义断句规整
             let allTokens = items.flatMap { $0.words }
             if !allTokens.isEmpty && (project.llmConfig.providerType == .localOllama || !project.llmConfig.onlineAPIKey.isEmpty) {
-                project.currentStepName = "正在调用大模型执行智能语义断句规整..."
+                let modelName = project.llmConfig.effectiveModel
+                project.currentStepName = "正在调用大模型 (\(modelName)) 执行智能语义断句规整..."
+                statusMessage = "正在调用大模型 (\(modelName)) 执行智能语义断句规整..."
                 project.progress = 0.92
                 if let smartItems = try? await llmSegmenter.segment(tokens: allTokens, config: project.llmConfig), !smartItems.isEmpty {
                     finalItems = smartItems
+                    usedLLMSegmentation = true
                 }
             }
 
@@ -284,7 +288,11 @@ public final class AppState: ObservableObject {
             project.isProcessing = false
             project.progress = 1.0
             project.isDirty = true
-            statusMessage = "识别与智能断句完成，共生成 \(finalItems.count) 行字幕"
+            if usedLLMSegmentation {
+                statusMessage = "转录与智能断句完成，已由大模型规整为 \(finalItems.count) 行字幕"
+            } else {
+                statusMessage = "转录完成，共生成 \(finalItems.count) 行字幕"
+            }
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false

@@ -150,7 +150,7 @@ public struct MainView: View {
                     .buttonStyle(.borderedProminent)
                     .fixedSize()
                     .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
-                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳并切分字幕")
+                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳，并自动调用大模型进行智能语义断句规整")
                 } else {
                     Button(action: {
                         Task {
@@ -163,7 +163,7 @@ public struct MainView: View {
                     .buttonStyle(.bordered)
                     .fixedSize()
                     .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
-                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳并切分字幕")
+                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳，并自动调用大模型进行智能语义断句规整")
                 }
             }
             .padding(.horizontal, 6)
