@@ -27,8 +27,8 @@ public final class AudioExtractor {
 
     /// 从本地视频提取 16kHz 单声道 PCM WAV 格式音频
     public func extract16kMonoWav(from videoURL: URL, to outputWavURL: URL) async throws {
-        // 安全检查：严禁输出路径与输入视频相同，防止覆盖源视频 (R01)
-        guard outputWavURL.standardizedFileURL != videoURL.standardizedFileURL else {
+        // 安全检查：严禁输出路径与输入视频相同或指向同一文件，防止覆盖源视频 (R01 / FU02)
+        guard !outputWavURL.pointsToSameFile(as: videoURL) else {
             throw AudioExtractorError.writerFailed("输出音频路径不能与源视频路径相同")
         }
 

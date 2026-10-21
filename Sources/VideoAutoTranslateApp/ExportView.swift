@@ -153,8 +153,8 @@ public struct ExportView: View {
 
         panel.begin { response in
             if response == .OK, let destinationURL = panel.url {
-                // R01: 校验输出路径与源视频不同
-                if destinationURL.standardizedFileURL == sourceVideo.standardizedFileURL {
+                // R01 / FU02: 校验输出路径与源视频不同（包括符号链接父目录别名）
+                if destinationURL.pointsToSameFile(as: sourceVideo) {
                     exportMessage = "导出目标路径不能与原视频文件相同，请选择其他文件名或目录"
                     return
                 }

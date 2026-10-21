@@ -105,17 +105,26 @@ public struct LLMConfiguration: Codable, Equatable {
 
     /// R19: 依据当前所选目标语言解析对应的系统语音合成音色 BCP-47 代码
     public var targetLanguageVoiceCode: String {
+        let trimmed = targetLanguage.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+
         let matched = TargetLanguagePreset.defaultPresets.first {
-            $0.name == targetLanguage || $0.code == targetLanguage || targetLanguage.contains($0.name)
+            $0.name == trimmed ||
+            $0.code.lowercased() == lower ||
+            $0.name.localizedCaseInsensitiveContains(trimmed) ||
+            trimmed.localizedCaseInsensitiveContains($0.name)
         }
         guard let code = matched?.code else {
-            if targetLanguage.contains("中") || targetLanguage.contains("华") { return "zh-CN" }
-            if targetLanguage.lowercased().contains("en") { return "en-US" }
-            if targetLanguage.contains("日") { return "ja-JP" }
-            if targetLanguage.contains("韩") { return "ko-KR" }
-            if targetLanguage.contains("法") { return "fr-FR" }
-            if targetLanguage.contains("德") { return "de-DE" }
-            if targetLanguage.contains("西") { return "es-ES" }
+            if trimmed.contains("中") || trimmed.contains("华") || lower.hasPrefix("zh") || lower.contains("chinese") { return "zh-CN" }
+            if trimmed.contains("法") || lower.hasPrefix("fr") || lower == "french" { return "fr-FR" }
+            if trimmed.contains("德") || lower.hasPrefix("de") || lower == "german" { return "de-DE" }
+            if trimmed.contains("西") || lower.hasPrefix("es") || lower == "spanish" { return "es-ES" }
+            if trimmed.contains("日") || lower.hasPrefix("ja") || lower == "japanese" { return "ja-JP" }
+            if trimmed.contains("韩") || lower.hasPrefix("ko") || lower == "korean" { return "ko-KR" }
+            if trimmed.contains("俄") || lower.hasPrefix("ru") || lower == "russian" { return "ru-RU" }
+            if trimmed.contains("意") || lower.hasPrefix("it") || lower == "italian" { return "it-IT" }
+            if trimmed.contains("葡") || lower.hasPrefix("pt") || lower == "portuguese" { return "pt-BR" }
+            if trimmed.contains("英") || lower.hasPrefix("en") || lower == "english" { return "en-US" }
             return "zh-CN"
         }
         switch code {

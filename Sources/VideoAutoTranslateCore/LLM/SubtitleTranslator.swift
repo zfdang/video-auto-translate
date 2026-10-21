@@ -108,20 +108,26 @@ public final class SubtitleTranslator {
         // 解析返回的 JSON 数组
         let entries = try parseTranslationEntries(from: responseText)
 
-        // 回填至各 SubtitleItem (R07: 保护人工在途修改; R08: 安全合并去重，杜绝 fatalError 崩溃)
+        // 回填至各 SubtitleItem (R07 / FU06: 严格快照校验保护人工在途修改; R08: 安全合并去重; R17: 校验批次有效性)
+        let entryDict = Dictionary(
+            entries.map { ($0.id, $0.translation) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        let matchedCount = chunk.filter { entryDict[$0.id.uuidString] != nil }.count
+        guard matchedCount > 0 else {
+            throw LLMError.parsingFailed("模型返回内容中未包含当前批次的任何字幕 ID (请求 \(chunk.count) 条，匹配 0 条)")
+        }
+
         await MainActor.run {
-            let entryDict = Dictionary(
-                entries.map { ($0.id, $0.translation) },
-                uniquingKeysWith: { first, _ in first }
-            )
             for snap in snapshot {
                 guard let item = chunk.first(where: { $0.id == snap.id }),
                       let translated = entryDict[item.id.uuidString] else {
                     continue
                 }
-                // 若用户在在途期间手动修改了原文或已有译文，则保留用户的人工成果，不粗暴覆盖 (R07)
+                // R07 / FU06: 严格比较当前值与请求发起时的快照，用户任何手动改动（包括清空）均保留，绝不覆盖
                 let cleanTranslation = translated.trimmingCharacters(in: .whitespacesAndNewlines)
-                if item.originalText == snap.orig && (item.translatedText == snap.trans || item.translatedText.isEmpty) {
+                if item.originalText == snap.orig && item.translatedText == snap.trans {
                     item.translatedText = cleanTranslation
                 }
             }
