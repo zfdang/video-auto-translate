@@ -32,6 +32,7 @@ public final class AppState: ObservableObject {
     @Published public var availableOllamaModels: [String] = []
     @Published public var isASRServerOnline: Bool = false
     @Published public var showSettings: Bool = false
+    @Published public var showHelp: Bool = false
     @Published public var showExportSheet: Bool = false
     @Published public var statusMessage: String = "就绪"
     @Published public var errorMessage: String? = nil

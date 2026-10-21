@@ -40,6 +40,9 @@ public struct MainView: View {
         .sheet(isPresented: $appState.showSettings) {
             SettingsView(appState: appState)
         }
+        .sheet(isPresented: $appState.showHelp) {
+            HelpView(appState: appState)
+        }
         .sheet(isPresented: $appState.showExportSheet) {
             ExportView(appState: appState)
         }
@@ -306,6 +309,17 @@ public struct MainView: View {
             .layoutPriority(1)
 
             Spacer()
+
+            // 帮助按钮
+            Button(action: {
+                appState.showHelp = true
+            }) {
+                Image(systemName: "questionmark.circle")
+                    .font(.body)
+            }
+            .buttonStyle(.bordered)
+            .help("使用帮助与快捷键指南 (⌘?)")
+            .keyboardShortcut("?", modifiers: .command)
 
             // 设置按钮
             Button(action: {
