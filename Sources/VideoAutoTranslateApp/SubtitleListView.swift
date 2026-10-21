@@ -155,14 +155,15 @@ public struct SubtitleListView: View {
                     ScrollView {
                         LazyVStack(spacing: 6) {
                             ForEach(Array(filteredSubtitles.enumerated()), id: \.element.id) { index, item in
-                                let canMergeNext = (index + 1 < filteredSubtitles.count)
+                                let projectIndex = appState.project.subtitles.firstIndex(where: { $0.id == item.id }) ?? index
+                                let canMergeNext = searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && projectIndex + 1 < appState.project.subtitles.count
                                 let isRowSelected = (appState.project.selectedSubtitleID == item.id) || selectedIDs.contains(item.id)
 
                                 SubtitleRowView(
                                     item: item,
                                     isSelected: isRowSelected,
                                     isPlaying: appState.project.playingSubtitleID == item.id,
-                                    rowIndex: index,
+                                    rowIndex: projectIndex,
                                     isMultiSelected: selectedIDs.contains(item.id),
                                     canMergeWithNext: canMergeNext,
                                     onSeek: {
@@ -237,6 +238,10 @@ public struct SubtitleListView: View {
                     }
                 }
             }
+        }
+        .onChange(of: appState.project.subtitles.map(\.id)) { _, ids in
+            selectedIDs.formIntersection(Set(ids))
+            lastClickedIndex = nil
         }
     }
 
