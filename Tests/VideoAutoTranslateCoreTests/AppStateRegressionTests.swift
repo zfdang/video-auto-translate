@@ -8,7 +8,9 @@ import CoreMedia
         let app = AppState(probeServices: false)
         app.project.subtitles = [SubtitleItem(startTime: .zero, endTime: .from(seconds: 2), originalText: "Before")]
         app.project.subtitles[0].originalText = "After"
+        app.feedbackKind = .failure
         app.undo()
+        XCTAssertEqual(app.feedbackKind, .success)
         XCTAssertEqual(app.project.subtitles[0].originalText, "Before")
         app.redo()
         XCTAssertEqual(app.project.subtitles[0].originalText, "After")

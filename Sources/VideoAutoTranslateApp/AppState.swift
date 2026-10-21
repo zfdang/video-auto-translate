@@ -821,7 +821,7 @@ public final class AppState: ObservableObject {
             project.selectedSubtitleID = part2.id
             project.isDirty = true
             feedbackKind = .success
-        statusMessage = "已成功拆分字幕"
+            statusMessage = "已成功拆分字幕"
         }
     }
 
@@ -994,7 +994,7 @@ public final class AppState: ObservableObject {
             project.selectedSubtitleID = merged.id
             project.isDirty = true
             feedbackKind = .success
-        statusMessage = "已合并 \(selectedItems.count) 条字幕"
+            statusMessage = "已合并 \(selectedItems.count) 条字幕"
         }
     }
 
