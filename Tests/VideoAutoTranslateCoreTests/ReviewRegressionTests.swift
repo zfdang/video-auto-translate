@@ -134,6 +134,14 @@ final class ReviewRegressionTests: XCTestCase {
         catch { XCTAssertNil(row.dubbedAudioURL) }
     }
 
+    func testPreferencesEncodingExcludesCredentials() throws {
+        var config = LLMConfiguration()
+        config.onlineAPIKey = "secret-review-sentinel"
+        let preferences = ApplicationPreferences(llm: config, asr: ASRConfiguration(), storage: ModelStorageConfig())
+        let data = try preferences.encodedWithoutSecrets()
+        XCTAssertFalse(String(data: data, encoding: .utf8)!.contains("secret-review-sentinel"))
+        XCTAssertTrue(TargetLanguagePreset.defaultPresets.contains { $0.name == LLMConfiguration().targetLanguage })
+    }
 }
 
 private struct DelayedReviewTTS: TTSServiceProtocol {
@@ -142,4 +150,6 @@ private struct DelayedReviewTTS: TTSServiceProtocol {
         try Data([1]).write(to: outputURL)
         return outputURL
     }
+
+
 }

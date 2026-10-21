@@ -267,6 +267,11 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
                     }
                 }
             } catch {
+                await MainActor.run {
+                    if !Task.isCancelled, case .downloading = self.modelStates[preset.id] {
+                        self.modelStates[preset.id] = .failed("下载状态连接中断，请重试：\(error.localizedDescription)")
+                    }
+                }
                 break
             }
         }

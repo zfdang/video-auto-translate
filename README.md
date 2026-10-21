@@ -22,7 +22,7 @@
      - **共享缓存目录**（`~/.cache/huggingface/hub`）：与其他 AI 工具共用，不重复占用磁盘空间；
      - **应用独立目录**（`~/Library/Application Support/VideoAutoTranslate/models`）：隔离独立存储；
      - **自定义目录**：自由指定外置高速 SSD 或 NAS 挂载路径，带实时磁盘可用空间感知。
-   - **国内极速下载加速**：内置支持 `hf-mirror.com`、Hugging Face 官方源及魔搭社区，支持在新设备上一键下载 Qwen3-ASR 与 Aligner 模型。
+   - **国内极速下载加速**：内置支持 `hf-mirror.com`及 Hugging Face 官方源，支持在新设备上一键下载 Qwen3-ASR 与 Aligner 模型。
 4. **按需延迟托管（Lazy Sidecar）**：
    - 应用启动时不预占显存与端口；
    - 首个转录任务触发时自动静默拉起推理引擎并保持热驻留，后续任务秒级响应；

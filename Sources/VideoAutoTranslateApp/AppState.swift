@@ -16,12 +16,15 @@ public final class AppState: ObservableObject {
     private var isRestoringProject = false
     private var isApplyingEdit = false
     @Published public var loopingSubtitleID: UUID?
+    private let storesPreferences: Bool
+    private var preferencesTask: Task<Void, Never>?
     private let persistsRecovery: Bool
     private let recoveryURL: URL
 
     @Published public var project: ProjectState = ProjectState() {
         didSet {
             bindProjectSubtitles()
+            if !isRestoringProject && (oldValue.llmConfig != project.llmConfig || oldValue.asrConfig != project.asrConfig || oldValue.modelStorageConfig != project.modelStorageConfig) { savePreferences() }
             if !isRestoringProject && oldValue.llmConfig.targetLanguage != project.llmConfig.targetLanguage {
                 for item in project.subtitles {
                     item.dubbedAudioURL = nil
@@ -119,10 +122,21 @@ public final class AppState: ObservableObject {
     }
 
     public init(probeServices: Bool = true, recoveryURL: URL? = nil) {
+        self.storesPreferences = probeServices
         self.persistsRecovery = probeServices || recoveryURL != nil
         self.recoveryURL = recoveryURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("VideoAutoTranslate/Recovery.vatproject")
         self.recoveryAvailable = probeServices && FileManager.default.fileExists(atPath: self.recoveryURL.path)
         AppState.current = self
+        if probeServices, let data = UserDefaults.standard.data(forKey: "applicationPreferences"), let preferences = try? JSONDecoder().decode(ApplicationPreferences.self, from: data) {
+            isRestoringProject = true
+            project.llmConfig = preferences.llm
+            project.llmConfig.onlineAPIKey = ServiceCredentials.read(account: preferences.llm.onlineBaseURL)
+            project.asrConfig = preferences.asr
+            project.modelStorageConfig = preferences.storage
+            modelStorageManager.config = preferences.storage
+            sidecarManager.modelsDirectory = modelStorageManager.resolvedStorageDirectory()
+            isRestoringProject = false
+        }
         setupTimeObserver()
         bindProjectSubtitles()
 
@@ -235,7 +249,6 @@ public final class AppState: ObservableObject {
                         self.project.llmConfig.ollamaModel = first
                     }
                 }
-                self.project.llmConfig.providerType = .localOllama
             }
         }
         return (res.success, res.message)
@@ -354,7 +367,11 @@ public final class AppState: ObservableObject {
                     self.statusMessage = "正在按需准备本地 ASR 推理引擎..."
                 }
             }
-            _ = await sidecarManager.ensureRunning()
+            if usesManagedASR {
+                sidecarManager.modelsDirectory = modelStorageManager.resolvedStorageDirectory()
+                guard await sidecarManager.ensureRunning() else { throw ASRError.engineNotReady("识别引擎未就绪，请在设置中准备环境并查看引擎日志。") }
+            }
+            await syncModelStorageToServer()
             await probeLocalASR()
 
             guard currentGen == self.projectGeneration, !Task.isCancelled else { throw CancellationError() }
@@ -1080,11 +1097,54 @@ public final class AppState: ObservableObject {
         } catch { errorMessage = "恢复失败：\(error.localizedDescription)" }
     }
 
+    public func flushPreferences() {
+        guard storesPreferences else { return }
+        preferencesTask?.cancel()
+        do {
+            let preferences = ApplicationPreferences(llm: project.llmConfig, asr: project.asrConfig, storage: project.modelStorageConfig)
+            UserDefaults.standard.set(try preferences.encodedWithoutSecrets(), forKey: "applicationPreferences")
+            try ServiceCredentials.write(preferences.llm.onlineAPIKey, account: preferences.llm.onlineBaseURL)
+        } catch { statusMessage = "配置保留于当前会话；凭据保存失败，下次可能需要重新输入" }
+    }
+
+    private func savePreferences() {
+        guard storesPreferences else { return }
+        preferencesTask?.cancel()
+        preferencesTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 600_000_000); self?.flushPreferences() }
+            catch { }
+        }
+    }
+
+    public func useOnlineEndpoint(_ endpoint: String) {
+        let cleaned = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleaned != project.llmConfig.onlineBaseURL else { return }
+        project.llmConfig.onlineBaseURL = cleaned
+        project.llmConfig.onlineAPIKey = storesPreferences ? ServiceCredentials.read(account: cleaned) : ""
+    }
+
+    public var asrManagementBaseURL: String {
+        guard var components = URLComponents(string: project.asrConfig.serviceURL) else { return "http://127.0.0.1:8765" }
+        components.path = ""; components.query = nil; components.fragment = nil
+        return components.string ?? "http://127.0.0.1:8765"
+    }
+    public var usesManagedASR: Bool {
+        let url = URL(string: project.asrConfig.serviceURL)
+        return ["127.0.0.1", "localhost"].contains(url?.host ?? "") && (url?.port ?? 80) == sidecarManager.defaultPort
+    }
+
+    public func applyStorageSettings() {
+        modelStorageManager.config = project.modelStorageConfig
+        modelStorageManager.refreshAll()
+        sidecarManager.modelsDirectory = modelStorageManager.resolvedStorageDirectory()
+        Task { await syncModelStorageToServer() }
+    }
+
     // MARK: - 模型存储与下载管理
 
     /// 同步当前存储配置到服务端
     public func syncModelStorageToServer() async {
-        guard let url = URL(string: "http://127.0.0.1:8765/v1/models/storage") else { return }
+        guard let url = URL(string: "\(asrManagementBaseURL)/v1/models/storage") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1132,7 +1192,7 @@ public final class AppState: ObservableObject {
 
             if preset.isRepo {
                 // 确保 ASR 服务在线就绪（若未启动或已断开，自动唤醒并等待健康就绪）
-                let isReady = await sidecarManager.ensureRunning()
+                let isReady = usesManagedASR ? await sidecarManager.ensureRunning() : await LocalASRService(config: project.asrConfig).checkHealth()
                 if Task.isCancelled { return }
 
                 guard isReady else {
@@ -1159,7 +1219,7 @@ public final class AppState: ObservableObject {
                 if Task.isCancelled { return }
 
                 do {
-                    try await modelStorageManager.triggerServerRepoDownload(preset: preset)
+                    try await modelStorageManager.triggerServerRepoDownload(preset: preset, asrBaseURL: asrManagementBaseURL)
                 } catch {
                     await MainActor.run {
                         if Task.isCancelled { return }
@@ -1179,6 +1239,6 @@ public final class AppState: ObservableObject {
     public func cancelDownload(preset: ASRModelPreset) {
         downloadTasks[preset.id]?.cancel()
         downloadTasks.removeValue(forKey: preset.id)
-        modelStorageManager.cancelDownload(for: preset.id)
+        modelStorageManager.cancelDownload(for: preset.id, asrBaseURL: asrManagementBaseURL)
     }
 }

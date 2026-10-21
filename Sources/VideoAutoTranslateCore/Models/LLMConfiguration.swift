@@ -63,7 +63,7 @@ public struct LLMConfiguration: Codable, Equatable {
         onlineBaseURL: String = "https://api.deepseek.com/v1",
         onlineModel: String = "deepseek-chat",
         onlineAPIKey: String = "",
-        targetLanguage: String = "简体中文",
+        targetLanguage: String = "简体中文 (Simplified Chinese)",
         maxConcurrency: Int = 4,
         temperature: Double = 0.3
     ) {

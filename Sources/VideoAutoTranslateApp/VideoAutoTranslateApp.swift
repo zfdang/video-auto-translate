@@ -63,7 +63,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        AppState.current?.confirmReplacingProject() == false ? .terminateCancel : .terminateNow
+        guard AppState.current?.confirmReplacingProject() != false else { return .terminateCancel }
+        AppState.current?.flushPreferences()
+        return .terminateNow
     }
 
     func applicationWillTerminate(_ notification: Notification) {
