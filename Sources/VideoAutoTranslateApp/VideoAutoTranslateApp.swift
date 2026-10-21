@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard AppState.current?.confirmReplacingProject() != false else { return .terminateCancel }
+        if AppState.current?.project.isDirty == true { AppState.current?.clearRecoveryCheckpoint() }
         AppState.current?.flushPreferences()
         return .terminateNow
     }

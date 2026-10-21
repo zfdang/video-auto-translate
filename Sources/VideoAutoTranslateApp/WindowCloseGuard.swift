@@ -7,7 +7,9 @@ struct WindowCloseGuard: NSViewRepresentable {
         weak var appState: AppState?
         weak var previous: NSWindowDelegate?
         func windowShouldClose(_ sender: NSWindow) -> Bool {
-            appState?.confirmReplacingProject() ?? true
+            guard appState?.confirmReplacingProject() != false else { return false }
+            if appState?.project.isDirty == true { appState?.clearRecoveryCheckpoint() }
+            return true
         }
         override func responds(to selector: Selector!) -> Bool {
             super.responds(to: selector) || previous?.responds(to: selector) == true

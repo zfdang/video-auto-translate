@@ -184,7 +184,7 @@ public final class AppState: ObservableObject {
         for arg in CommandLine.arguments.dropFirst() {
             if !arg.hasPrefix("-") && FileManager.default.fileExists(atPath: arg) {
                 let ext = (arg as NSString).pathExtension.lowercased()
-                if ["mp4", "mov", "m4v", "mkv", "avi", "webm"].contains(ext) {
+                if ["mp4", "mov", "m4v", "mkv", "avi", "webm", "vatproject"].contains(ext) {
                     openVideo(url: URL(fileURLWithPath: arg))
                     break
                 }
@@ -320,6 +320,11 @@ public final class AppState: ObservableObject {
     /// 打开本地视频文件 (R03: 递增代际，终止旧任务)
     public func openVideo(url: URL) {
         guard confirmReplacingProject() else { return }
+        if url.pathExtension.lowercased() == "vatproject" {
+            do { try loadProject(from: url) } catch { errorMessage = "无法打开工程：\(error.localizedDescription)" }
+            return
+        }
+        clearRecoveryCheckpoint()
         documentURL = nil
         saveStatus = "尚未保存"
         recoveryTask?.cancel()
@@ -1025,13 +1030,16 @@ public final class AppState: ObservableObject {
         alert.addButton(withTitle: "放弃修改")
         switch alert.runModal() {
         case .alertFirstButtonReturn: return saveProjectInteractively()
-        case .alertThirdButtonReturn:
-            recoveryTask?.cancel()
-            recoveryWrite?.cancel()
-            ProjectStore.removeCheckpoint(at: recoveryURL)
-            return true
+        case .alertThirdButtonReturn: return true
         default: return false
         }
+    }
+
+    public func clearRecoveryCheckpoint() {
+        recoveryTask?.cancel()
+        recoveryWrite?.cancel()
+        ProjectStore.removeCheckpoint(at: recoveryURL)
+        recoveryAvailable = false
     }
 
     public func openProjectInteractively() {
@@ -1044,6 +1052,7 @@ public final class AppState: ObservableObject {
 
     public func loadProject(from url: URL) throws {
         let doc = try ProjectStore.read(from: url)
+        if url != recoveryURL { clearRecoveryCheckpoint() }
         recoveryTask?.cancel()
         cancelAllTasks()
         selectedSubtitleIDs.removeAll()
