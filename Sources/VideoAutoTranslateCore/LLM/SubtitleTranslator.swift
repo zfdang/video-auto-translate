@@ -100,9 +100,9 @@ public final class SubtitleTranslator {
 
         try Task.checkCancellation()
 
-        // 阶段 3: 终止模型
+        // 阶段 3: 释放模型显存
         await MainActor.run {
-            onProgress?(0.98, "正在终止模型...")
+            onProgress?(0.98, "正在释放模型显存...")
         }
 
         if config.providerType == .localOllama {

@@ -396,11 +396,13 @@ public final class AppState: ObservableObject {
             project.subtitles = Array(project.subtitles)
             project.isProcessing = false
             project.progress = 1.0
+            project.currentStepName = ""
             project.isDirty = true
             statusMessage = "翻译完成，已为 \(project.subtitles.count) 行字幕生成译文"
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
+            project.currentStepName = ""
             if Task.isCancelled {
                 statusMessage = "翻译已取消"
             } else {
@@ -759,6 +761,7 @@ public final class AppState: ObservableObject {
         recordUndoSnapshot()
         project.isProcessing = true
         project.progress = 0.3
+        project.currentStepName = "正在根据译文期望发音时长匹配时间轴..."
         statusMessage = "正在根据译文期望发音时长匹配时间轴，平衡发音语速..."
 
         let client = OpenAICompatibleClient(baseURL: project.llmConfig.effectiveBaseURL, apiKey: project.llmConfig.effectiveAPIKey)
@@ -775,6 +778,7 @@ public final class AppState: ObservableObject {
         }
         project.isProcessing = false
         project.progress = 1.0
+        project.currentStepName = ""
         project.isDirty = true
         statusMessage = "时间轴已成功与译文发音匹配！语速已平滑一致"
     }
