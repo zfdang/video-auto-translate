@@ -130,7 +130,7 @@ public struct SubtitleRowView: View {
 
                 // 拆分按钮 (在原文光标处拆分)
                 Button(action: performSplitAtCursor) {
-                    Image(systemName: "square.split.2x1")
+                    Image(systemName: "scissors")
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
@@ -215,7 +215,7 @@ public struct SubtitleRowView: View {
                 }
             }
             Button(action: performSplitAtCursor) {
-                Label("拆分此行字幕 (Cmd+B)", systemImage: "square.split.2x1")
+                Label("在光标处拆分字幕 (Cmd+B)", systemImage: "scissors")
             }
             Divider()
             Button(action: onDelete) {
