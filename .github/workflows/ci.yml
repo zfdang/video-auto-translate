@@ -27,6 +27,12 @@ jobs:
           python3 scripts/test-release-metadata.py
           python3 scripts/test-release-notes.py
 
+      - name: Test ASR timing contract
+        run: |
+          python3 -m venv "$RUNNER_TEMP/asr-test"
+          "$RUNNER_TEMP/asr-test/bin/python" -m pip install fastapi==0.151.0 uvicorn==0.54.0 python-multipart==0.0.32
+          "$RUNNER_TEMP/asr-test/bin/python" scripts/test-asr-results.py
+
   build-and-test:
     name: Build & Test (macOS arm64)
     runs-on: macos-14

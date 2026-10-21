@@ -169,6 +169,26 @@ public struct SettingsView: View {
 
     private var asrServiceSettingsView: some View {
         Form {
+            Section("首次准备与诊断") {
+                Text("应用不捆绑 Python 和模型。首次准备需联网安装依赖；还需下载数 GB 识别/对齐模型。已有完整环境可直接使用。")
+                    .font(.caption)
+                Text(appState.sidecarManager.runtimeMessage).font(.caption).textSelection(.enabled)
+                HStack {
+                    if appState.sidecarManager.isPreparingRuntime {
+                        ProgressView().controlSize(.small)
+                        Button("取消准备") { appState.sidecarManager.cancelRuntimePreparation() }
+                    } else {
+                        Button("准备识别环境（需联网）") { Task { await appState.sidecarManager.prepareManagedRuntime() } }
+                        Button("选择 Python…") {
+                            let panel = NSOpenPanel()
+                            panel.allowsMultipleSelection = false
+                            if panel.runModal() == .OK { appState.sidecarManager.bootstrapPythonPath = panel.url?.path }
+                        }
+                    }
+                    Button("查看准备日志") { NSWorkspace.shared.open(appState.sidecarManager.runtimeLogURL) }
+                    Button("查看引擎日志") { NSWorkspace.shared.open(appState.sidecarManager.diagnosticLogURL) }
+                }
+            }
             Section(header: Text("本地 ASR 语音识别引擎托管").font(.headline)) {
                 HStack {
                     Circle()

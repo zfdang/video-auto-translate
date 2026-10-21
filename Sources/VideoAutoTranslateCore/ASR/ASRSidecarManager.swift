@@ -30,6 +30,15 @@ public final class ASRSidecarManager: ObservableObject {
     public static let shared = ASRSidecarManager()
 
     @Published public var status: SidecarStatus = .idle
+    @Published public var isPreparingRuntime = false
+    @Published public var runtimeMessage = "首次使用需准备 Python 环境与识别/对齐模型。"
+    public var bootstrapPythonPath: String?
+    private var runtimeWorker: Task<Void, Error>?
+    public var diagnosticLogURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("VideoAutoTranslate/asr.log")
+    }
+    public var runtimeLogURL: URL { diagnosticLogURL.deletingLastPathComponent().appendingPathComponent("runtime-setup.log") }
+    public var modelsDirectory: URL?
     private var process: Process?
     public let defaultPort: Int = 8765
 
@@ -68,7 +77,7 @@ public final class ASRSidecarManager: ObservableObject {
         guard FileManager.default.fileExists(atPath: path) else { return false }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
-        p.arguments = ["-c", "import fastapi, uvicorn"]
+        p.arguments = ["-c", "import fastapi, uvicorn, multipart, mlx_audio, huggingface_hub"]
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         do {
@@ -251,4 +260,55 @@ public final class ASRSidecarManager: ObservableObject {
         }
         status = .idle
     }
+    @MainActor public func prepareManagedRuntime() async {
+        guard !isPreparingRuntime else { return }
+        guard let server = resolveServerScriptPath() else { runtimeMessage = "未找到环境准备脚本，请重新安装应用"; return }
+        let script = URL(fileURLWithPath: server).deletingLastPathComponent().appendingPathComponent("prepare-runtime.sh")
+        let target = diagnosticLogURL.deletingLastPathComponent().appendingPathComponent("venv")
+        let logURL = runtimeLogURL
+        guard let bootstrap = bootstrapPythonPath ?? ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            runtimeMessage = "请先安装 Python 3.10–3.13，并在此选择解释器。"
+            return
+        }
+        isPreparingRuntime = true
+        runtimeMessage = "正在创建独立环境并下载依赖；可以取消，详细进度见日志。"
+        let worker = Task.detached {
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            let log = try FileHandle(forWritingTo: logURL)
+            defer { try? log.close() }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: bootstrap)
+            process.arguments = ["-c", "import os,sys; os.setsid(); os.execv('/bin/bash', ['/bin/bash'] + sys.argv[1:])", script.path, target.path, bootstrap]
+            process.standardOutput = log
+            process.standardError = log
+            try Task.checkCancellation()
+            try process.run()
+            while process.isRunning {
+                if Task.isCancelled {
+                    let group = -process.processIdentifier
+                    kill(group, SIGTERM)
+                    let deadline = Date().addingTimeInterval(0.5)
+                    while kill(group, 0) == 0 && Date() < deadline { usleep(20_000) }
+                    if kill(group, 0) == 0 { kill(group, SIGKILL) }
+                    throw CancellationError()
+                }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+            guard process.terminationStatus == 0 else {
+                let tail = String(data: try Data(contentsOf: logURL), encoding: .utf8)?.split(separator: "\n").suffix(6).joined(separator: "\n") ?? "请查看准备日志"
+                throw NSError(domain: "RuntimeSetup", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: tail])
+            }
+        }
+        runtimeWorker = worker
+        do {
+            try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+            runtimeMessage = "环境准备完成。请下载识别模型与对齐模型后开始转录。"
+        } catch is CancellationError { runtimeMessage = "已取消环境准备，可重新开始。" }
+        catch { runtimeMessage = "准备未完成：\(error.localizedDescription)" }
+        isPreparingRuntime = false
+        runtimeWorker = nil
+    }
+    @MainActor public func cancelRuntimePreparation() { runtimeWorker?.cancel() }
+
 }
