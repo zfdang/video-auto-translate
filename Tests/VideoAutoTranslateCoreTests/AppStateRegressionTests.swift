@@ -108,4 +108,67 @@ import CoreMedia
         XCTAssertEqual(app.project.subtitles[0].endTime.secondsValue, 1)
     }
 
+    func testPreviewAudioTrackSwitchWithoutDubbingBeepsAndStaysOriginal() async {
+        let app = AppState(probeServices: false)
+        let testVideo = FileManager.default.temporaryDirectory.appendingPathComponent("test_\(UUID().uuidString).mp4")
+        try? Data("dummy".utf8).write(to: testVideo)
+        defer { try? FileManager.default.removeItem(at: testVideo) }
+
+        app.openVideo(url: testVideo)
+        XCTAssertEqual(app.previewAudioTrack, .original)
+        XCTAssertFalse(app.hasDubbing)
+
+        // 未生成配音时切换为译文配音，应被拦截并提示
+        await app.setPreviewAudioTrack(.translated)
+        XCTAssertEqual(app.previewAudioTrack, .original)
+        XCTAssertTrue(app.statusMessage.contains("尚未生成配音"))
+
+        // 未生成配音时切换为原声叠加，也应被拦截
+        await app.setPreviewAudioTrack(.overlay)
+        XCTAssertEqual(app.previewAudioTrack, .original)
+        XCTAssertTrue(app.statusMessage.contains("尚未生成配音"))
+    }
+
+    func testPreviewAudioTrackSwitchWithDubbingSucceeds() async {
+        let app = AppState(probeServices: false)
+        let tempDir = FileManager.default.temporaryDirectory
+        let dummyAudio = tempDir.appendingPathComponent("dummy_dubbing_\(UUID().uuidString).m4a")
+        try? Data("dummy_audio".utf8).write(to: dummyAudio)
+        defer { try? FileManager.default.removeItem(at: dummyAudio) }
+
+        let item = SubtitleItem(
+            startTime: .zero,
+            endTime: .from(seconds: 2),
+            originalText: "Hello",
+            translatedText: "你好",
+            dubbedAudioURL: dummyAudio
+        )
+        app.project.subtitles = [item]
+        XCTAssertTrue(app.hasDubbing)
+
+        let dummyVideo = tempDir.appendingPathComponent("dummy_video_\(UUID().uuidString).mp4")
+        try? Data("dummy_video".utf8).write(to: dummyVideo)
+        defer { try? FileManager.default.removeItem(at: dummyVideo) }
+        app.project.videoURL = dummyVideo
+
+        // 有配音文件，切换音轨模式
+        app.previewAudioTrack = .translated
+        XCTAssertEqual(app.previewAudioTrack, .translated)
+
+        app.previewAudioTrack = .overlay
+        XCTAssertEqual(app.previewAudioTrack, .overlay)
+
+        app.previewAudioTrack = .original
+        XCTAssertEqual(app.previewAudioTrack, .original)
+    }
+
+    func testAudioMixerBuildPreviewItemOriginalReturnsAssetItem() async throws {
+        let mixer = AudioMixer()
+        let testVideoPath = "/Users/zfdang/workspaces/video-auto-translate/Tests/Fme9C5ShSr2fuWQ8_Translated.mp4"
+        guard FileManager.default.fileExists(atPath: testVideoPath) else { return }
+        let videoURL = URL(fileURLWithPath: testVideoPath)
+
+        let item = try await mixer.buildPreviewItem(videoURL: videoURL, subtitles: [], mode: .original)
+        XCTAssertNotNil(item)
+    }
 }

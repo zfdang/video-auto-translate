@@ -40,6 +40,7 @@ public final class AppState: ObservableObject {
     public let player: AVPlayer = AVPlayer()
     @Published public var isPlaying: Bool = false
     @Published public var currentTime: CMTime = .zero
+    @Published public var previewAudioTrack: PreviewAudioTrack = .original
     @Published public var selectedSubtitleIDs: Set<UUID> = []
     @Published public var originalEditingID: UUID?
     @Published public var showTimingInspector = false
@@ -340,6 +341,7 @@ public final class AppState: ObservableObject {
 
         project.reset()
         project.videoURL = url
+        previewAudioTrack = .original
 
         let item = AVPlayerItem(url: url)
         player.replaceCurrentItem(with: item)
@@ -561,12 +563,58 @@ public final class AppState: ObservableObject {
             project.isProcessing = false
             project.isDirty = true
             feedbackKind = .success
-            statusMessage = "配音已生成；导出时可选择纯配音或原声叠加"
+            statusMessage = "配音已生成；播放器已切换至译文配音"
+            previewAudioTrack = .translated
+            await updatePreviewPlayerItem()
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
             errorMessage = error.localizedDescription
             statusMessage = "配音生成失败: \(error.localizedDescription)"
+        }
+    }
+
+    public var hasDubbing: Bool {
+        !project.subtitles.isEmpty &&
+        project.subtitles.contains(where: { item in
+            guard let url = item.dubbedAudioURL else { return false }
+            return FileManager.default.fileExists(atPath: url.path)
+        })
+    }
+
+    /// 切换视频预览音轨 (原始语音 / 译文配音 / 原声叠加)
+    public func setPreviewAudioTrack(_ track: PreviewAudioTrack) async {
+        guard let _ = project.videoURL else { return }
+        if track != .original && !hasDubbing {
+            statusMessage = "尚未生成配音，请先在上方工具栏点击「4 自动配音」"
+            NSSound.beep()
+            return
+        }
+
+        previewAudioTrack = track
+        await updatePreviewPlayerItem()
+        statusMessage = "已切换视频预览音频为：\(track.rawValue)"
+    }
+
+    /// 根据当前选中的预览音轨刷新播放器
+    public func updatePreviewPlayerItem() async {
+        guard let videoURL = project.videoURL else { return }
+        let currentTime = player.currentTime()
+        let wasPlaying = player.rate > 0
+
+        do {
+            let newItem = try await audioMixer.buildPreviewItem(
+                videoURL: videoURL,
+                subtitles: project.subtitles,
+                mode: previewAudioTrack
+            )
+            player.replaceCurrentItem(with: newItem)
+            await player.seek(to: currentTime, toleranceBefore: .zero, toleranceAfter: .zero)
+            if wasPlaying {
+                player.play()
+            }
+        } catch {
+            errorMessage = "更新预览音轨失败: \(error.localizedDescription)"
         }
     }
 
