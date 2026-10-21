@@ -62,6 +62,23 @@ public struct SubtitleListView: View {
                 .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
                 .help("调用大模型结合每个词的精确时间戳进行语义智能断句规整")
 
+                // 4. 校对时间轴按钮 (根据目标语言翻译后的结果重新调整时间轴，消除语速忽快忽慢)
+                let hasTranslations = appState.project.subtitles.contains { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                Button(action: {
+                    Task {
+                        await appState.realignTimelineForTranslationPacing()
+                    }
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "clock.arrow.2.circlepath")
+                        Text("校对时间轴")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!hasTranslations || appState.project.isProcessing)
+                .help("根据目标语言翻译后的结果重新调整时间轴：结合大模型平滑分配语速，消除配音忽快忽慢")
+
                 // 4. 合并按钮 (支持选中多行合并，或单行向下合并，快捷键 Cmd+J)
                 let canMergeNow = appState.canMerge(ids: selectedIDs)
                 let mergeButtonTitle: String = {

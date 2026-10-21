@@ -561,4 +561,68 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertTrue(presets.contains(where: { $0.name == "qwen2.5:latest" }))
         XCTAssertEqual(presets.first?.name, "qwen2.5:latest")
     }
+
+    func testTimelineAlignerNaturalDurationEstimation() {
+        let zhShort = "好的"
+        let zhMedium = "是的是的，你们来参加这次旅行"
+        let enText = "Welcome to the real Paris, my friends!"
+
+        let zhShortDur = TimelineAligner.estimateNaturalDuration(text: zhShort, language: "zh")
+        let zhMedDur = TimelineAligner.estimateNaturalDuration(text: zhMedium, language: "zh")
+        let enDur = TimelineAligner.estimateNaturalDuration(text: enText, language: "en")
+
+        XCTAssertGreaterThan(zhMedDur, zhShortDur)
+        XCTAssertGreaterThanOrEqual(zhShortDur, 0.6)
+        XCTAssertGreaterThan(enDur, 1.5)
+    }
+
+    func testTimelineAlignerPacingSmoothing() {
+        let aligner = TimelineAligner()
+
+        // 构造三句发音语速严重不均衡的字幕：
+        // 第 1 句：仅 0.5s，但有 14 个汉字（未调整前语速高达 28 字/秒，极度仓促）
+        // 第 2 句：长达 3.5s，仅 2 个汉字（未调整前语速仅 0.57 字/秒，极度拖拉）
+        // 第 3 句：1.0s，3 个汉字
+        let item1 = SubtitleItem(
+            startTime: .from(seconds: 0.0),
+            endTime: .from(seconds: 0.5),
+            originalText: "Yes yes",
+            translatedText: "是的是的，你们来参加这次旅行"
+        )
+        let item2 = SubtitleItem(
+            startTime: .from(seconds: 0.5),
+            endTime: .from(seconds: 4.0),
+            originalText: "Thanks",
+            translatedText: "谢谢"
+        )
+        let item3 = SubtitleItem(
+            startTime: .from(seconds: 4.0),
+            endTime: .from(seconds: 5.0),
+            originalText: "Very good",
+            translatedText: "非常好"
+        )
+
+        let smoothed = aligner.alignTimelineDeterministically(items: [item1, item2, item3], language: "zh")
+        XCTAssertEqual(smoothed.count, 3)
+
+        // 1. 验证第 1 句时长显著扩增以容纳长译文
+        let dur1 = smoothed[0].durationSeconds
+        XCTAssertGreaterThan(dur1, 1.5, "长译文行应当借调充足时间以避免语速过急")
+
+        // 2. 验证各行顺序严格递增、不产生交叉重叠
+        for i in 1..<smoothed.count {
+            XCTAssertGreaterThanOrEqual(
+                smoothed[i].startTime.secondsValue,
+                smoothed[i - 1].endTime.secondsValue,
+                "第 \(i) 行与前一行必须无交叠"
+            )
+        }
+
+        // 3. 验证总时长保持在合理范围内
+        XCTAssertLessThanOrEqual(smoothed.last!.endTime.secondsValue, 5.05)
+
+        // 4. 验证重调后第 1 句的语速显著下降并回归自然区间 (每秒汉字数 <= 9)
+        let rate1 = Double(smoothed[0].translatedText.count) / dur1
+        XCTAssertLessThan(rate1, 9.0, "语速应当平滑至正常范围")
+    }
 }

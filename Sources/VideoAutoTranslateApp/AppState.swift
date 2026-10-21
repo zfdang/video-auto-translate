@@ -21,6 +21,7 @@ public final class AppState: ObservableObject {
     public var asrEngine = LocalASRService()
     public let translator = SubtitleTranslator()
     public let subtitleManager = SubtitleManager()
+    public let timelineAligner = TimelineAligner()
     public let audioMixer = AudioMixer()
     public let videoComposer = VideoComposer()
     public let ttsService = SystemTTSService()
@@ -727,6 +728,39 @@ public final class AppState: ObservableObject {
             statusMessage = "智能分句失败: \(error.localizedDescription)"
             errorMessage = "智能分句失败: \(error.localizedDescription)"
         }
+    }
+
+    /// 根据目标语言翻译后的结果重新调整时间轴（利用空隙平滑发音语速，消除配音忽快忽慢）
+    public func realignTimelineForTranslationPacing() async {
+        guard !project.subtitles.isEmpty else { return }
+
+        let hasTranslations = project.subtitles.contains { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard hasTranslations else {
+            errorMessage = "尚未检测到翻译结果，请先执行「字幕翻译」后再校对时间轴"
+            return
+        }
+
+        recordUndoSnapshot()
+        project.isProcessing = true
+        project.progress = 0.3
+        statusMessage = "正在结合大模型与译文文字量校对时间轴，平衡发音语速..."
+
+        let client = OpenAICompatibleClient(baseURL: project.llmConfig.effectiveBaseURL, apiKey: project.llmConfig.effectiveAPIKey)
+        let aligned = await timelineAligner.alignTimelineWithLLM(
+            items: project.subtitles,
+            config: project.llmConfig,
+            client: client
+        )
+
+        project.subtitles = aligned
+        // 重调时间轴后使旧配音缓存失效，以便后续以平滑语速重新试听与合成
+        for item in project.subtitles {
+            item.dubbedAudioURL = nil
+        }
+        project.isProcessing = false
+        project.progress = 1.0
+        project.isDirty = true
+        statusMessage = "时间轴已成功根据译文重新校对！发音语速已平滑平衡"
     }
 
     /// 合并选中的字幕 (Cmd+J) (支持多选相邻合并，或单选/当前行向下合并)
