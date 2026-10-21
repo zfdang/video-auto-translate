@@ -65,8 +65,12 @@ public final class AppState: ObservableObject {
     @Published public var showHelp: Bool = false
     @Published public var showExportSheet: Bool = false
     public let exportJob = ExportJob()
+    public enum FeedbackKind { case information, success, failure }
+    @Published public var feedbackKind: FeedbackKind = .information
     @Published public var statusMessage: String = "就绪"
-    @Published public var errorMessage: String? = nil
+    @Published public var errorMessage: String? = nil {
+        didSet { if errorMessage != nil { feedbackKind = .failure } }
+    }
 
     // R20: 持有试听播放器实例，防止局部变量析构导致播放被打断
     public var auditionPlayer: AVPlayer?
@@ -308,6 +312,7 @@ public final class AppState: ObservableObject {
         dubbingTask?.cancel()
         dubbingTask = nil
         project.isProcessing = false
+        feedbackKind = .information
         statusMessage = "任务已取消"
     }
 
@@ -342,7 +347,7 @@ public final class AppState: ObservableObject {
 
     /// 执行本地音频提取与语音转录 (R03 & FU05: 严格代际校验与取消保护)
     public func runTranscription() async {
-        guard let videoURL = project.videoURL else { return }
+        guard let videoURL = project.videoURL, !project.isProcessing else { return }
 
         guard confirmReplacingProject() else { return }
         transcriptionTask?.cancel()
@@ -427,6 +432,7 @@ public final class AppState: ObservableObject {
             redoStack.removeAll()
             canUndo = false
             canRedo = false
+            feedbackKind = .success
             project.isProcessing = false
             project.progress = 1.0
             project.isDirty = true
@@ -449,7 +455,7 @@ public final class AppState: ObservableObject {
 
     /// 执行字幕翻译 (R03, R07 & FU05: 任务防交叉、取消传递与脏状态标记)
     public func runTranslation() async {
-        guard !project.subtitles.isEmpty else { return }
+        guard !project.subtitles.isEmpty, !project.isProcessing else { return }
 
         translationTask?.cancel()
         activeTranslationTask?.cancel()
@@ -481,6 +487,7 @@ public final class AppState: ObservableObject {
             }
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.subtitles = Array(project.subtitles)
+            feedbackKind = .success
             project.isProcessing = false
             project.progress = 1.0
             project.currentStepName = ""
@@ -501,7 +508,7 @@ public final class AppState: ObservableObject {
 
     /// 执行多语言配音与混音 (R19 & FU05: 传入所选目标语言音色代码，await 前后严格代际校验)
     public func runFullDubbing() async {
-        guard !project.subtitles.isEmpty else { return }
+        guard !project.subtitles.isEmpty, !project.isProcessing else { return }
 
         dubbingTask?.cancel()
         activeDubbingTask?.cancel()
@@ -547,10 +554,12 @@ public final class AppState: ObservableObject {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
             project.isDirty = true
+            feedbackKind = .success
             statusMessage = "配音已生成；导出时可选择纯配音或原声叠加"
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
+            errorMessage = error.localizedDescription
             statusMessage = "配音生成失败: \(error.localizedDescription)"
         }
     }
@@ -984,6 +993,7 @@ public final class AppState: ObservableObject {
         documentURL = url
         project.isDirty = false
         saveStatus = "已保存"
+        feedbackKind = .success
         statusMessage = "工程已保存：\(url.lastPathComponent)"
     }
 

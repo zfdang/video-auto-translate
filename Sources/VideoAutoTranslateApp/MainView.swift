@@ -258,9 +258,8 @@ public struct MainView: View {
                 .controlSize(.mini)
                 .help("取消当前任务并释放模型资源")
             } else {
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 8, height: 8)
+                Image(systemName: appState.feedbackKind == .failure ? "exclamationmark.triangle.fill" : appState.feedbackKind == .success ? "checkmark.circle.fill" : "info.circle")
+                    .foregroundColor(appState.feedbackKind == .failure ? .red : appState.feedbackKind == .success ? .green : .secondary)
                 Text(appState.statusMessage)
                     .font(.caption)
                     .foregroundColor(.secondary)
