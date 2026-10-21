@@ -47,9 +47,7 @@ public final class SystemTTSService: TTSServiceProtocol {
         } else if let prefix = voice.split(separator: "-").first,
                   let matched = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language.hasPrefix(String(prefix)) }) {
             utterance.voice = matched
-        } else if let fallback = AVSpeechSynthesisVoice(language: "zh-CN") {
-            utterance.voice = fallback
-        }
+        } else { throw TTSError.voiceNotFound(voice) }
 
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
 

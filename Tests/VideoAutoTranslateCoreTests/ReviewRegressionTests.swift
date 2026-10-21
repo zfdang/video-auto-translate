@@ -93,4 +93,12 @@ final class ReviewRegressionTests: XCTestCase {
         XCTAssertNoThrow(try SubtitleTiming.validate(start: 1, end: 2, mediaDuration: 3, previousEnd: 1, nextStart: 2))
     }
 
+    func testMixerRejectsMissingSpeechInsteadOfSilentlySkipping() async {
+        let row = SubtitleItem(startTime: .zero, endTime: .from(seconds: 1), originalText: "Missing")
+        do {
+            try await AudioMixer().mix(backgroundAudioURL: nil, subtitles: [row], to: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a"))
+            XCTFail("Missing audio must block the result")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("缺少配音")) }
+    }
+
 }

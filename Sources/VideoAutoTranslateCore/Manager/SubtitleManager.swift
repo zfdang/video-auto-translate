@@ -172,9 +172,10 @@ public final class SubtitleManager {
         ttsService: TTSServiceProtocol,
         voice: String = "zh-CN"
     ) async throws {
-        let textToSpeak = item.translatedText.isEmpty ? item.originalText : item.translatedText
+        let textToSpeak = item.translatedText
+        guard !item.translationNeedsReview else { throw TTSError.synthesisFailed("译文待复核，请先确认目标语言与内容") }
         guard !textToSpeak.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return
+            throw TTSError.emptyText
         }
 
         await MainActor.run {
@@ -196,6 +197,8 @@ public final class SubtitleManager {
         // 1. 合成原始语速语音
         _ = try await ttsService.synthesize(text: textToSpeak, voice: voice, outputURL: rawTTSURL)
 
+        try Task.checkCancellation()
+        guard item.audioSignature(voice: voice) == signature else { throw CancellationError() }
         // 2. 检测语音实际发音时长
         let rawAsset = AVURLAsset(url: rawTTSURL)
         let rawDuration = try await rawAsset.load(.duration)
@@ -204,21 +207,22 @@ public final class SubtitleManager {
         // 3. 计算语速伸缩比率 R = rawDuration / targetDuration
         let rate = Float(rawDuration.secondsValue / max(0.2, targetDuration.secondsValue))
 
-        // 4. 音调不变语速缩放（带安全降级）
-        do {
-            try timePitchEngine.changeSpeed(inputURL: rawTTSURL, outputURL: finalStretchedURL, rate: rate)
-            await MainActor.run {
-                guard !Task.isCancelled, item.audioSignature(voice: voice) == signature else { return }
-                item.dubbedAudioURL = finalStretchedURL
-                item.dubbedAudioSignature = signature
-            }
-        } catch {
-            // 伸缩引擎异常时优雅降级：直接采用高质量原生合成音频，杜绝单句异常中断全篇配音
-            await MainActor.run {
-                guard !Task.isCancelled, item.audioSignature(voice: voice) == signature else { return }
-                item.dubbedAudioURL = rawTTSURL
-                item.dubbedAudioSignature = signature
-            }
+        // Fall back only to complete audio which still fits the confirmed display interval.
+        var resultURL = finalStretchedURL
+        do { try timePitchEngine.changeSpeed(inputURL: rawTTSURL, outputURL: finalStretchedURL, rate: rate) }
+        catch { resultURL = rawTTSURL }
+        try Task.checkCancellation()
+        let actual = try await AVURLAsset(url: resultURL).load(.duration).secondsValue
+        guard actual > 0, actual <= targetDuration.secondsValue + 0.15 else {
+            throw TTSError.synthesisFailed("配音超过字幕时长，请缩短译文或在调时面板延长此句；未裁剪语音。")
         }
+        guard item.audioSignature(voice: voice) == signature else { throw CancellationError() }
+        let completedURL = resultURL
+        await MainActor.run {
+            guard !Task.isCancelled, item.audioSignature(voice: voice) == signature else { return }
+            item.dubbedAudioURL = completedURL
+            item.dubbedAudioSignature = signature
+        }
+        guard item.hasCurrentAudio(voice: voice) else { throw CancellationError() }
     }
 }

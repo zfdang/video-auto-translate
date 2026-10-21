@@ -286,7 +286,7 @@ public struct ExportView: View {
                             }
 
                             // 1. 确保所有字幕配音完整生成，缺失时即时补齐，彻底杜绝后半段失声
-                            await appState.ensureAllSubtitlesDubbed { current, total in
+                            try await appState.ensureAllSubtitlesDubbed { current, total in
                                 Task { @MainActor in
                                     exportMessage = "正在为全片合成配音切片 (\(current)/\(total))..."
                                 }

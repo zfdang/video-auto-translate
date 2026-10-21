@@ -479,12 +479,13 @@ public final class AppState: ObservableObject {
 
         let worker = Task { () -> Void in
             let total = Double(project.subtitles.count)
+            var failures: [String] = []
             for (idx, item) in project.subtitles.enumerated() {
                 guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
                 do {
                     try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
                 } catch {
-                    print("单句配音生成警告 [第\(idx + 1)句]: \(error)")
+                    failures.append("第\(idx + 1)句：\(error.localizedDescription)")
                 }
                 guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
                 await MainActor.run {
@@ -495,6 +496,7 @@ public final class AppState: ObservableObject {
             }
 
             guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
+            guard failures.isEmpty else { throw TTSError.synthesisFailed(failures.joined(separator: "\n")) }
 
             await MainActor.run {
                 if currentGen == self.projectGeneration && !Task.isCancelled {
@@ -530,25 +532,20 @@ public final class AppState: ObservableObject {
     }
 
     /// 确保所有含有译文（或原文）的字幕均具备有效的配音切片；缺失时即时自动合成补齐（供导出成片等场景使用，杜绝后半段失声）
-    public func ensureAllSubtitlesDubbed(voice: String? = nil, onProgress: (@Sendable (Int, Int) -> Void)? = nil) async {
+    public func ensureAllSubtitlesDubbed(voice: String? = nil, onProgress: (@Sendable (Int, Int) -> Void)? = nil) async throws {
         let targetVoice = voice ?? project.llmConfig.targetLanguageVoiceCode
         let total = project.subtitles.count
+        var failures: [String] = []
         for (idx, item) in project.subtitles.enumerated() {
-            let text = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? item.originalText
-                : item.translatedText
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-
-            let needsAudio = !item.hasCurrentAudio(voice: targetVoice)
-            if needsAudio {
-                onProgress?(idx + 1, total)
-                do {
-                    try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: targetVoice)
-                } catch {
-                    print("按需补齐配音警告 [第\(idx + 1)句]: \(error)")
-                }
+            try Task.checkCancellation()
+            onProgress?(idx + 1, total)
+            if !item.hasCurrentAudio(voice: targetVoice) {
+                do { try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: targetVoice) }
+                catch is CancellationError { throw CancellationError() }
+                catch { failures.append("第\(idx + 1)句：\(error.localizedDescription)") }
             }
         }
+        guard failures.isEmpty else { throw TTSError.synthesisFailed(failures.joined(separator: "\n")) }
     }
 
     /// 试听目标类型
