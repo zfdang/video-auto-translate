@@ -5,6 +5,7 @@ public struct SubtitleListView: View {
     @ObservedObject var appState: AppState
     @State private var selectedIDs: Set<UUID> = []
     @State private var lastClickedIndex: Int? = nil
+    @State private var showTiming = false
     @State private var searchText: String = ""
 
     public var body: some View {
@@ -15,6 +16,9 @@ public struct SubtitleListView: View {
                     .font(.headline)
 
                 Spacer()
+                Button("调时") { showTiming.toggle() }
+                    .disabled(appState.project.selectedSubtitleID == nil)
+                    .help("精确时间、波形边界、前后句导航与循环试听")
 
                 // 1. 撤销按钮 (Cmd+Z)
                 Button(action: {
@@ -130,6 +134,10 @@ public struct SubtitleListView: View {
             .cornerRadius(6)
             .padding(8)
 
+            if showTiming, let item = appState.project.subtitles.first(where: { $0.id == appState.project.selectedSubtitleID }) {
+                TimingInspector(appState: appState, item: item)
+                Divider()
+            }
             // 滚动字幕列表
             if filteredSubtitles.isEmpty {
                 VStack(spacing: 12) {

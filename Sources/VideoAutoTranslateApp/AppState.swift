@@ -14,6 +14,8 @@ public final class AppState: ObservableObject {
     private var recoveryTask: Task<Void, Never>?
     private var recoveryWrite: Task<Void, Error>?
     private var isRestoringProject = false
+    private var isApplyingEdit = false
+    @Published public var loopingSubtitleID: UUID?
     private let persistsRecovery: Bool
     private let recoveryURL: URL
 
@@ -91,7 +93,7 @@ public final class AppState: ObservableObject {
             let itemID = item.id
             item.onModified = { [weak self] in
                 guard let self = self else { return }
-                if !self.project.isProcessing && (self.lastTextEditID != itemID || Date().timeIntervalSince(self.lastTextEditSnapshotTime) > 1.2) {
+                if !self.isApplyingEdit && !self.project.isProcessing && (self.lastTextEditID != itemID || Date().timeIntervalSince(self.lastTextEditSnapshotTime) > 1.2) {
                     self.recordUndoSnapshot()
                     self.lastTextEditSnapshotTime = Date()
                     self.lastTextEditID = itemID
@@ -184,6 +186,9 @@ public final class AppState: ObservableObject {
         timeObserverToken = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
+                if let id = self.loopingSubtitleID, let row = self.project.subtitles.first(where: { $0.id == id }), time >= row.endTime {
+                    self.player.seek(to: row.startTime, toleranceBefore: .zero, toleranceAfter: .zero)
+                }
                 self.currentTime = time
                 self.updateSelectedSubtitle(for: time)
             }
@@ -257,6 +262,7 @@ public final class AppState: ObservableObject {
     public func cancelAllTasks() {
         projectGeneration += 1
         splitDraft = nil
+        loopingSubtitleID = nil
         editingTask?.cancel()
         editingTask = nil
         activeTranscriptionTask?.cancel()
@@ -595,6 +601,35 @@ public final class AppState: ObservableObject {
             self.seek(to: item.startTime)
             statusMessage = "正在试听原声: [\(item.startTime.displayFormat) ➔ \(item.endTime.displayFormat)] \(item.originalText.prefix(25))..."
         }
+    }
+
+    public func updateTiming(id: UUID, start: Double, end: Double, duration: Double) throws {
+        guard let index = project.subtitles.firstIndex(where: { $0.id == id }), !project.isProcessing else { return }
+        try SubtitleTiming.validate(start: start, end: end, mediaDuration: duration,
+            previousEnd: index > 0 ? project.subtitles[index-1].endTime.secondsValue : nil,
+            nextStart: index + 1 < project.subtitles.count ? project.subtitles[index+1].startTime.secondsValue : nil)
+        recordUndoSnapshot()
+        isApplyingEdit = true
+        defer { isApplyingEdit = false }
+        project.subtitles[index].startTime = .from(seconds: start)
+        project.subtitles[index].endTime = .from(seconds: end)
+        project.isDirty = true
+        scheduleRecovery()
+    }
+
+    public func selectAdjacentSubtitle(offset: Int) {
+        guard !project.subtitles.isEmpty else { return }
+        let current = project.subtitles.firstIndex(where: { $0.id == project.selectedSubtitleID }) ?? 0
+        let row = project.subtitles[max(0, min(project.subtitles.count - 1, current + offset))]
+        project.selectedSubtitleID = row.id
+        seek(to: row.startTime)
+    }
+
+    public func toggleSubtitleLoop(_ item: SubtitleItem) {
+        if loopingSubtitleID == item.id { loopingSubtitleID = nil; player.pause(); return }
+        loopingSubtitleID = item.id
+        seek(to: item.startTime)
+        player.play()
     }
 
     // MARK: - 撤销与重做支持

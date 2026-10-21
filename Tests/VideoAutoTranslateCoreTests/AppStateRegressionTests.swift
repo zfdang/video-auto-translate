@@ -66,4 +66,15 @@ import CoreMedia
         XCTAssertEqual(app.project.subtitles[0].translatedText, "你好世界")
     }
 
+    func testTimingApplicationIsOneUndoableTransaction() async throws {
+        let app = AppState(probeServices: false)
+        let row = SubtitleItem(startTime: .from(seconds: 1), endTime: .from(seconds: 2), originalText: "hello")
+        app.project.subtitles = [row]
+        try app.updateTiming(id: row.id, start: 1.1, end: 2.1, duration: 3)
+        app.undo()
+        XCTAssertEqual(app.project.subtitles[0].startTime.secondsValue, 1)
+        XCTAssertEqual(app.project.subtitles[0].endTime.secondsValue, 2)
+        XCTAssertFalse(app.canUndo)
+    }
+
 }

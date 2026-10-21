@@ -87,4 +87,10 @@ final class ReviewRegressionTests: XCTestCase {
         XCTAssertNil(row.dubbedAudioURL)
     }
 
+    func testTimingEditsRejectOverlapsAndMediaOverflow() {
+        XCTAssertThrowsError(try SubtitleTiming.validate(start: 1, end: 3, mediaDuration: 2, previousEnd: nil, nextStart: nil))
+        XCTAssertThrowsError(try SubtitleTiming.validate(start: 1, end: 2, mediaDuration: 3, previousEnd: 1.5, nextStart: nil))
+        XCTAssertNoThrow(try SubtitleTiming.validate(start: 1, end: 2, mediaDuration: 3, previousEnd: 1, nextStart: 2))
+    }
+
 }
