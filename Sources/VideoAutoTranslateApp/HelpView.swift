@@ -78,7 +78,7 @@ public struct HelpView: View {
         VStack(alignment: .leading, spacing: 24) {
             shortcutGroup(
                 title: "字幕快速切分与编辑",
-                icon: "square.split.2x1",
+                icon: "scissors",
                 items: [
                     (keys: ["⌘", "B"], name: "光标处切分字幕", desc: "在当前原文编辑框的光标所在字符位置切分为两句，按声学词级时间戳物理对齐时间轴"),
                     (keys: ["⌘", "Z"], name: "撤销操作 (Undo)", desc: "撤销刚才的切分、合并、文字编辑或智能分句操作"),
