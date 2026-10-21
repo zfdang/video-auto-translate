@@ -9,19 +9,19 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
     public var onModified: (() -> Void)?
 
     @Published public var startTime: CMTime {
-        didSet { if startTime != oldValue { onModified?() } }
+        willSet { if startTime != newValue { onModified?() } }
     }
     @Published public var endTime: CMTime {
-        didSet { if endTime != oldValue { onModified?() } }
+        willSet { if endTime != newValue { onModified?() } }
     }
     @Published public var originalText: String {
-        didSet { if originalText != oldValue { onModified?() } }
+        willSet { if originalText != newValue { onModified?() } }
     }
     @Published public var translatedText: String {
-        didSet { if translatedText != oldValue { onModified?() } }
+        willSet { if translatedText != newValue { onModified?() } }
     }
     @Published public var words: [WordToken] {
-        didSet { onModified?() }
+        willSet { if words != newValue { onModified?() } }
     }
 
     // 配音缓存状态

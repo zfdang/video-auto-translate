@@ -58,6 +58,7 @@ public final class AppState: ObservableObject {
     @Published public var canUndo: Bool = false
     @Published public var canRedo: Bool = false
     private let maxUndoHistory: Int = 40
+    private var lastTextEditID: UUID?
     private var lastTextEditSnapshotTime: Date = .distantPast
 
     private var timeObserverToken: Any?
@@ -66,11 +67,13 @@ public final class AppState: ObservableObject {
 
     private func bindProjectSubtitles() {
         for item in project.subtitles {
+            let itemID = item.id
             item.onModified = { [weak self] in
                 guard let self = self else { return }
-                if Date().timeIntervalSince(self.lastTextEditSnapshotTime) > 1.2 {
+                if !self.project.isProcessing && (self.lastTextEditID != itemID || Date().timeIntervalSince(self.lastTextEditSnapshotTime) > 1.2) {
                     self.recordUndoSnapshot()
                     self.lastTextEditSnapshotTime = Date()
+                    self.lastTextEditID = itemID
                 }
                 if !self.project.isDirty {
                     self.project.isDirty = true
@@ -79,7 +82,7 @@ public final class AppState: ObservableObject {
         }
     }
 
-    public init() {
+    public init(probeServices: Bool = true) {
         setupTimeObserver()
         bindProjectSubtitles()
 
@@ -96,10 +99,12 @@ public final class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
-        Task {
-            await sidecarManager.probeExistingStatus()
-            await probeLocalOllama()
-            await probeLocalASR()
+        if probeServices {
+            Task {
+                await sidecarManager.probeExistingStatus()
+                await probeLocalOllama()
+                await probeLocalASR()
+            }
         }
 
         // 监听外部打开视频文件事件
@@ -584,6 +589,7 @@ public final class AppState: ObservableObject {
     /// 撤销上一步操作 (Cmd+Z)
     public func undo() {
         guard let previous = undoStack.popLast() else { return }
+        lastTextEditID = nil
         let current = createSubtitlesSnapshot()
         redoStack.append(current)
         project.subtitles = previous
@@ -877,6 +883,11 @@ public final class AppState: ObservableObject {
         let doc = try decoder.decode(ProjectDocument.self, from: data)
         cancelAllTasks()
         projectGeneration += 1
+        undoStack.removeAll()
+        redoStack.removeAll()
+        canUndo = false
+        canRedo = false
+        lastTextEditID = nil
         project.reset()
         project.restore(from: doc)
         if let video = project.videoURL {
