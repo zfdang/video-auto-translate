@@ -21,15 +21,17 @@ final class AnchoredDubbingTests: XCTestCase {
         XCTAssertEqual(rows[0].endTime.secondsValue, 4, "Planning must not mutate the input")
     }
 
-    func testLongSpeechHasBoundedBorrowingAndCannotCrossNextAnchorOrVideoEnd() {
+    func testContextEdgesStayFixedWhileInternalSpeechSharesTheBudget() {
         let long = String(repeating: "长", count: 80)
         let rows = [row(0, 2, text: long), row(2.3, 3, text: long), row(8, 9, text: long)]
         let planned = TimelineAligner().matchTimelineToTranslation(items: rows, videoDuration: 9.2)
-        XCTAssertEqual(planned[0].endTime.secondsValue, 2.22, accuracy: 0.001)
-        XCTAssertEqual(planned[1].endTime.secondsValue, 3.5, accuracy: 0.001)
-        XCTAssertEqual(planned[2].endTime.secondsValue, 9.12, accuracy: 0.001)
-        XCTAssertEqual(planned.map { $0.startTime }, rows.map { $0.sourceStartTime })
-        XCTAssertEqual(TimelineAligner.pacingIssues(items: planned, language: "zh").count, 3)
+        XCTAssertEqual(planned[0].startTime, rows[0].sourceStartTime)
+        XCTAssertEqual(planned[1].endTime, rows[1].sourceEndTime)
+        XCTAssertEqual(planned[2].startTime, rows[2].sourceStartTime)
+        XCTAssertEqual(planned[2].endTime, rows[2].sourceEndTime)
+        XCTAssertLessThan(planned[1].startTime, rows[1].sourceStartTime, "Internal starts are allowed to move")
+        XCTAssertEqual(planned[0].durationSeconds, planned[1].durationSeconds, accuracy: 0.002, "Equal speech shares equal time inside the context")
+        XCTAssertGreaterThanOrEqual(planned[1].startTime, planned[0].endTime)
     }
 
     func testInvalidAnchorsCannotBeRepairedByAccumulatingDelay() {
@@ -44,14 +46,15 @@ final class AnchoredDubbingTests: XCTestCase {
             for overlap in [0.01, 0.02, 0.03] {
                 let rows = [row(offset, offset + 2, text: long), row(offset + 2 - overlap, offset + 4, text: long)]
                 let planned = aligner.matchTimelineToTranslation(items: rows, videoDuration: offset + 4)
-                XCTAssertEqual(planned[0].endTime, rows[1].sourceStartTime)
-                XCTAssertEqual(planned[1].startTime, rows[1].sourceStartTime)
+                XCTAssertEqual(planned[0].startTime, rows[0].sourceStartTime)
+                XCTAssertEqual(planned[1].endTime, rows[1].sourceEndTime)
+                XCTAssertLessThanOrEqual(planned[0].endTime, planned[1].startTime)
                 XCTAssertEqual(planned[0].sourceEndTime, rows[0].sourceEndTime)
                 XCTAssertEqual(rows[0].endTime.secondsValue, offset + 2, accuracy: 0.00001)
                 XCTAssertEqual(aligner.matchTimelineToTranslation(items: planned, videoDuration: offset + 4), planned)
                 let restored = try JSONDecoder().decode(SubtitleItem.self, from: JSONEncoder().encode(planned[0]))
                 XCTAssertEqual(restored.sourceEndTime, rows[0].sourceEndTime)
-                XCTAssertEqual(restored.endTime, rows[1].sourceStartTime)
+                XCTAssertEqual(restored.endTime, planned[0].endTime)
             }
         }
     }
@@ -67,25 +70,25 @@ final class AnchoredDubbingTests: XCTestCase {
     func testMicroOverlapClampingCannotRoundPastASubMillisecondAnchor() {
         let first = row(0, 2, text: String(repeating: "长", count: 80))
         let next = SubtitleItem(startTime: CMTime(value: 19706, timescale: 10000), endTime: .from(seconds: 4), originalText: "source", translatedText: "下句")
-        let result = TimelineAligner().matchTimelineToTranslation(items: [first, next], videoDuration: 4)
+        let result = TimelineAligner().matchTimelineToTranslation(items: [first, next], videoDuration: 4, contextGroups: [[first.id], [next.id]])
         XCTAssertEqual(result[0].endTime, next.sourceStartTime)
         XCTAssertLessThanOrEqual(result[0].endTime, result[1].startTime)
     }
 
-    func testFinalUtteranceBorrowsOnlyWithAnExplicitMediaBoundary() {
+    func testContextNeverBorrowsPastItsOuterBoundaryEvenWithExtraVideoSpace() {
         let long = String(repeating: "长", count: 80)
         let rows = [row(0, 2, text: long), row(8, 9, text: long)]
         let aligner = TimelineAligner()
         let unknown = aligner.matchTimelineToTranslation(items: rows)
-        XCTAssertEqual(unknown[0].endTime.secondsValue, 2.5, accuracy: 0.001, "A following anchor bounds borrowing even without video duration")
+        XCTAssertEqual(unknown[0].endTime.secondsValue, 2, accuracy: 0.001)
         XCTAssertEqual(unknown[1].endTime.secondsValue, 9, accuracy: 0.001)
         let bounded = aligner.matchTimelineToTranslation(items: rows, videoDuration: 12)
-        XCTAssertEqual(bounded[1].endTime.secondsValue, 9.5, accuracy: 0.001)
+        XCTAssertEqual(bounded[1].endTime.secondsValue, 9, accuracy: 0.001)
         let atEnd = aligner.matchTimelineToTranslation(items: rows, videoDuration: 9)
         XCTAssertEqual(atEnd[1].endTime.secondsValue, 9, accuracy: 0.001)
     }
 
-    @MainActor func testMeasuredMatchingAcceptsMicroOverlapWithoutShiftingSpeechStarts() async throws {
+    @MainActor func testMeasuredMatchingAcceptsMicroOverlapAndKeepsContextEdges() async throws {
         let rows = [row(0, 1), row(0.98, 2)]
         let fixture = TimingFixtureTTS(duration: 1)
         let result = try await TimelineAligner().matchTimelineUsingSpeech(
@@ -93,8 +96,9 @@ final class AnchoredDubbingTests: XCTestCase {
             manager: SubtitleManager(), videoDuration: 2)
         defer { for item in result { if let url = item.dubbedAudioURL { try? FileManager.default.removeItem(at: url) } } }
         XCTAssertEqual(fixture.calls, 2)
-        XCTAssertEqual(result[0].endTime, rows[1].sourceStartTime)
-        XCTAssertEqual(result[1].startTime, rows[1].sourceStartTime)
+        XCTAssertEqual(result[0].startTime, rows[0].sourceStartTime)
+        XCTAssertEqual(result[1].endTime, rows[1].sourceEndTime)
+        XCTAssertLessThanOrEqual(result[0].endTime, result[1].startTime)
         XCTAssertEqual(result[0].sourceEndTime, rows[0].sourceEndTime)
         for item in result { XCTAssertTrue(item.hasCurrentAudio(voice: "zh-CN")) }
         let actual = try await AVURLAsset(url: XCTUnwrap(result[0].dubbedAudioURL)).load(.duration)
@@ -202,7 +206,7 @@ final class AnchoredDubbingTests: XCTestCase {
         catch { XCTAssertNil(item.naturalSpeech) }
     }
 
-    @MainActor func testUnchangedTimingStillProducesReviewableMeasuredConflictAndUndo() async throws {
+    @MainActor func testUnchangedTimingProducesPlayableAudioWithAdvisoryPacingAndUndo() async throws {
         let app = AppState(probeServices: false)
         let rows = [row(0, 1)]
         app.project.subtitles = rows
@@ -214,6 +218,7 @@ final class AnchoredDubbingTests: XCTestCase {
         }
         let proposal = try XCTUnwrap(app.editProposal)
         XCTAssertNotNil(proposal.after[0].dubbingTimingIssue)
+        XCTAssertTrue(proposal.after[0].hasCurrentAudio(voice: app.project.llmConfig.targetLanguageVoiceCode))
         XCTAssertNil(app.project.subtitles[0].naturalSpeech)
         app.applyEditProposal()
         XCTAssertNotNil(app.project.subtitles[0].dubbingTimingIssue)
@@ -304,10 +309,91 @@ final class AnchoredDubbingTests: XCTestCase {
         XCTAssertGreaterThan(second.max() ?? 0, 0.01)
     }
 
+    @MainActor func testLongTranslationAuditionWorksBeforeMatchingWithoutChangingTimeline() async throws {
+        let app = AppState(probeServices: false)
+        let fixture = TimingFixtureTTS(duration: 3)
+        app.ttsService = fixture
+        let item = row(0, 0.5)
+        app.project.subtitles = [item]
+        await app.auditionSubtitle(item, target: .translated)
+        defer { app.cancelAudition() }
+        XCTAssertNil(app.errorMessage)
+        XCTAssertNotNil(app.auditionPlayer)
+        XCTAssertEqual(fixture.calls, 1)
+        XCTAssertNil(item.dubbedAudioURL, "Natural audition must not publish overlong export audio")
+        XCTAssertEqual(item.startTime.secondsValue, 0)
+        XCTAssertEqual(item.endTime.secondsValue, 0.5)
+        await app.auditionSubtitle(item, target: .translated)
+        XCTAssertNil(app.errorMessage)
+        XCTAssertEqual(fixture.calls, 1, "Repeated audition reuses natural speech")
+    }
+
+    @MainActor func testContextPlanMovesInternalStartsAndBalancesMeasuredSpeech() async throws {
+        let first = row(0, 1, text: "长句")
+        let second = row(1.1, 5, text: "短句")
+        let tts = TimingFixtureTTS(duration: 1, durations: ["长句": 3, "短句": 1])
+        let planned = try await TimelineAligner().matchTimelineUsingSpeech(
+            items: [first, second], language: "zh", voice: "zh-CN", ttsService: tts, manager: SubtitleManager(), videoDuration: 5,
+            planContexts: { [$0.map(\.id)] })
+        defer { for item in planned { if let url = item.dubbedAudioURL { try? FileManager.default.removeItem(at: url) } } }
+        XCTAssertEqual(planned[0].startTime.secondsValue, 0)
+        XCTAssertEqual(planned[1].endTime.secondsValue, 5)
+        XCTAssertGreaterThan(planned[1].startTime.secondsValue, 3, "The short second utterance gives time to its neighbor inside the same context")
+        XCTAssertEqual(planned[0].translatedText, first.translatedText)
+        for item in planned { XCTAssertTrue(item.hasCurrentAudio(voice: "zh-CN")); XCTAssertNil(item.dubbingTimingIssue) }
+    }
+
+    @MainActor func testInvalidContextPlanFallsBackWithoutLosingSpeech() async throws {
+        let input = [row(0, 1), row(1.1, 4)]
+        for bad in [[[input[0].id, input[0].id]], [[input[1].id, input[0].id]]] {
+            let planned = try await TimelineAligner().matchTimelineUsingSpeech(
+                items: input, language: "zh", voice: "zh-CN", ttsService: TimingFixtureTTS(duration: 1), manager: SubtitleManager(), videoDuration: 4,
+                planContexts: { _ in bad })
+            defer { for item in planned { if let url = item.dubbedAudioURL { try? FileManager.default.removeItem(at: url) } } }
+            XCTAssertEqual(planned.map(\.id), input.map(\.id))
+            XCTAssertEqual(planned[0].startTime.secondsValue, 0)
+            XCTAssertEqual(planned[1].endTime.secondsValue, 4)
+            for item in planned { XCTAssertTrue(item.hasCurrentAudio(voice: "zh-CN")) }
+        }
+    }
+
+    @MainActor func testRecordedParisTourCompletesEveryLineWithoutManualTiming() async throws {
+        struct Sample: Decodable {
+            struct Row: Decodable { let start: Double; let end: Double; let source: String; let translation: String; let naturalDuration: Double }
+            let rows: [Row]; let videoDuration: Double; let voice: String
+        }
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "paris-tour-timing", withExtension: "json", subdirectory: "Fixtures"))
+        let sample = try JSONDecoder().decode(Sample.self, from: Data(contentsOf: url))
+        let input = sample.rows.map { SubtitleItem(startTime: .from(seconds: $0.start), endTime: .from(seconds: $0.end), originalText: $0.source, translatedText: $0.translation) }
+        let lengths = Dictionary(sample.rows.map { ($0.translation, $0.naturalDuration) }, uniquingKeysWith: { first, _ in first })
+        let fixture = TimingFixtureTTS(duration: 1, durations: lengths)
+        let manager = SubtitleManager()
+        let planned = try await TimelineAligner().matchTimelineUsingSpeech(
+            items: input, language: "zh", voice: sample.voice, ttsService: fixture, manager: manager, videoDuration: sample.videoDuration,
+            planContexts: { _ in throw URLError(.notConnectedToInternet) })
+        defer { for item in planned { if let url = item.dubbedAudioURL { try? FileManager.default.removeItem(at: url) } } }
+        XCTAssertEqual(planned.count, 25)
+        XCTAssertEqual(planned.map(\.translatedText), input.map(\.translatedText))
+        XCTAssertEqual(planned[0].startTime, input[0].sourceStartTime)
+        XCTAssertEqual(planned.last?.endTime, input.last?.sourceEndTime)
+        var fastest = 1.0
+        for (index, item) in planned.enumerated() {
+            XCTAssertTrue(item.hasCurrentAudio(voice: sample.voice), "Every sentence must be playable after one match")
+            if index > 0 { XCTAssertGreaterThanOrEqual(item.startTime, planned[index - 1].endTime) }
+            XCTAssertLessThanOrEqual(item.endTime.secondsValue, sample.videoDuration)
+            fastest = max(fastest, item.currentNaturalSpeech!.duration / item.durationSeconds)
+            let confirmed = item.dubbedAudioURL
+            try await manager.reDub(item: item, ttsService: fixture, voice: sample.voice)
+            XCTAssertEqual(item.dubbedAudioURL, confirmed)
+        }
+        XCTAssertEqual(fixture.calls, 25, "Generation reuses all matched clips")
+        XCTAssertLessThan(fastest, 1.8, "Context sharing must improve the measured sample's previous 2.03x peak")
+    }
+
     func testRatePolicyNeverSlowsAndRejectsInvalidOrExcessiveRates() throws {
         XCTAssertEqual(try DubbingPacing.rate(naturalDuration: 1, availableDuration: 5), 1)
         XCTAssertEqual(try DubbingPacing.rate(naturalDuration: 1.1, availableDuration: 1), 1.1, accuracy: 0.001)
-        XCTAssertThrowsError(try DubbingPacing.rate(naturalDuration: 2, availableDuration: 1))
+        XCTAssertEqual(try DubbingPacing.rate(naturalDuration: 2, availableDuration: 1), 2)
         XCTAssertThrowsError(try DubbingPacing.rate(naturalDuration: .nan, availableDuration: 1))
     }
 }
@@ -320,16 +406,18 @@ private final class TimingFixtureTTS: TTSServiceProtocol {
     let internalPause: Bool
     let silent: Bool
     let delay: Bool
+    let durations: [String: Double]
 
     init(duration: Double, leading: Double = 0, trailing: Double = 0,
-         internalPause: Bool = false, silent: Bool = false, delay: Bool = false) {
+         internalPause: Bool = false, silent: Bool = false, delay: Bool = false, durations: [String: Double] = [:]) {
         self.duration = duration; self.leading = leading; self.trailing = trailing
-        self.internalPause = internalPause; self.silent = silent; self.delay = delay
+        self.internalPause = internalPause; self.silent = silent; self.delay = delay; self.durations = durations
     }
 
     func synthesize(text: String, voice: String, outputURL: URL) async throws -> URL {
         calls += 1
         if delay { try await Task.sleep(nanoseconds: 100_000_000) }
+        let duration = durations[text] ?? self.duration
         let sampleRate = 24000.0
         let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
         let count = AVAudioFrameCount((duration + leading + trailing) * sampleRate)

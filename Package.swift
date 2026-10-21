@@ -32,7 +32,8 @@ let package = Package(
         .testTarget(
             name: "VideoAutoTranslateCoreTests",
             dependencies: ["VideoAutoTranslateCore", "VideoAutoTranslateApp"],
-            path: "Tests/VideoAutoTranslateCoreTests"
+            path: "Tests/VideoAutoTranslateCoreTests",
+            resources: [.copy("Fixtures")]
         )
     ]
 )

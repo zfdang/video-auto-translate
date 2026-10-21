@@ -18,16 +18,20 @@ struct EditProposalView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(proposal.title).font(.title2)
-            Text("预览修改前后的时间与内容；应用后可撤销。")
+            Text("同一语境共享时间，组的开头和结尾保持原位；组内句子可调整。应用后可撤销。")
                 .foregroundStyle(.secondary)
             if conflicts > 0 {
-                Label("\(conflicts) 句配音超长。应用时间建议后，仍需精简译文或手动调时才能配音。", systemImage: "exclamationmark.triangle")
+                Label("\(conflicts) 句语速偏快，已自动匹配。可试听后应用并继续配音、导出。", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(Array(proposal.after.enumerated()), id: \.element.id) { index, row in
                         VStack(alignment: .leading, spacing: 4) {
+                            if let context = row.timingContext, row.startTime == context.start {
+                                Text("语境组：\(context.start.displayFormat) → \(context.end.displayFormat)")
+                                    .font(.headline).foregroundStyle(.blue)
+                            }
                             Text("第 \(index + 1) 句").font(.headline)
                             if let before = proposal.before.first(where: { $0.id == row.id }) {
                                 Text("原来：\(before.startTime.displayFormat) → \(before.endTime.displayFormat)")

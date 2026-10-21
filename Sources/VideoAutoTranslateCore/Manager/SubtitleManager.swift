@@ -246,8 +246,22 @@ public final class SubtitleManager {
         if rate == 1 {
             try FileManager.default.copyItem(at: natural.url, to: result)
         } else {
-            // Rendering failures propagate; no overlong unprocessed fallback.
-            try timePitchEngine.changeSpeed(inputURL: natural.url, outputURL: result, rate: Float(rate))
+            // Large ratios are exceptional quality warnings, not missing speech.
+            // Chain supported render rates without clipping words or moving starts.
+            var input = natural.url
+            var remainingRate = rate
+            var intermediate: [URL] = []
+            defer { for url in intermediate { try? FileManager.default.removeItem(at: url) } }
+            while remainingRate > 2.5 {
+                try Task.checkCancellation()
+                let next = FileManager.default.temporaryDirectory.appendingPathComponent("speech-fit-\(UUID()).wav")
+                intermediate.append(next)
+                try timePitchEngine.changeSpeed(inputURL: input, outputURL: next, rate: 2.5)
+                input = next
+                let file = try AVAudioFile(forReading: next)
+                remainingRate = Double(file.length) / file.processingFormat.sampleRate / item.durationSeconds
+            }
+            try timePitchEngine.changeSpeed(inputURL: input, outputURL: result, rate: Float(max(1, remainingRate)))
         }
         try Task.checkCancellation()
         let actual = try await AVURLAsset(url: result).load(.duration).secondsValue

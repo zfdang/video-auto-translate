@@ -668,9 +668,15 @@ public final class AppState: ObservableObject {
                 let audio: AVPlayer
                 if target == .translated {
                     guard !item.translationNeedsReview else { throw TTSError.synthesisFailed("请先复核译文语言") }
-                    if !item.hasCurrentAudio(voice: voice) { try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice) }
-                    guard item.hasCurrentAudio(voice: voice), let url = item.dubbedAudioURL else { throw CancellationError() }
-                    audio = AVPlayer(url: url)
+                    if item.hasCurrentAudio(voice: voice), let url = item.dubbedAudioURL {
+                        audio = AVPlayer(url: url)
+                    } else {
+                        // Audition is a content check, not a prerequisite timing task.
+                        // Use natural speech without changing timestamps or publishing
+                        // an overlong clip as timeline-ready export audio.
+                        let natural = try await subtitleManager.prepareNaturalSpeech(item: item, ttsService: ttsService, voice: voice)
+                        audio = AVPlayer(url: natural.url)
+                    }
                 } else {
                     guard let media = media else { return }
                     let playerItem = AVPlayerItem(url: media)
@@ -944,10 +950,17 @@ public final class AppState: ObservableObject {
             return
         }
         let voice = config.targetLanguageVoiceCode
+        let client = OpenAICompatibleClient(baseURL: config.effectiveBaseURL, apiKey: config.effectiveAPIKey, timeout: 25)
         await runEditingJob(name: "匹配译文时间轴", snapshot: snapshot, reviewUnchangedResult: true) {
             try await self.timelineAligner.matchTimelineUsingSpeech(
                 items: snapshot, language: config.targetLanguage, voice: voice,
-                ttsService: self.ttsService, manager: self.subtitleManager, videoDuration: seconds
+                ttsService: self.ttsService, manager: self.subtitleManager, videoDuration: seconds,
+                planContexts: { entries in
+                    try await SpeechClusterPlanner().plan(entries, config: config, client: client)
+                }, status: { message in
+                    guard media == self.project.videoURL, !Task.isCancelled else { return }
+                    self.project.currentStepName = message
+                }
             ) { current, total in
                 guard media == self.project.videoURL, !Task.isCancelled else { return }
                 self.project.currentStepName = "测量正常语速配音 \(current)/\(total)"
@@ -1000,7 +1013,7 @@ public final class AppState: ObservableObject {
         scheduleRecovery()
         editProposal = nil
         let conflicts = proposal.after.filter { $0.dubbingTimingIssue != nil }.count
-        statusMessage = conflicts == 0 ? "已应用建议，可撤销；请试听" : "已应用时间建议；\(conflicts) 句配音超长，请精简译文或手动调时"
+        statusMessage = conflicts == 0 ? "已应用建议，可撤销；请试听" : "已应用时间建议；\(conflicts) 句语速偏快，可试听；可直接继续配音和导出"
         if previewAudioTrack != .original {
             previewAudioTrack = .original
             Task { await self.updatePreviewPlayerItem() }
@@ -1102,6 +1115,7 @@ public final class AppState: ObservableObject {
     }
 
     public func clearRecoveryCheckpoint() {
+        guard persistsRecovery else { return }
         recoveryTask?.cancel()
         recoveryWrite?.cancel()
         ProjectStore.removeCheckpoint(at: recoveryURL)

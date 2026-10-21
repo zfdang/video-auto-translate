@@ -31,6 +31,9 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         willSet { if words != newValue { onModified?() } }
     }
 
+    /// Session-only context boundaries for proposal review, not per-row locks.
+    public var timingContext: (start: CMTime, end: CMTime)?
+
     // Natural speech is independent of timing and is deliberately not persisted.
     @Published public var naturalSpeech: NaturalSpeechAudio?
     public var currentNaturalSpeech: NaturalSpeechAudio? {
@@ -41,8 +44,10 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
 
     public var dubbingTimingIssue: String? {
         guard let audio = currentNaturalSpeech else { return nil }
-        do { _ = try DubbingPacing.rate(naturalDuration: audio.duration, availableDuration: durationSeconds); return nil }
-        catch { return error.localizedDescription }
+        guard durationSeconds > 0 else { return "字幕时长无效。" }
+        let rate = audio.duration / durationSeconds
+        guard rate > DubbingPacing.warningRate + 0.005 else { return nil }
+        return String(format: "此句配音约 %.2f 倍语速，可试听；不会阻止继续配音或导出。", rate)
     }
 
     // 配音缓存状态
@@ -91,7 +96,9 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
     }
 
     public func snapshot() -> SubtitleItem {
-        SubtitleItem(id: id, startTime: startTime, endTime: endTime, originalText: originalText, translatedText: translatedText, words: words, dubbedAudioURL: dubbedAudioURL, dubbedAudioSignature: dubbedAudioSignature, translationNeedsReview: translationNeedsReview, sourceStartTime: sourceStartTime, sourceEndTime: sourceEndTime, naturalSpeech: naturalSpeech)
+        let copy = SubtitleItem(id: id, startTime: startTime, endTime: endTime, originalText: originalText, translatedText: translatedText, words: words, dubbedAudioURL: dubbedAudioURL, dubbedAudioSignature: dubbedAudioSignature, translationNeedsReview: translationNeedsReview, sourceStartTime: sourceStartTime, sourceEndTime: sourceEndTime, naturalSpeech: naturalSpeech)
+        copy.timingContext = timingContext
+        return copy
     }
 
     public var duration: CMTime {

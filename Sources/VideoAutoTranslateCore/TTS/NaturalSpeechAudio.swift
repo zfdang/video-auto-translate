@@ -4,7 +4,6 @@ import AVFoundation
 public enum DubbingTimingError: LocalizedError {
     case requiresTimelineMatch(natural: Double, available: Double)
     case invalidDuration
-    case insufficientTime(natural: Double, available: Double)
 
     public var errorDescription: String? {
         switch self {
@@ -12,14 +11,16 @@ public enum DubbingTimingError: LocalizedError {
             return String(format: "正常配音需 %.2f 秒，当前仅 %.2f 秒；请先使用「匹配译文时间轴」确认语速和时间安排，再生成配音。", natural, available)
         case .invalidDuration:
             return "配音或字幕时长无效，请重新匹配时间轴。"
-        case .insufficientTime(let natural, let available):
-            return String(format: "正常配音需 %.2f 秒，当前仅 %.2f 秒；超过 1.15 倍温和调速范围，请精简译文或手动调时。", natural, available)
+
         }
     }
 }
 
 public enum DubbingPacing {
-    public static let maximumRate = 1.15
+    /// A quality target, not a gate that can remove a sentence from the output.
+    public static let maximumRate = 1.25
+    /// Ordinary context balancing is not an error. Flag only clearly fast speech.
+    public static let warningRate = 1.6
     public static let timeTolerance = 0.005
 
     /// Never slow a short utterance to fill its subtitle interval.
@@ -29,10 +30,7 @@ public enum DubbingPacing {
             throw DubbingTimingError.invalidDuration
         }
         let required = naturalDuration / availableDuration
-        guard naturalDuration <= availableDuration * maximumRate + timeTolerance else {
-            throw DubbingTimingError.insufficientTime(natural: naturalDuration, available: availableDuration)
-        }
-        return min(maximumRate, max(1, required))
+        return max(1, required)
     }
 }
 
