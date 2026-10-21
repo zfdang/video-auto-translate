@@ -60,10 +60,10 @@ import CoreMedia
         let row = SubtitleItem(startTime: .zero, endTime: .from(seconds: 2), originalText: "Hello world", translatedText: "你好世界")
         app.project.subtitles = [row]
         app.requestSplit(id: row.id, atCharIndex: 5)
-        // 无论何时均允许直接拆分，译文自动切分且支持撤销
-        XCTAssertEqual(app.project.subtitles.count, 2, "无论何时均允许直接拆分字幕")
-        XCTAssertFalse(app.project.subtitles[0].translatedText.isEmpty)
-        XCTAssertFalse(app.project.subtitles[1].translatedText.isEmpty)
+        // 必须有光标才允许直接拆分，译文不做改动保留在前半句
+        XCTAssertEqual(app.project.subtitles.count, 2, "拆分原文字幕成功")
+        XCTAssertEqual(app.project.subtitles[0].translatedText, "你好世界", "译文不做改动保留在前半句")
+        XCTAssertEqual(app.project.subtitles[1].translatedText, "", "后半句译文为空等待再次翻译")
         app.undo()
         XCTAssertEqual(app.project.subtitles.count, 1)
         XCTAssertEqual(app.project.subtitles[0].translatedText, "你好世界")

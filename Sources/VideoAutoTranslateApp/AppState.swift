@@ -803,11 +803,10 @@ public final class AppState: ObservableObject {
     }
 
     /// 拆分指定字幕 (R14: 绑定确切行 ID，防止错位拆分)
-    public func splitSubtitle(id: UUID, atCharIndex: Int? = nil, translatedParts: (String, String)? = nil) {
+    public func splitSubtitle(id: UUID, atCharIndex: Int, translatedParts: (String, String)? = nil) {
         guard let index = project.subtitles.firstIndex(where: { $0.id == id }) else { return }
         let target = project.subtitles[index]
-        let splitIdx = atCharIndex ?? SubtitleManager.findNaturalSplitIndex(in: target.originalText)
-        if let (part1, part2) = subtitleManager.split(item: target, atCharIndex: splitIdx, translatedParts: translatedParts) {
+        if let (part1, part2) = subtitleManager.split(item: target, atCharIndex: atCharIndex, translatedParts: translatedParts) {
             recordUndoSnapshot()
             project.subtitles.remove(at: index)
             project.subtitles.insert(part2, at: index)
@@ -819,7 +818,7 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 拆分当前选中的字幕 (Cmd+B: 严格在光标所在字词位置切开，未定位光标则智能断句拆分)
+    /// 拆分当前选中的字幕 (Cmd+B: 严格在原文字幕光标处切开，必须有光标)
     public func splitCurrentSubtitle(atCharIndex: Int? = nil) {
         guard let selectedID = project.selectedSubtitleID,
               let item = project.subtitles.first(where: { $0.id == selectedID }) else {
@@ -831,6 +830,13 @@ public final class AppState: ObservableObject {
         if charIndex == nil {
             if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
                 let textStr = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                let transStr = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !transStr.isEmpty && (textStr == transStr || textView.string == item.translatedText) {
+                    errorMessage = "翻译的字幕无法拆分，请在原文字幕中放置光标"
+                    statusMessage = "拆分提示：请在原文字幕中放置光标"
+                    NSSound.beep()
+                    return
+                }
                 let itemStr = item.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if textStr == itemStr || textView.string == item.originalText {
                     let loc = textView.selectedRange().location
@@ -841,7 +847,13 @@ public final class AppState: ObservableObject {
             }
         }
 
-        let finalIndex = charIndex ?? SubtitleManager.findNaturalSplitIndex(in: item.originalText)
+        guard let finalIndex = charIndex, finalIndex > 0, finalIndex < item.originalText.count else {
+            errorMessage = "请先在原文字幕中将光标置于要拆分的位置（非首尾）"
+            statusMessage = "拆分提示：请先在原文字幕中放置光标"
+            NSSound.beep()
+            return
+        }
+
         splitSubtitle(id: selectedID, atCharIndex: finalIndex)
     }
 

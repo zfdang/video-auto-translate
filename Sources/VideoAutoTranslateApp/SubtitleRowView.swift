@@ -28,25 +28,28 @@ public struct SubtitleRowView: View {
 
     private func performSplitAtCursor() {
         var charIndex: Int? = nil
-        if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
-           textView.string == item.originalText {
-            let loc = textView.selectedRange().location
-            if loc != NSNotFound {
-                charIndex = loc
+        if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
+            if textView.string == item.originalText {
+                let loc = textView.selectedRange().location
+                if loc != NSNotFound {
+                    charIndex = loc
+                }
+            } else if textView.string == item.translatedText {
+                // 翻译的字幕无法拆分，必须在原文字幕中放置光标
+                NSSound.beep()
+                return
             }
         }
-        if charIndex == nil, let cached = lastCursorIndex {
-            charIndex = cached
+        if charIndex == nil && lastActiveField == .original {
+            charIndex = lastCursorIndex
         }
 
-        let splitIdx: Int
+        // 必须得有光标，且位于原文字符中间（非首尾）
         if let idx = charIndex, idx > 0, idx < item.originalText.count {
-            splitIdx = idx
+            onSplit(idx)
         } else {
-            // 未定位光标或光标在首尾时，自适应中点或自然断句处拆分
-            splitIdx = SubtitleManager.findNaturalSplitIndex(in: item.originalText)
+            NSSound.beep()
         }
-        onSplit(splitIdx)
     }
 
     public var body: some View {
@@ -125,13 +128,13 @@ public struct SubtitleRowView: View {
                     .help("直接将当前字幕与下一行 (#\(rowIndex + 2)) 合并为一行")
                 }
 
-                // 拆分按钮 (在光标所在位置拆分；未放置光标则智能断句)
+                // 拆分按钮 (在原文光标处拆分)
                 Button(action: performSplitAtCursor) {
                     Image(systemName: "square.split.2x1")
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
-                .help("拆分此行字幕 (快捷键 Cmd+B)")
+                .help("在光标处拆分此行原文字幕 (快捷键 Cmd+B)")
             }
 
             // 原文字幕编辑框 (英文/源语种)

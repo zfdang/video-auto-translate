@@ -323,14 +323,17 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
             translatedText: "你好世界这是一个测试"
         )
 
-        // 拆分：无论何时均允许拆分。若未提供 translatedParts，则自动按时间与标点切分译文
+        // 拆分：只能拆原始字幕，译文不做改动保留在前半句（除非后续做再次翻译）
         let autoSplitRes = manager.split(item: item, atCharIndex: 11)
-        XCTAssertNotNil(autoSplitRes, "无论何时都允许拆分字幕（即使已有译文也应自适应切分）")
+        XCTAssertNotNil(autoSplitRes, "必须有光标才允许拆分字幕")
         if let (autoPart1, autoPart2) = autoSplitRes {
-            XCTAssertFalse(autoPart1.translatedText.isEmpty)
-            XCTAssertFalse(autoPart2.translatedText.isEmpty)
-            XCTAssertEqual(autoPart1.translatedText + autoPart2.translatedText, "你好世界这是一个测试")
+            XCTAssertEqual(autoPart1.translatedText, "你好世界这是一个测试", "译文不做改动保留在前半句")
+            XCTAssertEqual(autoPart2.translatedText, "", "后半句译文为空，除非做再次翻译")
         }
+
+        // 测试若无光标（charIndex <= 0 或 >= text.count）则拒绝拆分
+        XCTAssertNil(manager.split(item: item, atCharIndex: 0), "无有效光标时拒绝拆分")
+        XCTAssertNil(manager.split(item: item, atCharIndex: item.originalText.count), "光标在末尾时拒绝拆分")
 
         let res = manager.split(item: item, atCharIndex: 11, translatedParts: ("你好世界", "这是一个测试")) // "Hello world"
         XCTAssertNotNil(res)
