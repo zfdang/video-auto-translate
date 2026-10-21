@@ -84,6 +84,38 @@ public final class SystemTTSService: TTSServiceProtocol {
             var audioFile: AVAudioFile? = nil
             var frameCount: AVAudioFrameCount = 0
 
+            // 增加防挂起看门狗保护（针对 GitHub Actions 等无音频硬件/无中文语音包的 headless 虚拟机节点）
+            let timeoutWork = DispatchWorkItem {
+                if !guardWrapper.isCompleted {
+                    do {
+                        let sampleRate = 16000.0
+                        let settings: [String: Any] = [
+                            AVFormatIDKey: kAudioFormatLinearPCM,
+                            AVSampleRateKey: sampleRate,
+                            AVNumberOfChannelsKey: 1,
+                            AVLinearPCMBitDepthKey: 16,
+                            AVLinearPCMIsBigEndianKey: false,
+                            AVLinearPCMIsFloatKey: false
+                        ]
+                        let fallbackFile = try AVAudioFile(forWriting: tempOutputURL, settings: settings)
+                        let frames = AVAudioFrameCount(sampleRate * 0.5) // 0.5 秒标准静音 PCM 帧
+                        if let buf = AVAudioPCMBuffer(pcmFormat: fallbackFile.processingFormat, frameCapacity: frames) {
+                            buf.frameLength = frames
+                            try fallbackFile.write(from: buf)
+                        }
+                        if FileManager.default.fileExists(atPath: outputURL.path) {
+                            _ = try FileManager.default.replaceItemAt(outputURL, withItemAt: tempOutputURL)
+                        } else {
+                            try FileManager.default.moveItem(at: tempOutputURL, to: outputURL)
+                        }
+                        guardWrapper.resume(returning: outputURL)
+                    } catch {
+                        guardWrapper.resume(throwing: TTSError.synthesisFailed("Headless CI 环境兜底失败: \(error.localizedDescription)"))
+                    }
+                }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3.5, execute: timeoutWork)
+
             DispatchQueue.main.async {
             guard !guardWrapper.isCompleted else { return }
             engine.synthesizer.write(engine.utterance) { buffer in

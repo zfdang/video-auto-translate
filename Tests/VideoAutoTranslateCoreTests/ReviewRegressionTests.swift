@@ -160,6 +160,15 @@ final class ReviewRegressionTests: XCTestCase {
         XCTAssertGreaterThan(speech.max() ?? 0, 0.4)
     }
 
+    func testLoadingProjectCannotReuseAnotherServiceCredential() throws {
+        var project = ProjectState()
+        project.llmConfig.onlineAPIKey = "private-key-A"
+        project.llmConfig.onlineBaseURL = "https://a.example/v1"
+        let document = ProjectDocument(llmConfig: LLMConfiguration(onlineBaseURL: "https://b.example/v1"))
+        project.restore(from: document)
+        XCTAssertEqual(project.llmConfig.onlineAPIKey, "")
+    }
+
 }
 
 private struct DelayedReviewTTS: TTSServiceProtocol {

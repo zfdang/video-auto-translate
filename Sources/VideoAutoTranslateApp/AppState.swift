@@ -197,7 +197,7 @@ public final class AppState: ObservableObject {
         let (online, _) = await LocalASRService.testConnection(urlString: project.asrConfig.serviceURL)
         await MainActor.run {
             self.isASRServerOnline = online
-            if online && !self.sidecarManager.status.isRunning {
+            if online && self.usesManagedASR && !self.sidecarManager.status.isRunning {
                 self.sidecarManager.status = .running(pid: 0, port: self.sidecarManager.defaultPort)
             }
         }
@@ -1056,6 +1056,7 @@ public final class AppState: ObservableObject {
         isRestoringProject = true
         project.reset()
         project.restore(from: doc)
+        if storesPreferences { project.llmConfig.onlineAPIKey = ServiceCredentials.read(account: project.llmConfig.onlineBaseURL) }
         isRestoringProject = false
         project.audioURL = project.videoURL // Original-quality audio remains available after reopening.
         documentURL = url
@@ -1144,6 +1145,7 @@ public final class AppState: ObservableObject {
         components.path = ""; components.query = nil; components.fragment = nil
         return components.string ?? "http://127.0.0.1:8765"
     }
+    public var usesLocalASR: Bool { ["127.0.0.1", "localhost"].contains(URL(string: project.asrConfig.serviceURL)?.host ?? "") }
     public var usesManagedASR: Bool {
         let url = URL(string: project.asrConfig.serviceURL)
         return ["127.0.0.1", "localhost"].contains(url?.host ?? "") && (url?.port ?? 80) == sidecarManager.defaultPort
@@ -1160,6 +1162,7 @@ public final class AppState: ObservableObject {
 
     /// 同步当前存储配置到服务端
     public func syncModelStorageToServer() async {
+        guard usesLocalASR else { return }
         guard let url = URL(string: "\(asrManagementBaseURL)/v1/models/storage") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -1197,6 +1200,7 @@ public final class AppState: ObservableObject {
 
     /// 触发指定模型的下载 (R23: 首次下载先准备 sidecar 服务，避免连接失败或遗留下载中状态)
     public func downloadModel(preset: ASRModelPreset) {
+        guard usesLocalASR else { errorMessage = "远程服务的模型由服务端管理；本机模型下载仅用于本机引擎。"; return }
         // 先中止先前的下载准备任务（若有）
         downloadTasks[preset.id]?.cancel()
 
@@ -1255,6 +1259,6 @@ public final class AppState: ObservableObject {
     public func cancelDownload(preset: ASRModelPreset) {
         downloadTasks[preset.id]?.cancel()
         downloadTasks.removeValue(forKey: preset.id)
-        modelStorageManager.cancelDownload(for: preset.id, asrBaseURL: asrManagementBaseURL)
+        if usesLocalASR { modelStorageManager.cancelDownload(for: preset.id, asrBaseURL: asrManagementBaseURL) }
     }
 }

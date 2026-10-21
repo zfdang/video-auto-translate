@@ -96,7 +96,7 @@ public struct ProjectState: Equatable {
         }
         self.unalignedTranscript = document.unalignedTranscript
         self.subtitles = document.subtitles
-        let existingKey = self.llmConfig.onlineAPIKey
+        let existingKey = self.llmConfig.onlineBaseURL == document.llmConfig.onlineBaseURL ? self.llmConfig.onlineAPIKey : ""
         self.llmConfig = document.llmConfig
         if !existingKey.isEmpty && self.llmConfig.onlineAPIKey.isEmpty {
             self.llmConfig.onlineAPIKey = existingKey

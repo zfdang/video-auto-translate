@@ -162,7 +162,8 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertEqual(SubtitleExportMode.originalOnly.displayName, "仅原始语")
         XCTAssertEqual(SubtitleExportMode.none.displayName, "没有字幕")
 
-        XCTAssertEqual(VideoAudioExportMode.translated.displayName, "自动翻译的语言")
+        XCTAssertEqual(VideoAudioExportMode.translated.displayName, "纯目标语言配音")
+        XCTAssertEqual(VideoAudioExportMode.overlay.displayName, "原声压低叠加（保留原人声）")
         XCTAssertEqual(VideoAudioExportMode.original.displayName, "原始语言")
     }
 

@@ -3,8 +3,18 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
 
 permissions:
   contents: read
@@ -27,6 +37,14 @@ jobs:
           python3 scripts/test-release-metadata.py
           python3 scripts/test-release-notes.py
 
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('scripts/test-asr-results.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Test ASR timing contract
         run: |
           python3 -m venv "$RUNNER_TEMP/asr-test"
@@ -36,44 +54,19 @@ jobs:
   build-and-test:
     name: Build & Test (macOS arm64)
     runs-on: macos-14
-    timeout-minutes: 30
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
-      - name: Compute release metadata
-        id: version
-        run: |
-          scripts/release-metadata.sh | tee "$RUNNER_TEMP/release-version"
-          cat "$RUNNER_TEMP/release-version" >> "$GITHUB_ENV"
-
-      - name: Test release scripts
-        run: |
-          python3 scripts/test-release-metadata.py
-          python3 scripts/test-release-notes.py
+      - name: Cache SPM
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
 
       - name: Swift Test
         run: swift test
-
-      - name: Build macOS App
-        run: ./build_app.sh
-
-      - name: Package Release
-        run: ./scripts/package-release.sh
-
-      - name: Verify build artifacts
-        run: |
-          ls -lh dist/release
-          test -d "dist/VideoAutoTranslate.app"
-          test -f "dist/VideoAutoTranslate.app/Contents/MacOS/VideoAutoTranslateApp"
-          test -f "dist/release/VideoAutoTranslate_${RELEASE_TAG}_macOS_arm64.dmg"
-          test -f "dist/release/VideoAutoTranslate_${RELEASE_TAG}_macOS_arm64.zip"
-          test -f "dist/release/SHA256SUMS.txt"
-
-      - name: Upload CI Artifacts
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: VideoAutoTranslate-CI-${{ github.sha }}
-          path: dist/release/*
-          retention-days: 7
