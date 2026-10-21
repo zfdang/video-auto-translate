@@ -278,19 +278,18 @@ public final class ASRSidecarManager: ObservableObject {
             let log = try FileHandle(forWritingTo: logURL)
             defer { try? log.close() }
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: bootstrap)
-            process.arguments = ["-c", "import os,sys; os.setsid(); os.execv('/bin/bash', ['/bin/bash'] + sys.argv[1:])", script.path, target.path, bootstrap]
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = [script.path, target.path, bootstrap]
             process.standardOutput = log
             process.standardError = log
             try Task.checkCancellation()
             try process.run()
             while process.isRunning {
                 if Task.isCancelled {
-                    let group = -process.processIdentifier
-                    kill(group, SIGTERM)
+                    process.terminate()
                     let deadline = Date().addingTimeInterval(0.5)
-                    while kill(group, 0) == 0 && Date() < deadline { usleep(20_000) }
-                    if kill(group, 0) == 0 { kill(group, SIGKILL) }
+                    while process.isRunning && Date() < deadline { usleep(20_000) }
+                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
                     throw CancellationError()
                 }
                 try? await Task.sleep(nanoseconds: 200_000_000)
