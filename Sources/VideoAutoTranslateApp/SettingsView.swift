@@ -12,15 +12,15 @@ public struct SettingsView: View {
     private let customLanguageTag: String = "__custom__"
 
     enum SettingsTab: String, CaseIterable, Identifiable {
-        case asrModels = "模型与存储"
+        case asrModels = "ASR 模型"
         case asrService = "ASR 服务"
         case translation = "大语言模型 (LLM)"
 
         var id: String { rawValue }
         var icon: String {
             switch self {
-            case .asrModels: return "externaldrive.fill.badge.icloud"
-            case .asrService: return "waveform"
+            case .asrModels: return "waveform.circle"
+            case .asrService: return "server.rack"
             case .translation: return "brain"
             }
         }
