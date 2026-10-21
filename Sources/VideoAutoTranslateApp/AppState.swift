@@ -51,6 +51,7 @@ public final class AppState: ObservableObject {
     private var activeTranscriptionTask: Task<Void, Never>?
     private var activeTranslationTask: Task<Void, Error>?
     private var activeDubbingTask: Task<Void, Error>?
+    private var editingTask: Task<[SubtitleItem], Error>?
 
     // 撤销 / 重做历史状态堆栈
     private var undoStack: [[SubtitleItem]] = []
@@ -232,6 +233,8 @@ public final class AppState: ObservableObject {
     /// 取消所有正在执行的后台任务 (R03 & FU05)
     public func cancelAllTasks() {
         projectGeneration += 1
+        editingTask?.cancel()
+        editingTask = nil
         activeTranscriptionTask?.cancel()
         activeTranscriptionTask = nil
         activeTranslationTask?.cancel()
@@ -318,7 +321,11 @@ public final class AppState: ObservableObject {
                 }
             }
         }
-        self.activeTranscriptionTask = Task { _ = try? await worker.value }
+        self.activeTranscriptionTask = Task {
+            await withTaskCancellationHandler {
+                _ = try? await worker.value
+            } onCancel: { worker.cancel() }
+        }
 
         do {
             let items = try await withTaskCancellationHandler {
@@ -739,80 +746,61 @@ public final class AppState: ObservableObject {
 
     /// 执行大模型语义智能分句规整 (将每个词的精确定位发给大模型重构断句时间轴)
     public func runSmartSegmentation() async {
-        guard !project.subtitles.isEmpty else { return }
-
-        // 收集全部物理 WordTokens
-        var allTokens: [WordToken] = []
-        for item in project.subtitles {
-            if !item.words.isEmpty {
-                allTokens.append(contentsOf: item.words)
-            } else {
-                allTokens.append(WordToken(text: item.originalText, startTime: item.startTime, endTime: item.endTime))
-            }
+        guard !project.subtitles.isEmpty, !project.isProcessing else { return }
+        let snapshot = createSubtitlesSnapshot()
+        let tokens = snapshot.flatMap { item in
+            item.words.isEmpty ? [WordToken(text: item.originalText, startTime: item.startTime, endTime: item.endTime)] : item.words
         }
-
-        guard !allTokens.isEmpty else { return }
-
-        recordUndoSnapshot()
-        project.isProcessing = true
-        project.currentStepName = "正在调用大模型执行智能语义断句规整..."
-        project.progress = 0.3
-        statusMessage = "正在结合字词精确时间戳进行 AI 智能语义分句..."
-
-        do {
-            let smartItems = try await llmSegmenter.segment(tokens: allTokens, config: project.llmConfig)
-            guard !smartItems.isEmpty else {
-                project.isProcessing = false
-                statusMessage = "智能分句未能生成有效结果，保留原有字幕"
-                return
-            }
-
-            project.subtitles = smartItems
-            project.selectedSubtitleID = smartItems.first?.id
-            project.isProcessing = false
-            project.progress = 1.0
-            project.isDirty = true
-            statusMessage = "AI 智能分句完成！已规整为 \(smartItems.count) 行自然字幕"
-        } catch {
-            project.isProcessing = false
-            statusMessage = "智能分句失败: \(error.localizedDescription)"
-            errorMessage = "智能分句失败: \(error.localizedDescription)"
+        let config = project.llmConfig
+        await runEditingJob(name: "智能分句", snapshot: snapshot) {
+            try await self.llmSegmenter.segment(tokens: tokens, config: config)
         }
     }
 
-    /// 匹配译文时间轴：保持原文与译文一一对应关系不变，根据译文期望发音时长重新排布时间轴，实现语速语调自然一致
     public func matchTimelineToTranslation() async {
-        guard !project.subtitles.isEmpty else { return }
-
-        let hasTranslations = project.subtitles.contains { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        guard hasTranslations else {
-            errorMessage = "尚未检测到翻译结果，请先执行「字幕翻译」后再匹配译文时间轴"
+        guard !project.subtitles.isEmpty, !project.isProcessing else { return }
+        guard project.subtitles.contains(where: { !$0.translatedText.isEmpty }) else {
+            errorMessage = "请先翻译字幕，再匹配译文时间轴"
             return
         }
-
-        recordUndoSnapshot()
-        project.isProcessing = true
-        project.progress = 0.3
-        project.currentStepName = "正在根据译文期望发音时长匹配时间轴..."
-        statusMessage = "正在根据译文期望发音时长匹配时间轴，平衡发音语速..."
-
-        let client = OpenAICompatibleClient(baseURL: project.llmConfig.effectiveBaseURL, apiKey: project.llmConfig.effectiveAPIKey)
-        let aligned = await timelineAligner.matchTimelineWithLLM(
-            items: project.subtitles,
-            config: project.llmConfig,
-            client: client
-        )
-
-        project.subtitles = aligned
-        // 重调时间轴后使旧配音缓存失效，以便后续以 1.0x 舒适语速重新试听与合成
-        for item in project.subtitles {
-            item.dubbedAudioURL = nil
+        let snapshot = createSubtitlesSnapshot()
+        let config = project.llmConfig
+        let duration = try? await player.currentItem?.asset.load(.duration)
+        let client = OpenAICompatibleClient(baseURL: config.effectiveBaseURL, apiKey: config.effectiveAPIKey)
+        await runEditingJob(name: "匹配译文时间轴", snapshot: snapshot) {
+            await self.timelineAligner.matchTimelineWithLLM(items: snapshot, config: config, client: client, videoDuration: duration?.secondsValue)
         }
-        project.isProcessing = false
-        project.progress = 1.0
-        project.currentStepName = ""
-        project.isDirty = true
-        statusMessage = "时间轴已成功与译文发音匹配！语速已平滑一致"
+    }
+
+    /// All automatic editing uses the same ownership and cancellation boundary.
+    public func runEditingJob(name: String, snapshot: [SubtitleItem], operation: @escaping @MainActor () async throws -> [SubtitleItem]) async {
+        let generation = projectGeneration
+        project.isProcessing = true
+        project.currentStepName = name
+        let worker = Task { try await operation() }
+        editingTask = worker
+        do {
+            let result = try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: { worker.cancel() }
+            guard generation == projectGeneration, !worker.isCancelled, !Task.isCancelled else { return }
+            guard createSubtitlesSnapshot() == snapshot else {
+                throw LLMError.parsingFailed("字幕已修改，请重新生成建议")
+            }
+            guard !result.isEmpty else { throw LLMError.parsingFailed("未生成有效字幕，原有内容已保留") }
+            recordUndoSnapshot()
+            project.subtitles = result
+            project.isDirty = true
+            project.isProcessing = false
+            project.progress = 1
+            statusMessage = "\(name)已完成，可撤销；请试听确认"
+        } catch {
+            guard generation == projectGeneration else { return }
+            project.isProcessing = false
+            if !(error is CancellationError) { errorMessage = error.localizedDescription }
+            statusMessage = "\(name)未应用，原有字幕已保留"
+        }
+        if generation == projectGeneration { editingTask = nil }
     }
 
     /// 保持兼容

@@ -21,4 +21,21 @@ import CoreMedia
         app.undo()
         XCTAssertTrue(app.project.subtitles.isEmpty)
     }
+    func testLateEditingResultCannotReplaceAnotherVideo() async throws {
+        let app = AppState(probeServices: false)
+        let old = SubtitleItem(startTime: .zero, endTime: .from(seconds: 2), originalText: "A")
+        app.project.subtitles = [old]
+        let job = Task {
+            await app.runEditingJob(name: "test", snapshot: app.createSubtitlesSnapshot()) {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return [old]
+            }
+        }
+        await Task.yield()
+        app.openVideo(url: URL(fileURLWithPath: "/tmp/B.mp4"))
+        await job.value
+        XCTAssertTrue(app.project.subtitles.isEmpty)
+        XCTAssertFalse(app.project.isProcessing)
+    }
+
 }
