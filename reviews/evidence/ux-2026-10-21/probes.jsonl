@@ -1,0 +1,11 @@
+{"baseline": "b33597ce9127683882c345d5f07a19e83fbebdc7"}
+{"probe": "undo", "exit": 0, "stdout": "text after undo=After; expected Before", "fatal": ""}
+{"probe": "load-undo", "exit": 0, "stdout": "loaded B then undo=[\"Project A\"]", "fatal": ""}
+{"probe": "core", "exit": 0, "stdout": "first-word split index2=Hello world third|fourth, translation=完整人工译文|\nemoji cursor before b, UTF16=4, split=😀a b|c\nbounded crowded timeline=0.04-0.39,0.47-0.82,0.75-1.0,0.75-1.0,0.75-1.0\nbounded timeline overlaps=3\n5s video last subtitle without duration bound ends=6.2\ntranslated-only unfinished output=1|00:00:00,000 --> 00:00:02,000|[待翻译]||\nvalidation total=1, valid=1, untranslated=1\nproject key excluded=true", "fatal": ""}
+{"probe": "translation", "exit": 0, "stdout": "zero-based result=First translation|\npartial returns success, result=Only first|", "fatal": ""}
+{"probe": "segment-content", "exit": 0, "stdout": "segment output=Goodbye moon\nsegment tokens=Hello|world", "fatal": ""}
+{"probe": "segment-stale", "exit": 0, "stdout": "video B now contains=Project A\ntranslations=\nstatus=AI 智能分句完成！已规整为 1 行自然字幕", "fatal": ""}
+{"probe": "align-stale", "exit": 0, "stdout": "video B now contains=Project A\ntranslations=人工翻译\nstatus=时间轴已成功与译文发音匹配！语速已平滑一致", "fatal": ""}
+{"probe": "duplicate-timeline", "exit": -5, "stdout": "", "fatal": "Swift/NativeDictionary.swift:783: Fatal error: Duplicate values for key: '0'"}
+{"probe": "asr-no-alignment", "result": {"text": "A full transcript without timing", "words": [], "segments": [{"id": 0, "text": "A full transcript without timing", "start": 0.0, "end": 5.0, "words": []}]}}
+{"probe": "python-syntax", "status": "ok"}

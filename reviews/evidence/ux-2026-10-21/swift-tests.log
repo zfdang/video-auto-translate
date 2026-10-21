@@ -1,0 +1,117 @@
+[0/1] Planning build
+Building for debugging...
+[0/7] Write sources
+[3/7] Write swift-version--58304C5D6DBC2206.txt
+[5/11] Compiling VideoAutoTranslateCore SubtitleTranslator.swift
+[6/11] Emitting module VideoAutoTranslateCore
+[7/11] Compiling VideoAutoTranslateCore TimelineAligner.swift
+[8/11] Compiling VideoAutoTranslateCore SubtitleManager.swift
+[9/19] Emitting module VideoAutoTranslateCoreTests
+[10/19] Compiling VideoAutoTranslateCoreTests VideoAutoTranslateCoreTests.swift
+[11/19] Compiling VideoAutoTranslateCoreTests UserJourneyE2ETests.swift
+[12/18] Compiling VideoAutoTranslateApp SubtitleListView.swift
+[13/18] Emitting module VideoAutoTranslateApp
+[14/18] Compiling VideoAutoTranslateApp ExportView.swift
+[15/18] Compiling VideoAutoTranslateApp AppState.swift
+[16/18] Compiling VideoAutoTranslateApp SubtitleRowView.swift
+[16/19] Write Objects.LinkFileList
+[17/19] Linking VideoAutoTranslateApp
+[18/19] Applying VideoAutoTranslateApp
+Build complete! (9.17s)
+Test Suite 'All tests' started at 2026-10-21 19:41:07.949.
+Test Suite 'VideoAutoTranslatePackageTests.xctest' started at 2026-10-21 19:41:07.950.
+Test Suite 'UserJourneyE2ETests' started at 2026-10-21 19:41:07.950.
+Test Case '-[VideoAutoTranslateCoreTests.UserJourneyE2ETests testFullUserJourneyFromImportToExport]' started.
+Test Case '-[VideoAutoTranslateCoreTests.UserJourneyE2ETests testFullUserJourneyFromImportToExport]' passed (10.802 seconds).
+Test Suite 'UserJourneyE2ETests' passed at 2026-10-21 19:41:18.753.
+	 Executed 1 test, with 0 failures (0 unexpected) in 10.802 (10.803) seconds
+Test Suite 'VideoAutoTranslateCoreTests' started at 2026-10-21 19:41:18.753.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testASRVerboseJSONParsing]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testASRVerboseJSONParsing]' passed (0.001 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testCMTimeFormatting]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testCMTimeFormatting]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testLLMConfigurationEffectiveValues]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testLLMConfigurationEffectiveValues]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testModelStorageManagerSymlinkDetection]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testModelStorageManagerSymlinkDetection]' passed (0.083 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testOllamaModelPresetDefinitions]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testOllamaModelPresetDefinitions]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testOllamaProbeAndLiveTranslation]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testOllamaProbeAndLiveTranslation]' passed (4.026 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR01_VideoComposerRejectsSameSourceAndDestination]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR01_VideoComposerRejectsSameSourceAndDestination]' passed (0.001 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR04_ProjectPersistenceSerialization]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR04_ProjectPersistenceSerialization]' passed (0.001 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR05_R06_SubtitleSplittingPreservesTranslationAndEnforcesMinDuration]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR05_R06_SubtitleSplittingPreservesTranslationAndEnforcesMinDuration]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR15_SubtitleMergingNestedIntervals]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR15_SubtitleMergingNestedIntervals]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR27_TimeTypesAccuracyAndBounds]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR27_TimeTypesAccuracyAndBounds]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR31_TranslatedOnlyModeDoesNotFallbackToOriginalText]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR31_TranslatedOnlyModeDoesNotFallbackToOriginalText]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSRTExport]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSRTExport]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleItemMerging]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleItemMerging]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleItemSplitting]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleItemSplitting]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleItemSplittingUserReportedCase]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleItemSplittingUserReportedCase]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleTranslatorResilientParsing]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleTranslatorResilientParsing]' passed (0.001 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerLocalClusterAntiDrift]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerLocalClusterAntiDrift]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerLongListPreservation]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerLongListPreservation]' passed (0.001 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerNaturalDurationEstimation]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerNaturalDurationEstimation]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerPacingSmoothing]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerPacingSmoothing]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerShortTranslationNoDragging]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerShortTranslationNoDragging]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testVideoComposerWithSubtitleEmbedding]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testVideoComposerWithSubtitleEmbedding]' passed (12.631 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testVideoExportModesDefinitions]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testVideoExportModesDefinitions]' passed (0.000 seconds).
+Test Suite 'VideoAutoTranslateCoreTests' passed at 2026-10-21 19:41:35.502.
+	 Executed 24 tests, with 0 failures (0 unexpected) in 16.748 (16.750) seconds
+Test Suite 'VideoAutoTranslatePackageTests.xctest' passed at 2026-10-21 19:41:35.503.
+	 Executed 25 tests, with 0 failures (0 unexpected) in 27.550 (27.553) seconds
+Test Suite 'All tests' passed at 2026-10-21 19:41:35.503.
+	 Executed 25 tests, with 0 failures (0 unexpected) in 27.550 (27.554) seconds
+====== [User Journey E2E] 开始全链路用户视角测试 ======
+--> 步骤 1: 用户打开待翻译视频...
+  ✓ 视频载入成功，总时长: 78.36 秒
+--> 步骤 2: 用户点击「语音转录」按钮...
+  ✓ 本地 ASR 服务状态: 离线
+  ✓ 语音识别字幕已填充，共 4 行字幕
+--> 步骤 3: 用户交互式微调字幕...
+  3.1 用户在第 2 行 'You' 前面 (字符索引 19) 触发拆分...
+    ✓ 拆分成功！前半句: Bonjour, yes, yes.，后半句: You are for the tour, Très bien.
+  3.2 用户按下 Cmd+Z 撤销刚才的拆分...
+    ✓ 撤销成功，恢复为 4 行
+  3.3 用户按下 Cmd+Shift+Z 重做拆分...
+    ✓ 重做成功，重新切分为 5 行
+  3.4 用户选中第 4 行与第 5 行，触发合并...
+    ✓ 合并成功，合并后末行文本: Welcome mes amis Welcome to Paris City Tours Today I show you the real Paris Follow me
+--> 步骤 4: 用户配置中文并执行「字幕翻译」...
+  [1] 原文: Bonjour -> 译文: 你好
+  [2] 原文: Bonjour, yes, yes. -> 译文: 是的是的
+  [3] 原文: You are for the tour, Très bien. -> 译文: 你们是来参加这次观光游的，太好了
+  [4] 原文: Welcome mes amis Welcome to Paris City Tours Today I show you the real Paris Follow me -> 译文: 欢迎各位朋友参加巴黎城市之旅，今天我要带你们看看真正的巴黎，跟我来吧
+  ✓ 双语字幕翻译就绪
+--> 步骤 5: 用户点击「匹配译文时间轴」（跟译文期望发音时间做匹配，原文译文一一对应不变）...
+  匹配前各行语速（与原声绑定）: ["8.3字/s", "6.5字/s", "17.8字/s", "9.2字/s"]
+  匹配后各行语速（契合译文自然发音）: ["2.7字/s", "3.8字/s", "4.4字/s", "4.5字/s"]
+  ✓ 译文时间轴匹配成功：原文译文对应保持不变，时间轴与译文语音时长完全吻合！
+--> 步骤 6: 用户测试单句试听与配音合成...
+  ✓ 单句试听配音生成成功 (e2e_audition_5A7C91E8-2CB6-4C9F-BD0B-5B4EC28D23DD.wav)
+--> 步骤 7: 用户测试导出最终成品...
+  ✓ 双语 SRT 字幕导出校验成功
+====== [User Journey E2E] 测试全部圆满通过！ ======
+Live Qwen translation result: 人工智能正在改变世界。
+◇ Test run started.
+↳ Testing Library Version: 1501
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

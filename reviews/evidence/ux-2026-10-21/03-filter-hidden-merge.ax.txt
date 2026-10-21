@@ -1,0 +1,70 @@
+Window: "VideoAutoTranslate", App: VideoReview.
+0 standard window VideoAutoTranslate, ID: mainWindow, Secondary Actions: Raise
+	1 container
+		2 image (selected) Description: Selected, ID: checkmark
+		3 button Description: 更换视频, Help: 更换当前本地待处理视频文件
+		4 image Description: Right, ID: arrow.right
+		5 image (selected) Description: Selected, ID: checkmark
+		6 pop up button 自动检测, Help: 指定待识别音视频的原语言 (默认自动检测), ID: globe
+		7 button Description: 语音转录, Help: 使用本地 Qwen3-ASR 提取毫秒级逐词时间戳，并自动调用大模型进行智能语义断句规整
+		8 image Description: Right, ID: arrow.right
+		9 image (selected) Description: Selected, ID: checkmark
+		10 pop up button 简体中文, Help: 选择字幕翻译的目标语言, ID: character.bubble
+		11 button Description: 字幕翻译, Help: 使用本地大模型生成精准口语化双语字幕
+		12 image Description: Right, ID: arrow.right
+		13 text ( 4
+		14 button Description: 自动配音, Help: 可选步骤：合成新语言配音，并执行自适应语速对齐与背景音自动闪避混音（可跳过直接进入第5步导出成片）
+		15 text )
+		16 image Description: Right, ID: arrow.right
+		17 text 5
+		18 button Description: 导出成片, Help: 导出双语字幕文件 (SRT/VTT) 或全新压制音画同步视频
+		19 button Description: questionmark.circle, Help: 使用帮助与快捷键指南 (⌘?)
+		20 button Description: gearshape.fill, Help: 偏好设置 (模型下载与存储、Ollama 与 ASR 引擎托管)
+		21 split group
+			22 container
+				23 text 这是第1句的人工译文，用来检查实际显示与操作。 这是第2句的人工译文，用来检查实际显示与操作。 Hello everyone, welcome to our subtitle editing review. This line has no translation yet.
+			24 splitter (disabled, settable, float) 533
+			25 container
+				26 text 字幕列表 (2)
+				27 button Description: 撤销, Help: 撤销上一步编辑操作 (Cmd+Z)
+				28 button (disabled) Description: 重做, Help: 恢复上一步被撤销的操作 (Cmd+Shift+Z)
+				29 button Description: 智能分句, Help: 调用大模型结合每个词的精确时间戳进行语义智能断句规整
+				30 button Description: 匹配译文时间轴, Help: 跟译文的时间轴做匹配：保持原文与译文对应关系不变，根据译文期望发音时长重新排布时间轴，实现语调与语速自然一致
+				31 button (disabled) Description: 合并, Help: 勾选多个且连续的字幕行即可激活合并功能
+				32 image Description: Search, ID: magnifyingglass
+				33 text field (settable) Value: Hello everyone, Placeholder: 搜索字幕原文或译文...
+				34 button Description: Close, ID: xmark.circle.fill
+				35 scroll area
+					36 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+						37 button Description: circle, Help: 勾选此行以多选合并 (支持 Shift 连续多选)
+						38 text #1
+						39 button 00:00.00 ➔ 00:03.80
+						40 button Description: 试听原声, Help: 试听当前行原视频原声音频片段
+						41 button Description: 试听译文, Help: 试听当前行翻译后的新配音语音
+						42 button Description: 向下合并, Help: 直接将当前字幕与下一行 (#2) 合并为一行
+						43 button Description: Cut, Help: 在光标所在字词位置拆分此行字幕 (快捷键 Cmd+B)
+						44 text field (settable) Value: Hello everyone, welcome to our subtitle editing review. This line has no translation yet., Placeholder: 原文内容
+						45 text field (settable) Value: 这是第1句的人工译文，用来检查实际显示与操作。 这是第2句的人工译文，用来检查实际显示与操作。, Placeholder: 译文内容 (未翻译，可直接编辑或点击上方「字幕翻译」)
+						46 button Description: circle, Help: 勾选此行以多选合并 (支持 Shift 连续多选)
+						47 text #2
+						48 button 00:04.00 ➔ 00:05.80
+						49 button Description: 试听原声, Help: 试听当前行原视频原声音频片段
+						50 button Description: 试听译文, Help: 试听当前行翻译后的新配音语音
+						51 button Description: Cut, Help: 在光标所在字词位置拆分此行字幕 (快捷键 Cmd+B)
+						52 text field (settable) Value: Hello everyone, welcome to our subtitle editing review., Placeholder: 原文内容
+						53 text field (settable) Value: 这是第3句的人工译文，用来检查实际显示与操作。, Placeholder: 译文内容 (未翻译，可直接编辑或点击上方「字幕翻译」)
+		54 text 已合并 2 条字幕
+		55 image cpu
+		56 text API: review-fixture
+	57 close button
+	58 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	59 minimize button
+	60 text VideoAutoTranslate
+61 menu bar
+	62 VideoReview
+	63 Edit
+	64 View
+	65 Window
+	66 Help
+
+The focused UI element is 33 text field (settable) Value: Hello everyone, Placeholder: 搜索字幕原文或译文...
