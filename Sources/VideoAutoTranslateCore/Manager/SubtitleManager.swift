@@ -224,8 +224,8 @@ public final class SubtitleManager {
         catch { resultURL = rawTTSURL }
         try Task.checkCancellation()
         let actual = try await AVURLAsset(url: resultURL).load(.duration).secondsValue
-        guard actual > 0, actual <= targetDuration.secondsValue + 0.15 else {
-            throw TTSError.synthesisFailed("配音超过字幕时长，请缩短译文或在调时面板延长此句；未裁剪语音。")
+        guard actual > 0 else {
+            throw TTSError.synthesisFailed("配音音频生成异常，未获取到有效音频数据")
         }
         guard item.audioSignature(voice: voice) == signature else { throw CancellationError() }
         let completedURL = resultURL

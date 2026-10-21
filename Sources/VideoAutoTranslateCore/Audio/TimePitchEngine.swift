@@ -25,7 +25,7 @@ public final class TimePitchEngine {
     ///   - outputURL: 输出音频路径 (.wav)
     ///   - rate: 语速倍率（0.5 ~ 2.0，1.0为原始语速）
     public func changeSpeed(inputURL: URL, outputURL: URL, rate: Float) throws {
-        let clampedRate = max(0.5, min(2.0, rate))
+        let clampedRate = max(0.5, min(2.5, rate))
         try? FileManager.default.removeItem(at: outputURL)
 
         let inputFile = try AVAudioFile(forReading: inputURL)
