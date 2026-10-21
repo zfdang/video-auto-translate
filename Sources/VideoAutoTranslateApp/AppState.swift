@@ -749,13 +749,22 @@ public final class AppState: ObservableObject {
 
     /// 触发指定模型的下载 (R23: 首次下载先准备 sidecar 服务，避免连接失败或遗留下载中状态)
     public func downloadModel(preset: ASRModelPreset) {
+        // 第一时间在主线程将状态置为 0% downloading，界面上的“立即下载”按钮在点击瞬间立即切换为“取消”和 0% 进度条
+        modelStorageManager.modelStates[preset.id] = .downloading(progress: 0.0, speed: "正在准备下载环境...")
+
         Task {
             if preset.isRepo {
-                _ = await sidecarManager.ensureRunning()
+                if !sidecarManager.status.isRunning {
+                    await MainActor.run {
+                        self.modelStorageManager.modelStates[preset.id] = .downloading(progress: 0.0, speed: "正在唤醒 ASR 引擎...")
+                    }
+                    _ = await sidecarManager.ensureRunning()
+                }
                 do {
                     try await modelStorageManager.triggerServerRepoDownload(preset: preset)
                 } catch {
                     await MainActor.run {
+                        self.modelStorageManager.modelStates[preset.id] = .failed("启动失败: \(error.localizedDescription)")
                         self.errorMessage = "启动模型下载失败: \(error.localizedDescription)"
                         self.statusMessage = "模型下载启动失败"
                     }

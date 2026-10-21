@@ -11,6 +11,10 @@
 
 import os
 import sys
+
+# 必须在最顶层设置环境变量，彻底禁用 hf_xet 模块，防止国内镜像下载时出现 File reconstruction error: CAS Client Error
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+
 import time
 import shutil
 import asyncio
@@ -280,29 +284,44 @@ def get_dir_size(path: Path) -> int:
 
 
 def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror: str):
-    """后台执行模型下载任务，并动态监控下载进度与速率"""
+    """后台执行模型下载任务，严格从 0% 开始平滑推进，支持速率统计与取消"""
     DOWNLOAD_TASKS[model_id] = {
         "status": "downloading",
-        "progress": 0.05,
-        "speed": "正在连接下载源...",
+        "progress": 0.0,
+        "speed": "正在连接下载镜像源...",
         "error": None,
         "local_path": None
     }
     
-    # 注入环境变量镜像
+    # 注入环境变量镜像并彻底禁用 Xet
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
     if mirror:
         os.environ["HF_ENDPOINT"] = mirror
 
     stop_event = threading.Event()
     folder_safe_name = "models--" + repo_id.replace("/", "--")
     repo_folder = dest_dir / folder_safe_name
-    expected_size = MODEL_APPROX_SIZES.get(model_id) or MODEL_APPROX_SIZES.get(repo_id, 2_000_000_000)
+    expected_size = MODEL_APPROX_SIZES.get(model_id) or MODEL_APPROX_SIZES.get(repo_id, 2_467_859_030)
+
+    # 若本地已存在完整有效模型，直接就绪
+    if repo_folder.exists() and has_valid_model_files(repo_folder):
+        DOWNLOAD_TASKS[model_id] = {
+            "status": "ready",
+            "progress": 1.0,
+            "speed": "下载完成",
+            "error": None,
+            "local_path": str(find_model_path(repo_id, True) or repo_folder)
+        }
+        return
+
+    max_progress = 0.0
 
     def monitor():
+        nonlocal max_progress
         prev_size = get_dir_size(repo_folder)
         prev_time = time.time()
         while not stop_event.is_set():
-            time.sleep(0.8)
+            time.sleep(0.5)
             if stop_event.is_set():
                 break
             now = time.time()
@@ -313,10 +332,17 @@ def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror
             
             cur_mb = cur_size / (1024 * 1024)
             tot_mb = expected_size / (1024 * 1024)
-            prog = min(0.98, max(0.05, cur_size / expected_size))
+            raw_prog = cur_size / expected_size
+            max_progress = max(max_progress, min(0.99, max(0.0, raw_prog)))
             
-            speed_text = f"{speed_mb_s:.1f} MB/s ({cur_mb:.1f} MB / {tot_mb:.1f} MB)" if delta > 0 else f"下载传输中 ({cur_mb:.1f} MB)"
-            DOWNLOAD_TASKS[model_id]["progress"] = prog
+            if delta > 0:
+                speed_text = f"{speed_mb_s:.1f} MB/s ({cur_mb:.1f} MB / {tot_mb:.1f} MB)"
+            elif cur_size > 0:
+                speed_text = f"正在写入 ({cur_mb:.1f} MB / {tot_mb:.1f} MB)"
+            else:
+                speed_text = "正在连接并拉取元数据..."
+                
+            DOWNLOAD_TASKS[model_id]["progress"] = round(max_progress, 3)
             DOWNLOAD_TASKS[model_id]["speed"] = speed_text
             
             prev_size = cur_size
@@ -404,6 +430,19 @@ def get_download_status(model_id: str):
         return {"status": "not_downloaded", "progress": 0.0, "speed": ""}
 
     return DOWNLOAD_TASKS[model_id]
+
+
+@app.post("/v1/models/download/cancel")
+def cancel_model_download(model_id: str):
+    if model_id in DOWNLOAD_TASKS:
+        DOWNLOAD_TASKS[model_id] = {
+            "status": "canceled",
+            "progress": 0.0,
+            "speed": "已取消",
+            "error": None,
+            "local_path": None
+        }
+    return {"status": "ok", "model_id": model_id}
 
 
 @app.post("/v1/audio/transcriptions")

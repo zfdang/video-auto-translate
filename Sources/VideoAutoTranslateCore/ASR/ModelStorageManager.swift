@@ -179,7 +179,7 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         await MainActor.run {
-            self.modelStates[preset.id] = .downloading(progress: 0.05, speed: "服务端启动下载...")
+            self.modelStates[preset.id] = .downloading(progress: 0.0, speed: "正在连接下载镜像源...")
         }
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -197,21 +197,39 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
         }
     }
 
-    /// 轮询服务端下载进度
+    /// 轮询服务端下载进度 (0.5s 高频轮询，保证 0%~100% 平滑单调递增，无突变跳跃)
     private func pollServerDownloadProgress(preset: ASRModelPreset, asrBaseURL: String) async {
         guard let pollURL = URL(string: "\(asrBaseURL)/v1/models/download/status?model_id=\(preset.id)") else { return }
 
+        var lastProgress: Double = 0.0
+
         while true {
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+
+            // 用户若已取消，主动终止轮询
+            let isCurrentDownloading = await MainActor.run {
+                if case .downloading = self.modelStates[preset.id] {
+                    return true
+                }
+                return false
+            }
+            if !isCurrentDownloading {
+                break
+            }
+
             do {
                 let (data, _) = try await URLSession.shared.data(from: pollURL)
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let status = json["status"] as? String {
                     if status == "downloading" {
-                        let prog = (json["progress"] as? Double) ?? 0.1
+                        let prog = (json["progress"] as? Double) ?? 0.0
                         let speed = (json["speed"] as? String) ?? "下载中..."
+                        let smoothProg = max(lastProgress, min(1.0, max(0.0, prog)))
+                        lastProgress = smoothProg
                         await MainActor.run {
-                            self.modelStates[preset.id] = .downloading(progress: prog, speed: speed)
+                            if case .downloading = self.modelStates[preset.id] {
+                                self.modelStates[preset.id] = .downloading(progress: smoothProg, speed: speed)
+                            }
                         }
                     } else if status == "ready" {
                         let path = (json["local_path"] as? String) ?? self.resolvedStorageDirectory().path
@@ -226,6 +244,11 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
                             self.modelStates[preset.id] = .failed(err)
                         }
                         break
+                    } else if status == "canceled" {
+                        await MainActor.run {
+                            self.modelStates[preset.id] = .notDownloaded
+                        }
+                        break
                     }
                 }
             } catch {
@@ -234,11 +257,19 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
         }
     }
 
-    /// 取消下载
-    public func cancelDownload(for presetId: String) {
+    /// 取消下载 (支持取消本地单文件下载与服务端大模型下载，并将状态重置为 notDownloaded)
+    public func cancelDownload(for presetId: String, asrBaseURL: String = "http://127.0.0.1:8765") {
         downloadSessions[presetId]?.cancel()
         downloadSessions.removeValue(forKey: presetId)
         modelStates[presetId] = .notDownloaded
+
+        if let cancelURL = URL(string: "\(asrBaseURL)/v1/models/download/cancel?model_id=\(presetId)") {
+            var request = URLRequest(url: cancelURL)
+            request.httpMethod = "POST"
+            Task {
+                _ = try? await URLSession.shared.data(for: request)
+            }
+        }
     }
 
     // MARK: - URLSessionDownloadDelegate

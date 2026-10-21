@@ -127,7 +127,7 @@ public struct SettingsView: View {
                 }
             }
 
-            Section(header: Text("网络下载源加速 (针对新设备部署)").font(.headline)) {
+            Section(header: Text("模型下载镜像源").font(.headline)) {
                 Picker("下载镜像源", selection: $appState.project.modelStorageConfig.selectedMirror) {
                     ForEach(ModelDownloadMirror.allCases) { mirror in
                         Text(mirror.displayName).tag(mirror)

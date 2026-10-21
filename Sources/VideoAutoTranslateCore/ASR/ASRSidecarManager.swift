@@ -143,6 +143,10 @@ public final class ASRSidecarManager: ObservableObject {
         p.executableURL = URL(fileURLWithPath: pythonPath)
         p.arguments = [scriptPath, "--port", "\(defaultPort)"]
 
+        var env = ProcessInfo.processInfo.environment
+        env["HF_HUB_DISABLE_XET"] = "1"
+        p.environment = env
+
         let devNull = FileHandle.nullDevice
         p.standardOutput = devNull
         p.standardError = devNull
