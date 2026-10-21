@@ -385,6 +385,10 @@ public final class AppState: ObservableObject {
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
+            if case ASRError.alignmentRequired(let text) = error {
+                project.unalignedTranscript = text
+                project.isDirty = true
+            }
             statusMessage = "识别未完成: \(error.localizedDescription)"
             errorMessage = error.localizedDescription
         }

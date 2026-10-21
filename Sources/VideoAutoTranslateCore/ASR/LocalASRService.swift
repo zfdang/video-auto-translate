@@ -174,6 +174,14 @@ public final class LocalASRService: ASREngineProtocol {
         // 解析 verbose_json 响应
         let decoded = try JSONDecoder().decode(ASRTranscriptionResponse.self, from: responseData)
 
+        if (decoded.words ?? []).isEmpty && (decoded.segments ?? []).allSatisfy({ ($0.words ?? []).isEmpty }) {
+            if let segments = decoded.segments, !segments.isEmpty {
+                let valid = segments.filter { $0.start.isFinite && $0.end.isFinite && $0.start >= 0 && $0.end > $0.start }
+                guard valid.count == segments.count else { throw ASRError.alignmentRequired(decoded.text ?? "") }
+                return valid.map { SubtitleItem(startTime: .from(seconds: $0.start), endTime: .from(seconds: $0.end), originalText: $0.text) }
+            }
+            if let text = decoded.text, !text.isEmpty { throw ASRError.alignmentRequired(text) }
+        }
         // 提取词级时间序列
         var wordTokens: [WordToken] = []
 

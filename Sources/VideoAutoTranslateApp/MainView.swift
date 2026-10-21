@@ -35,6 +35,12 @@ public struct MainView: View {
 
             Divider()
 
+            if let text = appState.project.unalignedTranscript {
+                DisclosureGroup("已识别文字，尚无时间对齐；请准备对齐模型后重试") {
+                    ScrollView { Text(text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 100)
+                    Button("打开模型设置") { appState.showSettings = true }
+                }.padding(8)
+            }
             // 主工作区（左侧播放器 + 右侧字幕时间轴）
             HSplitView {
                 // 左侧视频区

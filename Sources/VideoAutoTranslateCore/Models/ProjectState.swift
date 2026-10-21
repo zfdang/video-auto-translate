@@ -2,6 +2,7 @@ import Foundation
 
 /// 持久化工程文档模型 (R04: 支持 .vatproject 序列化存储与恢复)
 public struct ProjectDocument: Codable {
+    public var unalignedTranscript: String?
     public var version: Int = 1
     public var videoPath: String?
     public var subtitles: [SubtitleItem]
@@ -9,12 +10,14 @@ public struct ProjectDocument: Codable {
     public var asrConfig: ASRConfiguration
 
     public init(
+        unalignedTranscript: String? = nil,
         version: Int = 1,
         videoPath: String? = nil,
         subtitles: [SubtitleItem] = [],
         llmConfig: LLMConfiguration = LLMConfiguration(),
         asrConfig: ASRConfiguration = ASRConfiguration()
     ) {
+        self.unalignedTranscript = unalignedTranscript
         self.version = version
         self.videoPath = videoPath
         self.subtitles = subtitles
@@ -25,6 +28,7 @@ public struct ProjectDocument: Codable {
 
 /// 项目当前处理状态与数据持有
 public struct ProjectState: Equatable {
+    public var unalignedTranscript: String?
     public var videoURL: URL?
     public var audioURL: URL?
     public var subtitles: [SubtitleItem] = []
@@ -49,6 +53,7 @@ public struct ProjectState: Equatable {
 
     /// 重置工程状态
     public mutating func reset() {
+        unalignedTranscript = nil
         videoURL = nil
         audioURL = nil
         subtitles.removeAll()
@@ -66,6 +71,7 @@ public struct ProjectState: Equatable {
         safeLLMConfig.onlineAPIKey = ""
 
         let doc = ProjectDocument(
+            unalignedTranscript: unalignedTranscript,
             version: 1,
             videoPath: videoURL?.path,
             subtitles: subtitles,
@@ -88,6 +94,7 @@ public struct ProjectState: Equatable {
         if let path = document.videoPath {
             self.videoURL = URL(fileURLWithPath: path)
         }
+        self.unalignedTranscript = document.unalignedTranscript
         self.subtitles = document.subtitles
         let existingKey = self.llmConfig.onlineAPIKey
         self.llmConfig = document.llmConfig

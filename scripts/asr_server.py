@@ -683,13 +683,8 @@ def run_local_transcription(audio_path: str, model: str = "qwen3-asr", language:
             return {
                 "text": transcribed_text,
                 "words": [],
-                "segments": segments if segments else [{
-                    "id": 0,
-                    "text": transcribed_text,
-                    "start": 0.0,
-                    "end": 5.0,
-                    "words": []
-                }]
+                "segments": segments,
+                "alignment_status": "segment_only" if segments else "unavailable"
             }
         else:
             return {
