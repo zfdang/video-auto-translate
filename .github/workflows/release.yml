@@ -22,14 +22,9 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
       - name: Generate release notes
         run: |
@@ -43,7 +38,7 @@ jobs:
             --summary-output release-changes.txt
 
       - name: Upload changelog artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: release-changelog
           path: |
@@ -59,7 +54,7 @@ jobs:
     outputs:
       tag: ${{ steps.version.outputs.RELEASE_TAG }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
@@ -85,7 +80,7 @@ jobs:
         run: ./scripts/package-release.sh
 
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: macOS-release-arm64
           path: dist/release/*
@@ -104,13 +99,13 @@ jobs:
       RELEASE_COMMIT: ${{ github.sha }}
     steps:
       - name: Download release packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.2
         with:
           name: macOS-release-arm64
           path: release
 
       - name: Download changelog
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.2
         with:
           name: release-changelog
           path: .
