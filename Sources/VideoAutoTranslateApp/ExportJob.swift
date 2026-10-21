@@ -22,7 +22,7 @@ import VideoAutoTranslateCore
         task = Task {
             do {
                 var audio: URL?
-                if audioMode == .translated {
+                if audioMode != .original {
                     let manager = SubtitleManager()
                     let tts = SystemTTSService()
                     for (index, row) in snapshot.enumerated() {
@@ -35,7 +35,7 @@ import VideoAutoTranslateCore
                     try Task.checkCancellation()
                     message = "正在混音…"
                     let mixed = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
-                    try await AudioMixer().mix(backgroundAudioURL: background, subtitles: snapshot, to: mixed)
+                    try await AudioMixer().mix(backgroundAudioURL: audioMode == .overlay ? video : nil, subtitles: snapshot, to: mixed)
                     audio = mixed
                 }
                 defer { if let audio = audio { try? FileManager.default.removeItem(at: audio) } }

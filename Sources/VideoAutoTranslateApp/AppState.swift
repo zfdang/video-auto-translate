@@ -500,19 +500,7 @@ public final class AppState: ObservableObject {
             guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
             guard failures.isEmpty else { throw TTSError.synthesisFailed(failures.joined(separator: "\n")) }
 
-            await MainActor.run {
-                if currentGen == self.projectGeneration && !Task.isCancelled {
-                    self.project.currentStepName = "正在执行音频无损伸缩与闪避混音..."
-                }
-            }
-            let tempDir = FileManager.default.temporaryDirectory
-            let mixedAudioURL = tempDir.appendingPathComponent("mixed_dubbed_\(UUID().uuidString).m4a")
 
-            try await audioMixer.mix(
-                backgroundAudioURL: project.audioURL,
-                subtitles: project.subtitles,
-                to: mixedAudioURL
-            )
         }
         self.activeDubbingTask = worker
 
@@ -525,7 +513,7 @@ public final class AppState: ObservableObject {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
             project.isDirty = true
-            statusMessage = "配音合成完成！可导出新视频"
+            statusMessage = "配音已生成；导出时可选择纯配音或原声叠加"
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false

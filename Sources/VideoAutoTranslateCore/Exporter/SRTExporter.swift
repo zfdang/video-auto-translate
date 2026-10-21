@@ -24,6 +24,7 @@ public enum SubtitleExportMode: String, CaseIterable, Identifiable {
 
 /// 视频成片导出时的音频语言模式
 public enum VideoAudioExportMode: String, CaseIterable, Identifiable {
+    case overlay = "overlay"
     case translated = "translated" // 自动翻译的语言
     case original = "original"     // 原始语言
 
@@ -32,7 +33,9 @@ public enum VideoAudioExportMode: String, CaseIterable, Identifiable {
     public var displayName: String {
         switch self {
         case .translated:
-            return "自动翻译的语言"
+            return "纯目标语言配音"
+        case .overlay:
+            return "原声压低叠加（保留原人声）"
         case .original:
             return "原始语言"
         }

@@ -20,7 +20,7 @@ public struct ExportView: View {
     private var fileReport: ExportValidationReport { SRTExporter().validate(items: appState.project.subtitles, mode: subtitleMode, mediaDuration: duration) }
     private var videoReport: ExportValidationReport {
         SRTExporter().validate(items: videoSubtitleMode == .none && audioMode == .original ? [] : appState.project.subtitles,
-            mode: audioMode == .translated ? .bilingual : videoSubtitleMode, mediaDuration: duration)
+            mode: audioMode != .original ? .bilingual : videoSubtitleMode, mediaDuration: duration)
     }
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -61,10 +61,12 @@ public struct ExportView: View {
                             }
                             Text("本次选择：\(audioMode.displayName) · \(videoSubtitleMode.displayName)")
                                 .font(.caption).foregroundColor(.secondary)
+                            Text(audioMode == .translated ? "仅包含新配音，不加入原语言人声或背景音乐。" : audioMode == .overlay ? "保留完整原声（包括原人声），说话时降低原声音量；尚未提供人声分离。" : "直接保留原视频的音轨与声道。")
+                                .font(.caption).foregroundColor(.secondary)
                             issues(videoReport)
                             Button("合成并导出 MP4") { saveVideo() }
                                 .buttonStyle(.borderedProminent)
-                                .disabled(job.isRunning || appState.project.isProcessing || appState.project.videoURL == nil || (videoReport.hasIssues && !allowSkipping) || (audioMode == .translated && videoReport.validCount == 0))
+                                .disabled(job.isRunning || appState.project.isProcessing || appState.project.videoURL == nil || (videoReport.hasIssues && !allowSkipping) || (audioMode != .original && videoReport.validCount == 0))
                         }.padding(8)
                     }
                     if fileReport.hasIssues || videoReport.hasIssues {
