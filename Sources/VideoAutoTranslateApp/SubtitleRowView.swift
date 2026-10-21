@@ -57,6 +57,7 @@ public struct SubtitleRowView: View {
                         .foregroundColor(isMultiSelected ? .accentColor : .secondary.opacity(0.5))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("选择第\(rowIndex + 1)句字幕")
                 .help(isMultiSelected ? "取消勾选此行" : "勾选此行以多选合并 (支持 Shift 连续多选)")
 
                 // 行号
@@ -88,7 +89,7 @@ public struct SubtitleRowView: View {
                 }) {
                     HStack(spacing: 2) {
                         Image(systemName: "play.circle")
-                        Text("试听原声")
+                        Text("原声")
                             .font(.caption)
                     }
                 }
@@ -102,7 +103,7 @@ public struct SubtitleRowView: View {
                 }) {
                     HStack(spacing: 2) {
                         Image(systemName: item.isGeneratingAudio ? "waveform" : "speaker.wave.2")
-                        Text(item.isGeneratingAudio ? "生成中" : "试听译文")
+                        Text(item.isGeneratingAudio ? "生成中" : "译文")
                             .font(.caption)
                     }
                 }
@@ -115,8 +116,7 @@ public struct SubtitleRowView: View {
                     Button(action: onMergeNext) {
                         HStack(spacing: 2) {
                             Image(systemName: "arrow.triangle.merge")
-                            Text("向下合并")
-                                .font(.caption2)
+
                         }
                     }
                     .buttonStyle(.borderless)
@@ -129,11 +129,13 @@ public struct SubtitleRowView: View {
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel("在光标处分割字幕")
                 .help("在光标所在字词位置拆分此行字幕 (快捷键 Cmd+B)")
             }
 
             // 原文字幕编辑框 (英文/源语种)
-            TextField("原文内容", text: $item.originalText)
+            TextField("原文内容", text: $item.originalText, axis: .vertical)
+                .lineLimit(2...8)
                 .focused($focusedField, equals: .original)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .regular))
@@ -157,7 +159,8 @@ public struct SubtitleRowView: View {
 
 
             // 译文字幕编辑框 (中文/目标语种)
-            TextField("译文内容 (未翻译，可直接编辑或点击上方「字幕翻译」)", text: $item.translatedText)
+            TextField("译文内容", text: $item.translatedText, axis: .vertical)
+                .lineLimit(2...8)
                 .focused($focusedField, equals: .translated)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))

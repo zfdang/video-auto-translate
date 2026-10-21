@@ -10,108 +10,24 @@ public struct SubtitleListView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // 工具栏头部 (靠右排列：撤销、重做、合并)
             HStack(spacing: 8) {
-                Text("字幕 \(filteredSubtitles.count)/\(appState.project.subtitles.count)")
-                    .font(.headline)
-
-                Spacer()
-                Button("调时") { showTiming.toggle() }
-                    .disabled(appState.project.selectedSubtitleID == nil)
-                    .help("精确时间、波形边界、前后句导航与循环试听")
-
-                // 1. 撤销按钮 (Cmd+Z)
-                Button(action: {
-                    appState.undo()
-                }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.uturn.backward")
-                        Text("撤销")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(!appState.canUndo)
-                .keyboardShortcut("z", modifiers: .command)
-                .help("撤销上一步编辑操作 (Cmd+Z)")
-
-                // 2. 重做按钮 (Cmd+Shift+Z)
-                Button(action: {
-                    appState.redo()
-                }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.uturn.forward")
-                        Text("重做")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(!appState.canRedo)
-                .keyboardShortcut("z", modifiers: [.command, .shift])
-                .help("恢复上一步被撤销的操作 (Cmd+Shift+Z)")
-
-                // 3. 智能分句按钮 (基于每个单词的毫秒时间戳与 LLM 语义规整)
-                Button(action: {
-                    Task {
-                        await appState.runSmartSegmentation()
-                    }
-                }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "sparkles")
-                        Text("智能分句")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
-                .help("调用大模型结合每个词的精确时间戳进行语义智能断句规整")
-
-                // 4. 匹配译文时间轴按钮 (跟译文的时间轴做匹配：保持原文与译文对应不变，按译文自然语速重排时间轴)
-                let hasTranslations = appState.project.subtitles.contains { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                Button(action: {
-                    Task {
-                        await appState.matchTimelineToTranslation()
-                    }
-                }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "waveform.badge.clock")
-                        Text("匹配译文时间轴")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(!hasTranslations || appState.project.isProcessing)
-                .help("跟译文的时间轴做匹配：保持原文与译文对应关系不变，根据译文期望发音时长重新排布时间轴，实现语调与语速自然一致")
-
-                // 5. 合并按钮 (仅当选中多个且连续时可用，平时置灰禁用)
-                let canMergeMulti = appState.canMergeMultipleConsecutive(ids: selectedIDs)
-                let mergeButtonTitle: String = {
-                    if selectedIDs.count >= 2 {
-                        return "合并 (\(selectedIDs.count))"
-                    } else {
-                        return "合并"
-                    }
-                }()
-
-                Button(action: {
-                    appState.mergeSubtitles(ids: selectedIDs)
-                    selectedIDs.removeAll()
-                }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.triangle.merge")
-                        Text(mergeButtonTitle)
-                    }
-                }
-                .buttonStyle(.bordered)
-                .tint(canMergeMulti ? .accentColor : nil)
-                .controlSize(.small)
-                .disabled(!canMergeMulti)
-                .keyboardShortcut("j", modifiers: .command)
-                .help(canMergeMulti ? "合并当前选中的 \(selectedIDs.count) 行连续字幕 (Cmd+J)" : (selectedIDs.count >= 2 ? "选中的字幕行必须连续方可合并" : "勾选多个且连续的字幕行即可激活合并功能"))
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color(nsColor: .windowBackgroundColor))
+                Text("字幕 \(filteredSubtitles.count)/\(appState.project.subtitles.count)").font(.headline).lineLimit(1)
+                Spacer(minLength: 0)
+                Button { showTiming.toggle() } label: { Image(systemName: "waveform.path") }
+                    .accessibilityLabel("调时与波形").help("调时与波形").disabled(appState.project.selectedSubtitleID == nil)
+                Button { appState.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                    .accessibilityLabel("撤销").help("撤销").disabled(!appState.canUndo || appState.project.isProcessing)
+                Button { appState.redo() } label: { Image(systemName: "arrow.uturn.forward") }
+                    .accessibilityLabel("重做").help("重做").disabled(!appState.canRedo || appState.project.isProcessing)
+                Menu("编辑") {
+                    Button("智能分句（翻译前）") { Task { await appState.runSmartSegmentation() } }
+                        .disabled(appState.project.subtitles.isEmpty || appState.project.subtitles.contains { !$0.translatedText.isEmpty })
+                    Button("匹配译文时间轴…") { Task { await appState.matchTimelineToTranslation() } }
+                        .disabled(!appState.project.subtitles.contains { !$0.translatedText.isEmpty })
+                    Button("合并所选连续行") { appState.mergeSubtitles(ids: selectedIDs); selectedIDs.removeAll() }
+                        .disabled(!appState.canMergeMultipleConsecutive(ids: selectedIDs))
+                }.disabled(appState.project.isProcessing)
+            }.buttonStyle(.bordered).controlSize(.small).padding(8)
 
             Divider()
 
@@ -214,6 +130,7 @@ public struct SubtitleListView: View {
                                         lastClickedIndex = index
                                     }
                                 )
+                                .disabled(appState.project.isProcessing)
                                 .id(item.id)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
