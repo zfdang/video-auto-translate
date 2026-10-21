@@ -89,6 +89,21 @@ public struct SubtitleListView: View {
                 .disabled(!canMergeNow)
                 .keyboardShortcut("j", modifiers: .command)
                 .help(canMergeNow ? (selectedIDs.count >= 2 ? "合并当前选中的 \(selectedIDs.count) 行字幕 (Cmd+J)" : "将当前选中的字幕与下一行合并 (Cmd+J)") : "请先选中字幕行进行合并 (Cmd+J)")
+
+                // 5. 拆分按钮 (支持光标位置拆分或在选中行中间拆分，快捷键 Cmd+B)
+                Button(action: {
+                    appState.splitCurrentSubtitle()
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "scissors")
+                        Text("拆分")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(appState.project.selectedSubtitleID == nil || appState.project.isProcessing)
+                .keyboardShortcut("b", modifiers: .command)
+                .help("在光标所在字词位置拆分当前选中的字幕 (Cmd+B)")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)

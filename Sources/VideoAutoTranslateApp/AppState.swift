@@ -644,23 +644,46 @@ public final class AppState: ObservableObject {
 
         var charIndex = atCharIndex
         if charIndex == nil {
-            if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
-               textView.string == item.originalText {
-                let loc = textView.selectedRange().location
-                if loc != NSNotFound {
-                    charIndex = loc
+            if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
+                let textStr = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                let itemStr = item.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if textStr == itemStr || textView.string == item.originalText {
+                    let loc = textView.selectedRange().location
+                    if loc != NSNotFound && loc > 0 && loc < item.originalText.count {
+                        charIndex = loc
+                    }
                 }
             }
         }
 
-        guard let targetIndex = charIndex, targetIndex > 0, targetIndex < item.originalText.count else {
+        var targetIndex = charIndex
+        if targetIndex == nil || targetIndex! <= 0 || targetIndex! >= item.originalText.count {
+            // 智能兜底：若用户未放置光标，在句子中间寻找最自然的标点/空格断句点
+            let chars = Array(item.originalText)
+            let mid = chars.count / 2
+            var bestBreak: Int? = nil
+            var minDiff = Int.max
+            for (idx, ch) in chars.enumerated() {
+                guard idx > 0 && idx < chars.count - 1 else { continue }
+                if "，,。!?.!?；; ".contains(ch) {
+                    let diff = abs(idx - mid)
+                    if diff < minDiff {
+                        minDiff = diff
+                        bestBreak = idx + 1 // 断在标点/空格之后
+                    }
+                }
+            }
+            targetIndex = bestBreak ?? (mid > 0 ? mid : nil)
+        }
+
+        guard let finalIndex = targetIndex, finalIndex > 0, finalIndex < item.originalText.count else {
             errorMessage = "请先在文本框中将光标放置在想要拆分的字词之间"
             statusMessage = "拆分提示：请先在字幕文本中放置光标"
             NSSound.beep()
             return
         }
 
-        splitSubtitle(id: selectedID, atCharIndex: targetIndex)
+        splitSubtitle(id: selectedID, atCharIndex: finalIndex)
     }
 
     /// 执行大模型语义智能分句规整 (将每个词的精确定位发给大模型重构断句时间轴)

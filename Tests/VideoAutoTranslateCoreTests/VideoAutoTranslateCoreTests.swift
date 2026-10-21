@@ -38,6 +38,68 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertEqual(part2.endTime.secondsValue, 1.2, accuracy: 0.001)
     }
 
+    func testSubtitleItemSplittingUserReportedCase() {
+        let manager = SubtitleManager()
+
+        let text = "Bonjour, yes, yes. You are for the tour, Très bien."
+        // ASR 输出词序列（包含大小写与标点差异）
+        let words = [
+            WordToken(text: "Bonjour", startTime: .from(seconds: 0.08), endTime: .from(seconds: 0.40)),
+            WordToken(text: "Yes", startTime: .from(seconds: 1.28), endTime: .from(seconds: 1.52)),
+            WordToken(text: "yes", startTime: .from(seconds: 1.60), endTime: .from(seconds: 1.76)),
+            WordToken(text: "you", startTime: .from(seconds: 1.92), endTime: .from(seconds: 2.00)), // 小写 you
+            WordToken(text: "are", startTime: .from(seconds: 2.00), endTime: .from(seconds: 2.08)),
+            WordToken(text: "for", startTime: .from(seconds: 2.16), endTime: .from(seconds: 2.24)),
+            WordToken(text: "the", startTime: .from(seconds: 2.24), endTime: .from(seconds: 2.40)),
+            WordToken(text: "tour", startTime: .from(seconds: 2.40), endTime: .from(seconds: 2.56)),
+            WordToken(text: "Très", startTime: .from(seconds: 3.12), endTime: .from(seconds: 3.20)),
+            WordToken(text: "bien", startTime: .from(seconds: 3.28), endTime: .from(seconds: 3.44))
+        ]
+
+        let item = SubtitleItem(
+            startTime: .from(seconds: 0.08),
+            endTime: .from(seconds: 3.44),
+            originalText: text,
+            words: words
+        )
+
+        // 1. 光标放置在 "You" 前面 (charIndex 19)
+        let youIndex = text.range(of: "You")!.lowerBound
+        let charIndex = text.distance(from: text.startIndex, to: youIndex)
+
+        guard let (part1, part2) = manager.split(item: item, atCharIndex: charIndex) else {
+            XCTFail("Split before 'You' should succeed")
+            return
+        }
+
+        // 验证前半部分保持句尾标点，后半部分从 "You" 开始
+        XCTAssertEqual(part1.originalText, "Bonjour, yes, yes.")
+        XCTAssertEqual(part2.originalText, "You are for the tour, Très bien.")
+
+        // 验证词级 WordTokens 正确切分归属
+        XCTAssertEqual(part1.words.count, 3)
+        XCTAssertEqual(part1.words.map { $0.text }, ["Bonjour", "Yes", "yes"])
+        XCTAssertEqual(part2.words.count, 7)
+        XCTAssertEqual(part2.words.first?.text, "you")
+
+        // 验证切分时间点处于两句之间的间隔内 (1.76s ~ 1.92s)
+        XCTAssertEqual(part1.endTime, part2.startTime)
+        XCTAssertGreaterThanOrEqual(part1.endTime.secondsValue, 1.76)
+        XCTAssertLessThanOrEqual(part1.endTime.secondsValue, 1.92)
+
+        // 2. 光标放置在 "are" 前面
+        let areIndex = text.range(of: "are")!.lowerBound
+        let areCharIndex = text.distance(from: text.startIndex, to: areIndex)
+        guard let (arePart1, arePart2) = manager.split(item: item, atCharIndex: areCharIndex) else {
+            XCTFail("Split before 'are' should succeed")
+            return
+        }
+        XCTAssertEqual(arePart1.originalText, "Bonjour, yes, yes. You")
+        XCTAssertEqual(arePart2.originalText, "are for the tour, Très bien.")
+        XCTAssertEqual(arePart1.words.map { $0.text }, ["Bonjour", "Yes", "yes", "you"])
+        XCTAssertEqual(arePart2.words.first?.text, "are")
+    }
+
     func testSubtitleItemMerging() {
         let manager = SubtitleManager()
 
