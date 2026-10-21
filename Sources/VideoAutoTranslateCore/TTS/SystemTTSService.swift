@@ -20,7 +20,6 @@ public enum TTSError: LocalizedError {
 
 /// 基于 macOS 原生 AVSpeechSynthesizer 的离线语音合成引擎
 public final class SystemTTSService: TTSServiceProtocol {
-    private let synthesizer = AVSpeechSynthesizer()
 
     public init() {}
 
@@ -39,20 +38,11 @@ public final class SystemTTSService: TTSServiceProtocol {
         let tempOutputURL = tempDirectory.appendingPathComponent(tempFilename)
         try? FileManager.default.removeItem(at: tempOutputURL)
 
-        let utterance = AVSpeechUtterance(string: cleanText)
-        
-        // R19: 优先匹配精确 BCP-47 语言代码，次选同语族音色，避免非中文请求被静默降级为中文
-        if let preferredVoice = AVSpeechSynthesisVoice(language: voice) {
-            utterance.voice = preferredVoice
-        } else if let prefix = voice.split(separator: "-").first,
-                  let matched = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language.hasPrefix(String(prefix)) }) {
-            utterance.voice = matched
-        } else { throw TTSError.voiceNotFound(voice) }
-
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-
-        // R11: 线程安全的 exactly-once continuation 守卫，杜绝重复 resume 崩溃
-        return try await withCheckedThrowingContinuation { continuation in
+        let engine = try await MainActor.run { try SpeechEngine(text: cleanText, language: voice) }
+        let cancellation = SpeechCancellation()
+        defer { try? FileManager.default.removeItem(at: tempOutputURL) }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
             final class ContinuationGuard: @unchecked Sendable {
                 private var cont: CheckedContinuation<URL, Error>?
                 private let lock = NSLock()
@@ -86,10 +76,17 @@ public final class SystemTTSService: TTSServiceProtocol {
             }
 
             let guardWrapper = ContinuationGuard(continuation)
+            cancellation.install {
+                guardWrapper.resume(throwing: CancellationError())
+                DispatchQueue.main.async { engine.synthesizer.stopSpeaking(at: .immediate) }
+            }
+            guard !guardWrapper.isCompleted else { return }
             var audioFile: AVAudioFile? = nil
             var frameCount: AVAudioFrameCount = 0
 
-            self.synthesizer.write(utterance) { buffer in
+            DispatchQueue.main.async {
+            guard !guardWrapper.isCompleted else { return }
+            engine.synthesizer.write(engine.utterance) { buffer in
                 if guardWrapper.isCompleted {
                     return
                 }
@@ -97,6 +94,7 @@ public final class SystemTTSService: TTSServiceProtocol {
                 guard let pcmBuffer = buffer as? AVAudioPCMBuffer else { return }
 
                 if pcmBuffer.frameLength == 0 {
+                    audioFile = nil // Flush the complete file before publishing its URL.
                     // 合成完毕
                     guard frameCount > 0 else {
                         try? FileManager.default.removeItem(at: tempOutputURL)
@@ -132,6 +130,41 @@ public final class SystemTTSService: TTSServiceProtocol {
                     guardWrapper.resume(throwing: TTSError.synthesisFailed(error.localizedDescription))
                 }
             }
-        }
+            }
+            }
+        } onCancel: { cancellation.cancel() }
+    }
+}
+
+// All synthesizer and utterance operations are dispatched to the main actor.
+private final class SpeechEngine: @unchecked Sendable {
+    let synthesizer = AVSpeechSynthesizer()
+    let utterance: AVSpeechUtterance
+    init(text: String, language: String) throws {
+        utterance = AVSpeechUtterance(string: text)
+        let prefix = language.split(separator: "-").first.map(String.init) ?? language
+        guard let voice = AVSpeechSynthesisVoice(language: language) ?? AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language.hasPrefix(prefix) }) else { throw TTSError.voiceNotFound(language) }
+        utterance.voice = voice
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+    }
+}
+
+private final class SpeechCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var action: (() -> Void)?
+    func install(_ action: @escaping () -> Void) {
+        lock.lock()
+        self.action = action
+        let run = cancelled
+        lock.unlock()
+        if run { action() }
+    }
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let action = action
+        lock.unlock()
+        action?()
     }
 }

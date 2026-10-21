@@ -114,4 +114,32 @@ final class ReviewRegressionTests: XCTestCase {
         XCTAssertFalse(try String(contentsOf: url).contains("待翻译"))
     }
 
+    func testOriginalAuditionAnchorsSurviveTimingChangesAndPersistence() throws {
+        let row = SubtitleItem(startTime: .from(seconds: 1), endTime: .from(seconds: 2), originalText: "hello")
+        row.startTime = .from(seconds: 3)
+        row.endTime = .from(seconds: 4)
+        let copy = row.snapshot()
+        let decoded = try JSONDecoder().decode(SubtitleItem.self, from: JSONEncoder().encode(copy))
+        XCTAssertEqual(decoded.sourceStartTime.secondsValue, 1)
+        XCTAssertEqual(decoded.sourceEndTime.secondsValue, 2)
+        XCTAssertEqual(decoded.startTime.secondsValue, 3)
+    }
+
+    @MainActor func testLateSpeechCannotInstallAnOutdatedCache() async throws {
+        let row = SubtitleItem(startTime: .zero, endTime: .from(seconds: 1), originalText: "hello", translatedText: "你好")
+        let task = Task { try await SubtitleManager().reDub(item: row, ttsService: DelayedReviewTTS(), voice: "zh-CN") }
+        try await Task.sleep(nanoseconds: 10_000_000)
+        row.translatedText = "新译文"
+        do { try await task.value; XCTFail("A stale response must be rejected") }
+        catch { XCTAssertNil(row.dubbedAudioURL) }
+    }
+
+}
+
+private struct DelayedReviewTTS: TTSServiceProtocol {
+    func synthesize(text: String, voice: String, outputURL: URL) async throws -> URL {
+        try await Task.sleep(nanoseconds: 60_000_000)
+        try Data([1]).write(to: outputURL)
+        return outputURL
+    }
 }

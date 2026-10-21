@@ -286,7 +286,7 @@ public final class TimelineAligner {
                     originalText: item.originalText,
                     translatedText: item.translatedText,
                     words: item.words,
-                    dubbedAudioURL: nil
+                    dubbedAudioURL: nil, sourceStartTime: item.sourceStartTime, sourceEndTime: item.sourceEndTime
                 )
             ]
         }
@@ -334,7 +334,7 @@ public final class TimelineAligner {
                     originalText: orig.originalText,
                     translatedText: orig.translatedText,
                     words: orig.words,
-                    dubbedAudioURL: nil
+                    dubbedAudioURL: nil, sourceStartTime: orig.sourceStartTime, sourceEndTime: orig.sourceEndTime
                 )
             )
             curStart = curEnd + itemPause
@@ -397,7 +397,7 @@ public final class TimelineAligner {
                     originalText: base.originalText,
                     translatedText: base.translatedText,
                     words: base.words,
-                    dubbedAudioURL: nil
+                    dubbedAudioURL: nil, sourceStartTime: base.sourceStartTime, sourceEndTime: base.sourceEndTime
                 ))
                 lastEnd = safeEnd
             } else {
@@ -410,7 +410,7 @@ public final class TimelineAligner {
                     originalText: base.originalText,
                     translatedText: base.translatedText,
                     words: base.words,
-                    dubbedAudioURL: nil
+                    dubbedAudioURL: nil, sourceStartTime: base.sourceStartTime, sourceEndTime: base.sourceEndTime
                 ))
                 lastEnd = end
             }
@@ -457,7 +457,7 @@ public final class TimelineAligner {
                 originalText: item.originalText,
                 translatedText: item.translatedText,
                 words: item.words,
-                dubbedAudioURL: nil
+                dubbedAudioURL: nil, sourceStartTime: item.sourceStartTime, sourceEndTime: item.sourceEndTime
             )
             sanitized.append(validItem)
             lastEnd = end

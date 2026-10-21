@@ -6,6 +6,8 @@ import CryptoKit
 /// 单行字幕项
 public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equatable, Codable {
     public let id: UUID
+    public let sourceStartTime: CMTime
+    public let sourceEndTime: CMTime
     // R04 & R29: 编辑修改通知回调，确保人工改写属性即时标记工程为脏
     public var onModified: (() -> Void)?
 
@@ -46,9 +48,13 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         words: [WordToken] = [],
         dubbedAudioURL: URL? = nil,
         dubbedAudioSignature: String? = nil,
-        translationNeedsReview: Bool = false
+        translationNeedsReview: Bool = false,
+        sourceStartTime: CMTime? = nil,
+        sourceEndTime: CMTime? = nil
     ) {
         self.id = id
+        self.sourceStartTime = sourceStartTime ?? startTime
+        self.sourceEndTime = sourceEndTime ?? endTime
         self.startTime = startTime
         self.endTime = endTime
         self.originalText = originalText
@@ -69,7 +75,7 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
     }
 
     public func snapshot() -> SubtitleItem {
-        SubtitleItem(id: id, startTime: startTime, endTime: endTime, originalText: originalText, translatedText: translatedText, words: words, dubbedAudioURL: dubbedAudioURL, dubbedAudioSignature: dubbedAudioSignature, translationNeedsReview: translationNeedsReview)
+        SubtitleItem(id: id, startTime: startTime, endTime: endTime, originalText: originalText, translatedText: translatedText, words: words, dubbedAudioURL: dubbedAudioURL, dubbedAudioSignature: dubbedAudioSignature, translationNeedsReview: translationNeedsReview, sourceStartTime: sourceStartTime, sourceEndTime: sourceEndTime)
     }
 
     public var duration: CMTime {
@@ -95,7 +101,7 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
 
     // MARK: - Codable
     enum CodingKeys: String, CodingKey {
-        case id, startTime, endTime, originalText, translatedText, words, dubbedAudioURL, dubbedAudioSignature, translationNeedsReview
+        case id, startTime, endTime, originalText, translatedText, words, dubbedAudioURL, dubbedAudioSignature, translationNeedsReview, sourceStartTime, sourceEndTime
     }
 
     public init(from decoder: Decoder) throws {
@@ -103,6 +109,8 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         self.id = try container.decode(UUID.self, forKey: .id)
         let codableStart = try container.decode(CodableCMTime.self, forKey: .startTime)
         let codableEnd = try container.decode(CodableCMTime.self, forKey: .endTime)
+        self.sourceStartTime = try container.decodeIfPresent(CodableCMTime.self, forKey: .sourceStartTime)?.cmTime ?? codableStart.cmTime
+        self.sourceEndTime = try container.decodeIfPresent(CodableCMTime.self, forKey: .sourceEndTime)?.cmTime ?? codableEnd.cmTime
         self.startTime = codableStart.cmTime
         self.endTime = codableEnd.cmTime
         self.originalText = try container.decode(String.self, forKey: .originalText)
@@ -116,6 +124,8 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
+        try container.encode(CodableCMTime(cmTime: sourceStartTime), forKey: .sourceStartTime)
+        try container.encode(CodableCMTime(cmTime: sourceEndTime), forKey: .sourceEndTime)
         try container.encode(CodableCMTime(cmTime: startTime), forKey: .startTime)
         try container.encode(CodableCMTime(cmTime: endTime), forKey: .endTime)
         try container.encode(originalText, forKey: .originalText)

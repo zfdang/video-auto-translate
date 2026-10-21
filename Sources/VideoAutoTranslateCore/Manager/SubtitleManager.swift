@@ -120,7 +120,9 @@ public final class SubtitleManager {
             endTime: splitTime,
             originalText: firstPartText,
             translatedText: part1Trans,
-            words: firstWords
+            words: firstWords,
+            sourceStartTime: item.sourceStartTime,
+            sourceEndTime: firstWords.last?.endCMTime ?? splitTime
         )
 
         let part2 = SubtitleItem(
@@ -128,7 +130,9 @@ public final class SubtitleManager {
             endTime: item.endTime,
             originalText: secondPartText,
             translatedText: part2Trans,
-            words: secondWords
+            words: secondWords,
+            sourceStartTime: secondWords.first?.startCMTime ?? splitTime,
+            sourceEndTime: item.sourceEndTime
         )
 
         return (part1, part2)
@@ -158,7 +162,9 @@ public final class SubtitleManager {
             endTime: maxEnd,
             originalText: combinedOriginal,
             translatedText: combinedTranslated,
-            words: combinedWords
+            words: combinedWords,
+            sourceStartTime: sorted.map(\.sourceStartTime).min(),
+            sourceEndTime: sorted.map(\.sourceEndTime).max()
         )
     }
 
@@ -194,6 +200,10 @@ public final class SubtitleManager {
         let rawTTSURL = tempDir.appendingPathComponent("raw_tts_\(requestID).wav")
         let finalStretchedURL = tempDir.appendingPathComponent("dubbed_\(requestID).wav")
 
+        defer {
+            if item.dubbedAudioURL != rawTTSURL { try? FileManager.default.removeItem(at: rawTTSURL) }
+            if item.dubbedAudioURL != finalStretchedURL { try? FileManager.default.removeItem(at: finalStretchedURL) }
+        }
         // 1. 合成原始语速语音
         _ = try await ttsService.synthesize(text: textToSpeak, voice: voice, outputURL: rawTTSURL)
 
