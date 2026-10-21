@@ -260,10 +260,10 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         print("Live Qwen translation result: \(item.translatedText)")
         XCTAssertFalse(item.translatedText.isEmpty, "翻译结果不应为空")
 
-        // 验证生命周期三阶段提示：启动模型 -> 翻译文本 -> 终止模型
+        // 验证生命周期三阶段提示：启动模型 -> 翻译文本 -> 释放/终止模型
         XCTAssertTrue(statusStages.contains(where: { $0.contains("启动模型") }), "应包含启动模型阶段提示: \(statusStages)")
         XCTAssertTrue(statusStages.contains(where: { $0.contains("翻译文本") }), "应包含翻译文本阶段提示: \(statusStages)")
-        XCTAssertTrue(statusStages.contains(where: { $0.contains("终止模型") }), "应包含终止模型阶段提示: \(statusStages)")
+        XCTAssertTrue(statusStages.contains(where: { $0.contains("释放模型") || $0.contains("终止模型") }), "应包含释放/终止模型阶段提示: \(statusStages)")
         XCTAssertTrue((progressValues.last ?? 0.0) >= 0.95, "最终进度应接近完成")
     }
 
@@ -602,14 +602,22 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
             translatedText: "非常好"
         )
 
-        let smoothed = aligner.alignTimelineDeterministically(items: [item1, item2, item3], language: "zh")
+        let smoothed = aligner.matchTimelineToTranslation(items: [item1, item2, item3], language: "zh")
         XCTAssertEqual(smoothed.count, 3)
 
-        // 1. 验证第 1 句时长显著扩增以容纳长译文
-        let dur1 = smoothed[0].durationSeconds
-        XCTAssertGreaterThan(dur1, 1.5, "长译文行应当借调充足时间以避免语速过急")
+        // 1. 验证原文与译文 1:1 严格保留
+        XCTAssertEqual(smoothed[0].originalText, item1.originalText)
+        XCTAssertEqual(smoothed[0].translatedText, item1.translatedText)
+        XCTAssertEqual(smoothed[1].originalText, item2.originalText)
+        XCTAssertEqual(smoothed[1].translatedText, item2.translatedText)
+        XCTAssertEqual(smoothed[2].originalText, item3.originalText)
+        XCTAssertEqual(smoothed[2].translatedText, item3.translatedText)
 
-        // 2. 验证各行顺序严格递增、不产生交叉重叠
+        // 2. 验证第 1 句时长显著扩增以匹配长译文 (14字/4.1 ≈ 3.4s)
+        let dur1 = smoothed[0].durationSeconds
+        XCTAssertGreaterThan(dur1, 2.5, "长译文行应当匹配充足的发音时长以避免语速过急")
+
+        // 3. 验证各行顺序严格递增、不产生交叉重叠
         for i in 1..<smoothed.count {
             XCTAssertGreaterThanOrEqual(
                 smoothed[i].startTime.secondsValue,
@@ -618,11 +626,110 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
             )
         }
 
-        // 3. 验证总时长保持在合理范围内
-        XCTAssertLessThanOrEqual(smoothed.last!.endTime.secondsValue, 5.05)
-
-        // 4. 验证重调后第 1 句的语速显著下降并回归自然区间 (每秒汉字数 <= 9)
+        // 4. 验证重调后第 1 句的语速回归自然区间 (每秒汉字数 <= 4.5)
         let rate1 = Double(smoothed[0].translatedText.count) / dur1
+        XCTAssertLessThanOrEqual(rate1, 4.5, "语速应当符合自然朗读舒适标准 (<=4.5字/s)")
         XCTAssertLessThan(rate1, 9.0, "语速应当平滑至正常范围")
+    }
+
+    func testTimelineAlignerLocalClusterAntiDrift() {
+        let aligner = TimelineAligner()
+
+        // 构造三段跨越较长视频、中间有天然静音与转场的对话：
+        // 场景 1：[0.0s - 2.0s]，译文极长（30个字，自然发音需约 8 秒）
+        // 静音空隙：2.0s ~ 8.0s（原视频有 6 秒的静音或画面转场）
+        // 场景 2：[8.0s - 10.0s]，原说话人在第 8 秒开讲
+        // 静音空隙：10.0s ~ 25.0s（原视频有 15 秒转场空隙）
+        // 场景 3：[25.0s - 27.0s]，原说话人在第 25 秒开讲
+        let item1 = SubtitleItem(
+            startTime: .from(seconds: 0.0),
+            endTime: .from(seconds: 2.0),
+            originalText: "Hello world",
+            translatedText: "你好世界，今天我们将在这里开启一段非常神奇且充满未知的全新探索旅程"
+        )
+        let item2 = SubtitleItem(
+            startTime: .from(seconds: 8.0),
+            endTime: .from(seconds: 10.0),
+            originalText: "Second scene begins",
+            translatedText: "第二个场景正式开始了"
+        )
+        let item3 = SubtitleItem(
+            startTime: .from(seconds: 25.0),
+            endTime: .from(seconds: 27.0),
+            originalText: "Final thoughts",
+            translatedText: "最后的总结与思考"
+        )
+
+        let smoothed = aligner.matchTimelineToTranslation(items: [item1, item2, item3], language: "zh")
+        XCTAssertEqual(smoothed.count, 3)
+
+        // 1. 场景 1 仅在自身对话簇内小范围延展（最多借用后方自然静音 1.2s，约在 3.2s 左右截止），绝不侵入到 8.0s
+        XCTAssertLessThanOrEqual(smoothed[0].endTime.secondsValue, 4.0, "场景1只可在局部簇内小范围调整，不得侵占后续场景")
+
+        // 2. 场景 2 严格锚定在原画面开讲的第 8 秒，绝对不发生全局漂移脱节
+        XCTAssertEqual(smoothed[1].startTime.secondsValue, 8.0, accuracy: 0.05, "场景2起点必须严格对齐原视频开讲时间，绝不能因前文文字多而被往后推移")
+
+        // 3. 场景 3 严格锚定在第 25 秒，全局时移累积为 0
+        XCTAssertEqual(smoothed[2].startTime.secondsValue, 25.0, accuracy: 0.05, "场景3起点必须严格对齐第25秒，杜绝全视频范围的连带漂移")
+    }
+
+    func testTimelineAlignerShortTranslationNoDragging() {
+        let aligner = TimelineAligner()
+
+        // 原声持续 6 秒（原说话人语速很慢或有笑声），但译文只有短短 2 个字
+        let item = SubtitleItem(
+            startTime: .from(seconds: 1.0),
+            endTime: .from(seconds: 7.0),
+            originalText: "Okay then, hahahahaha",
+            translatedText: "好的"
+        )
+
+        let smoothed = aligner.matchTimelineToTranslation(items: [item], language: "zh")
+        XCTAssertEqual(smoothed.count, 1)
+
+        let dur = smoothed[0].durationSeconds
+        // 验证：短译文绝不被强制拉长填满 6 秒（避免 0.33 字/秒的特别拖沓慢放），而是按自然舒适时长结束（约 0.6s ~ 1.5s）
+        XCTAssertLessThan(dur, 2.0, "短译文应当按自然语速舒适发音，绝不强行拉满到原句全长导致极度拖拉")
+        XCTAssertGreaterThanOrEqual(dur, 0.5, "短译文仍应保留起码的基础发音时长")
+        XCTAssertEqual(smoothed[0].startTime.secondsValue, 1.0, accuracy: 0.01, "起始时间保持原位锚定")
+    }
+
+    func testTimelineAlignerLongListPreservation() {
+        let aligner = TimelineAligner()
+
+        var items: [SubtitleItem] = []
+        var curTime = 0.5
+        for i in 1...40 {
+            let dur = Double(i % 3 + 2)
+            let gap = (i % 5 == 0) ? 1.5 : 0.25
+            let start = curTime
+            let end = start + dur
+            curTime = end + gap
+
+            let zhCount = 10 + (i % 10)
+            let zhText = String(repeating: "中", count: zhCount)
+            let enText = "English sentence number \(i) with some words."
+
+            items.append(SubtitleItem(
+                startTime: .from(seconds: start),
+                endTime: .from(seconds: end),
+                originalText: enText,
+                translatedText: zhText
+            ))
+        }
+
+        let totalOriginalEnd = items.last!.endTime.secondsValue
+        let aligned = aligner.matchTimelineToTranslation(items: items, language: "zh", videoDuration: totalOriginalEnd + 10.0)
+
+        // 1. 验证数量完全一致，后半段没有任何行被丢弃
+        XCTAssertEqual(aligned.count, items.count)
+
+        // 2. 验证后半段每一行的起止时间合理推进，没有停滞或截断
+        for i in 20..<aligned.count {
+            XCTAssertGreaterThan(aligned[i].durationSeconds, 0.3, "后半段第 \(i) 句时长过短")
+            XCTAssertGreaterThan(aligned[i].startTime.secondsValue, aligned[i-1].endTime.secondsValue - 0.001, "后半段第 \(i) 句发生重叠")
+            XCTAssertEqual(aligned[i].originalText, items[i].originalText)
+            XCTAssertEqual(aligned[i].translatedText, items[i].translatedText)
+        }
     }
 }

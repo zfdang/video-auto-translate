@@ -12,6 +12,10 @@ public struct ExportView: View {
     @State private var isExporting: Bool = false
     @State private var exportMessage: String = ""
 
+    private var hasTranslations: Bool {
+        appState.project.subtitles.contains(where: { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+    }
+
     private var hasDubbing: Bool {
         appState.project.subtitles.contains(where: { $0.dubbedAudioURL != nil })
     }
@@ -33,36 +37,39 @@ public struct ExportView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    // 方案 A: 导出独立字幕文件
-                    VStack(alignment: .leading, spacing: 10) {
+                    // 方案 1: 导出独立字幕文件
+                    VStack(alignment: .leading, spacing: 12) {
                         Text("1. 导出独立字幕文件 (.srt / .vtt)")
                             .font(.headline)
 
-                        Picker("语言格式", selection: $subtitleFileMode) {
-                            Text("双语对照").tag(SubtitleExportMode.bilingual)
-                            Text("仅译文").tag(SubtitleExportMode.translatedOnly)
-                            Text("仅原文").tag(SubtitleExportMode.originalOnly)
-                        }
-                        .pickerStyle(.radioGroup)
+                        HStack(spacing: 14) {
+                            Picker("字幕内容", selection: $subtitleFileMode) {
+                                Text("双语对照").tag(SubtitleExportMode.bilingual)
+                                Text("仅译文").tag(SubtitleExportMode.translatedOnly)
+                                Text("仅原文").tag(SubtitleExportMode.originalOnly)
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(maxWidth: 280)
 
-                        HStack(spacing: 12) {
-                            Button("导出 SRT 文件") {
+                            Spacer()
+
+                            Button("导出 SRT") {
                                 saveSubtitleFile(extensionType: "srt")
                             }
                             .disabled(appState.project.subtitles.isEmpty)
 
-                            Button("导出 WebVTT 文件") {
+                            Button("导出 WebVTT") {
                                 saveSubtitleFile(extensionType: "vtt")
                             }
                             .disabled(appState.project.subtitles.isEmpty)
                         }
                     }
-                    .padding()
+                    .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color(nsColor: .controlBackgroundColor))
                     .cornerRadius(8)
 
-                    // 方案 B: 导出成品视频
+                    // 方案 2: 导出成品视频 (左右双列卡片)
                     VStack(alignment: .leading, spacing: 14) {
                         HStack {
                             Text("2. 导出成品视频 (.mp4)")
@@ -85,64 +92,102 @@ public struct ExportView: View {
 
                         Divider()
 
-                        // 选项 1: 语言
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("语言：")
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                                if hasDubbing {
-                                    Text("(可选择原始声轨或自动配音声轨)")
+                        // 左右双列选项布局：左列语音，右列字幕
+                        HStack(alignment: .top, spacing: 14) {
+                            // 左列：语音选择
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "speaker.wave.2.fill")
+                                        .foregroundColor(.accentColor)
+                                    Text("语音")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                }
+
+                                if hasDubbing || hasTranslations {
+                                    Picker("", selection: $videoAudioMode) {
+                                        Text("自动翻译的语言").tag(VideoAudioExportMode.translated)
+                                        Text("原始语言").tag(VideoAudioExportMode.original)
+                                    }
+                                    .pickerStyle(.radioGroup)
+                                    .labelsHidden()
+
+                                    Text(videoAudioMode == .translated ? "合成目标语言配音与闪避背景音乐（导出时自动补全整片配音）" : "保留视频原声语音轨")
                                         .font(.caption2)
                                         .foregroundColor(.secondary)
+                                        .padding(.top, 2)
+                                } else {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("原始语言")
+                                            .font(.body)
+                                        Text("未检测到翻译或配音，将使用原视频原声")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(.vertical, 4)
                                 }
                             }
+                            .padding(12)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                            )
 
-                            if hasDubbing {
-                                Picker("语言", selection: $videoAudioMode) {
-                                    Text("自动翻译的语言").tag(VideoAudioExportMode.translated)
-                                    Text("原始语言").tag(VideoAudioExportMode.original)
+                            // 右列：字幕选择
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "captions.bubble.fill")
+                                        .foregroundColor(.accentColor)
+                                    Text("内嵌字幕")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                }
+
+                                Picker("", selection: $videoSubtitleMode) {
+                                    Text("双语对照").tag(SubtitleExportMode.bilingual)
+                                    Text("仅目标语").tag(SubtitleExportMode.translatedOnly)
+                                    Text("仅原始语").tag(SubtitleExportMode.originalOnly)
+                                    Text("没有字幕").tag(SubtitleExportMode.none)
                                 }
                                 .pickerStyle(.radioGroup)
-                            } else {
-                                HStack(spacing: 6) {
-                                    Text("原始语言")
-                                        .font(.body)
-                                    Text("（未检测到自动配音，使用原视频声音）")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                .padding(.vertical, 2)
-                            }
-                        }
+                                .labelsHidden()
 
-                        // 选项 2: 内嵌字幕
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("内嵌字幕：")
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-
-                            Picker("内嵌字幕", selection: $videoSubtitleMode) {
-                                Text("双语对照").tag(SubtitleExportMode.bilingual)
-                                Text("仅目标语").tag(SubtitleExportMode.translatedOnly)
-                                Text("仅原始语").tag(SubtitleExportMode.originalOnly)
-                                Text("没有字幕").tag(SubtitleExportMode.none)
+                                Text(subtitleModeDescription(videoSubtitleMode))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .padding(.top, 2)
                             }
-                            .pickerStyle(.radioGroup)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                            )
                         }
 
                         Divider()
 
-                        Button(action: exportDubbedVideo) {
-                            HStack {
-                                Image(systemName: "film.fill")
-                                Text("合成并导出全新视频 MP4")
+                        HStack {
+                            Spacer()
+                            Button(action: exportDubbedVideo) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "film.fill")
+                                    Text("合成并导出全新视频 MP4")
+                                }
+                                .padding(.horizontal, 8)
                             }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.regular)
+                            .disabled(appState.project.videoURL == nil || isExporting)
+                            Spacer()
                         }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(appState.project.videoURL == nil || isExporting)
                     }
-                    .padding()
+                    .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color(nsColor: .controlBackgroundColor))
                     .cornerRadius(8)
@@ -160,6 +205,7 @@ public struct ExportView: View {
                                 .font(.caption)
                                 .foregroundColor(isExporting ? .accentColor : .primary)
                         }
+                        .padding(.horizontal, 4)
                     }
 
                     Spacer()
@@ -167,13 +213,26 @@ public struct ExportView: View {
                 .padding()
             }
         }
-        .frame(width: 540, height: 580)
+        .frame(width: 580, height: 600)
         .onAppear {
-            if hasDubbing {
+            if hasDubbing || hasTranslations {
                 videoAudioMode = .translated
             } else {
                 videoAudioMode = .original
             }
+        }
+    }
+
+    private func subtitleModeDescription(_ mode: SubtitleExportMode) -> String {
+        switch mode {
+        case .bilingual:
+            return "画面底部同时压制译文与原文对照字幕"
+        case .translatedOnly:
+            return "画面仅压制显示翻译后的目标语言字幕"
+        case .originalOnly:
+            return "画面仅压制显示原始语言字幕"
+        case .none:
+            return "不内嵌任何字幕，输出纯净画面视频"
         }
     }
 
@@ -208,48 +267,56 @@ public struct ExportView: View {
                     return
                 }
 
-                // R28: 冻结当前工程快照，防止导出期间异步翻译或人工修改导致混合错乱
+                // R28: 冻结当前工程音频素材引用
                 let frozenSourceAudio = appState.project.audioURL
-                let frozenSubtitles = appState.project.subtitles.map { item in
-                    SubtitleItem(
-                        id: item.id,
-                        startTime: item.startTime,
-                        endTime: item.endTime,
-                        originalText: item.originalText,
-                        translatedText: item.translatedText,
-                        words: item.words,
-                        dubbedAudioURL: item.dubbedAudioURL
-                    )
-                }
                 let currentAudioMode = videoAudioMode
                 let currentSubtitleMode = videoSubtitleMode
 
                 isExporting = true
-                exportMessage = "正在渲染画面字幕与音频，并执行硬件硬编导出..."
+                exportMessage = "正在准备合成导出任务..."
 
                 Task {
                     do {
-                        let hasDubbing = frozenSubtitles.contains(where: { $0.dubbedAudioURL != nil })
-                        let shouldUseDubbedAudio = hasDubbing && (currentAudioMode == .translated)
+                        let shouldUseDubbedAudio = (currentAudioMode == .translated) && (hasDubbing || hasTranslations)
                         var audioToUse: URL? = nil
 
                         if shouldUseDubbedAudio {
+                            await MainActor.run {
+                                exportMessage = "正在为全片字幕生成/校验完整配音切片..."
+                            }
+
+                            // 1. 确保所有字幕配音完整生成，缺失时即时补齐，彻底杜绝后半段失声
+                            await appState.ensureAllSubtitlesDubbed { current, total in
+                                Task { @MainActor in
+                                    exportMessage = "正在为全片合成配音切片 (\(current)/\(total))..."
+                                }
+                            }
+
+                            await MainActor.run {
+                                exportMessage = "正在执行音频无损伸缩与闪避混音..."
+                            }
+
                             let tempDir = FileManager.default.temporaryDirectory
                             let mixedAudio = tempDir.appendingPathComponent("final_mix_\(UUID().uuidString).m4a")
 
+                            // 使用已确保具备完整配音切片的工程字幕列表
                             try await appState.audioMixer.mix(
                                 backgroundAudioURL: frozenSourceAudio,
-                                subtitles: frozenSubtitles,
+                                subtitles: appState.project.subtitles,
                                 to: mixedAudio
                             )
                             audioToUse = mixedAudio
+                        }
+
+                        await MainActor.run {
+                            exportMessage = "正在渲染画面字幕与音频，并执行硬件硬编导出..."
                         }
 
                         try await appState.videoComposer.compose(
                             videoURL: sourceVideo,
                             newAudioURL: audioToUse,
                             outputURL: destinationURL,
-                            subtitles: frozenSubtitles,
+                            subtitles: appState.project.subtitles,
                             subtitleMode: currentSubtitleMode
                         )
 

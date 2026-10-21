@@ -396,11 +396,13 @@ public final class AppState: ObservableObject {
             project.subtitles = Array(project.subtitles)
             project.isProcessing = false
             project.progress = 1.0
+            project.currentStepName = ""
             project.isDirty = true
             statusMessage = "翻译完成，已为 \(project.subtitles.count) 行字幕生成译文"
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
+            project.currentStepName = ""
             if Task.isCancelled {
                 statusMessage = "翻译已取消"
             } else {
@@ -428,7 +430,11 @@ public final class AppState: ObservableObject {
             let total = Double(project.subtitles.count)
             for (idx, item) in project.subtitles.enumerated() {
                 guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
-                try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
+                do {
+                    try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
+                } catch {
+                    print("单句配音生成警告 [第\(idx + 1)句]: \(error)")
+                }
                 guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
                 await MainActor.run {
                     if currentGen == self.projectGeneration && !Task.isCancelled {
@@ -469,6 +475,28 @@ public final class AppState: ObservableObject {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
             statusMessage = "配音生成失败: \(error.localizedDescription)"
+        }
+    }
+
+    /// 确保所有含有译文（或原文）的字幕均具备有效的配音切片；缺失时即时自动合成补齐（供导出成片等场景使用，杜绝后半段失声）
+    public func ensureAllSubtitlesDubbed(voice: String? = nil, onProgress: (@Sendable (Int, Int) -> Void)? = nil) async {
+        let targetVoice = voice ?? project.llmConfig.targetLanguageVoiceCode
+        let total = project.subtitles.count
+        for (idx, item) in project.subtitles.enumerated() {
+            let text = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? item.originalText
+                : item.translatedText
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+
+            let needsAudio = (item.dubbedAudioURL == nil) || !FileManager.default.fileExists(atPath: item.dubbedAudioURL!.path)
+            if needsAudio {
+                onProgress?(idx + 1, total)
+                do {
+                    try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: targetVoice)
+                } catch {
+                    print("按需补齐配音警告 [第\(idx + 1)句]: \(error)")
+                }
+            }
         }
     }
 
@@ -575,6 +603,22 @@ public final class AppState: ObservableObject {
         canRedo = !redoStack.isEmpty
         project.isDirty = true
         statusMessage = "已重做操作"
+    }
+
+    /// 校验是否选中了 2 行及以上且位置连续的字幕行
+    public func canMergeMultipleConsecutive(ids: Set<UUID>) -> Bool {
+        guard ids.count >= 2 else { return false }
+        let indices = project.subtitles.enumerated()
+            .filter { ids.contains($1.id) }
+            .map { $0.offset }
+            .sorted()
+        guard indices.count == ids.count else { return false }
+        for i in 0..<(indices.count - 1) {
+            if indices[i+1] != indices[i] + 1 {
+                return false
+            }
+        }
+        return true
     }
 
     /// 校验是否满足合并条件：多选需连续；单选或聚焦需存在下一行
@@ -730,37 +774,44 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 根据目标语言翻译后的结果重新调整时间轴（利用空隙平滑发音语速，消除配音忽快忽慢）
-    public func realignTimelineForTranslationPacing() async {
+    /// 匹配译文时间轴：保持原文与译文一一对应关系不变，根据译文期望发音时长重新排布时间轴，实现语速语调自然一致
+    public func matchTimelineToTranslation() async {
         guard !project.subtitles.isEmpty else { return }
 
         let hasTranslations = project.subtitles.contains { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         guard hasTranslations else {
-            errorMessage = "尚未检测到翻译结果，请先执行「字幕翻译」后再校对时间轴"
+            errorMessage = "尚未检测到翻译结果，请先执行「字幕翻译」后再匹配译文时间轴"
             return
         }
 
         recordUndoSnapshot()
         project.isProcessing = true
         project.progress = 0.3
-        statusMessage = "正在结合大模型与译文文字量校对时间轴，平衡发音语速..."
+        project.currentStepName = "正在根据译文期望发音时长匹配时间轴..."
+        statusMessage = "正在根据译文期望发音时长匹配时间轴，平衡发音语速..."
 
         let client = OpenAICompatibleClient(baseURL: project.llmConfig.effectiveBaseURL, apiKey: project.llmConfig.effectiveAPIKey)
-        let aligned = await timelineAligner.alignTimelineWithLLM(
+        let aligned = await timelineAligner.matchTimelineWithLLM(
             items: project.subtitles,
             config: project.llmConfig,
             client: client
         )
 
         project.subtitles = aligned
-        // 重调时间轴后使旧配音缓存失效，以便后续以平滑语速重新试听与合成
+        // 重调时间轴后使旧配音缓存失效，以便后续以 1.0x 舒适语速重新试听与合成
         for item in project.subtitles {
             item.dubbedAudioURL = nil
         }
         project.isProcessing = false
         project.progress = 1.0
+        project.currentStepName = ""
         project.isDirty = true
-        statusMessage = "时间轴已成功根据译文重新校对！发音语速已平滑平衡"
+        statusMessage = "时间轴已成功与译文发音匹配！语速已平滑一致"
+    }
+
+    /// 保持兼容
+    public func realignTimelineForTranslationPacing() async {
+        await matchTimelineToTranslation()
     }
 
     /// 合并选中的字幕 (Cmd+J) (支持多选相邻合并，或单选/当前行向下合并)

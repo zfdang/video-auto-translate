@@ -62,30 +62,28 @@ public struct SubtitleListView: View {
                 .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
                 .help("调用大模型结合每个词的精确时间戳进行语义智能断句规整")
 
-                // 4. 校对时间轴按钮 (根据目标语言翻译后的结果重新调整时间轴，消除语速忽快忽慢)
+                // 4. 匹配译文时间轴按钮 (跟译文的时间轴做匹配：保持原文与译文对应不变，按译文自然语速重排时间轴)
                 let hasTranslations = appState.project.subtitles.contains { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 Button(action: {
                     Task {
-                        await appState.realignTimelineForTranslationPacing()
+                        await appState.matchTimelineToTranslation()
                     }
                 }) {
                     HStack(spacing: 3) {
-                        Image(systemName: "clock.arrow.2.circlepath")
-                        Text("校对时间轴")
+                        Image(systemName: "waveform.badge.clock")
+                        Text("匹配译文时间轴")
                     }
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(!hasTranslations || appState.project.isProcessing)
-                .help("根据目标语言翻译后的结果重新调整时间轴：结合大模型平滑分配语速，消除配音忽快忽慢")
+                .help("跟译文的时间轴做匹配：保持原文与译文对应关系不变，根据译文期望发音时长重新排布时间轴，实现语调与语速自然一致")
 
-                // 4. 合并按钮 (支持选中多行合并，或单行向下合并，快捷键 Cmd+J)
-                let canMergeNow = appState.canMerge(ids: selectedIDs)
+                // 5. 合并按钮 (仅当选中多个且连续时可用，平时置灰禁用)
+                let canMergeMulti = appState.canMergeMultipleConsecutive(ids: selectedIDs)
                 let mergeButtonTitle: String = {
                     if selectedIDs.count >= 2 {
-                        return "合并 (\(selectedIDs.count)行)"
-                    } else if selectedIDs.count == 1 || appState.project.selectedSubtitleID != nil {
-                        return "向下合并"
+                        return "合并 (\(selectedIDs.count))"
                     } else {
                         return "合并"
                     }
@@ -101,26 +99,11 @@ public struct SubtitleListView: View {
                     }
                 }
                 .buttonStyle(.bordered)
-                .tint(canMergeNow ? .accentColor : nil)
+                .tint(canMergeMulti ? .accentColor : nil)
                 .controlSize(.small)
-                .disabled(!canMergeNow)
+                .disabled(!canMergeMulti)
                 .keyboardShortcut("j", modifiers: .command)
-                .help(canMergeNow ? (selectedIDs.count >= 2 ? "合并当前选中的 \(selectedIDs.count) 行字幕 (Cmd+J)" : "将当前选中的字幕与下一行合并 (Cmd+J)") : "请先选中字幕行进行合并 (Cmd+J)")
-
-                // 5. 拆分按钮 (支持光标位置拆分或在选中行中间拆分，快捷键 Cmd+B)
-                Button(action: {
-                    appState.splitCurrentSubtitle()
-                }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "scissors")
-                        Text("拆分")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(appState.project.selectedSubtitleID == nil || appState.project.isProcessing)
-                .keyboardShortcut("b", modifiers: .command)
-                .help("在光标所在字词位置拆分当前选中的字幕 (Cmd+B)")
+                .help(canMergeMulti ? "合并当前选中的 \(selectedIDs.count) 行连续字幕 (Cmd+J)" : (selectedIDs.count >= 2 ? "选中的字幕行必须连续方可合并" : "勾选多个且连续的字幕行即可激活合并功能"))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)

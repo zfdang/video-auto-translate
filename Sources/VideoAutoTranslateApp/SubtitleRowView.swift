@@ -26,26 +26,6 @@ public struct SubtitleRowView: View {
     @State private var lastActiveField: FieldType? = nil
     @State private var lastCursorIndex: Int? = nil
 
-    /// 根据用户当前焦点与光标位置智能判定试听目标
-    /// 1. 若光标选择在下方译文框：播放翻译后的语音 (.translated)
-    /// 2. 若光标选择在上方原文框或未选择任何框：播放原声音频 (.original)
-    private func determineAuditionTarget() -> AppState.AuditionTarget {
-        if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
-            if textView.string == item.translatedText {
-                return .translated
-            } else if textView.string == item.originalText {
-                return .original
-            }
-        }
-        if let f = focusedField {
-            return f == .translated ? .translated : .original
-        }
-        if let last = lastActiveField {
-            return last == .translated ? .translated : .original
-        }
-        return .original
-    }
-
     private func performSplitAtCursor() {
         var charIndex: Int? = nil
         if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
@@ -68,8 +48,6 @@ public struct SubtitleRowView: View {
     }
 
     public var body: some View {
-        let currentTarget = determineAuditionTarget()
-
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 // 1. 多选勾选圈 (可直观勾选多行进行批量合并)
@@ -104,20 +82,33 @@ public struct SubtitleRowView: View {
 
                 Spacer()
 
-                // 试听单句按钮 (智能根据焦点判定试听原声或试听译文配音)
+                // 试听原声按钮 (播放原视频对应时间戳的原声音频)
                 Button(action: {
-                    let target = determineAuditionTarget()
-                    onAudition(target)
+                    onAudition(.original)
                 }) {
                     HStack(spacing: 2) {
-                        Image(systemName: item.isGeneratingAudio ? "waveform" : (currentTarget == .translated ? "speaker.wave.2" : "play.circle"))
-                        Text(item.isGeneratingAudio ? "生成中" : (currentTarget == .translated ? "试听译文" : "试听原声"))
+                        Image(systemName: "play.circle")
+                        Text("试听原声")
                             .font(.caption)
                     }
                 }
                 .buttonStyle(.borderless)
-                .disabled(item.isGeneratingAudio)
-                .help(currentTarget == .translated ? "试听当前行翻译后的新配音 (光标聚焦于下方译文)" : "试听当前行原视频原声音频片段 (光标聚焦于原文或未选)")
+                .help("试听当前行原视频原声音频片段")
+
+                // 试听译文按钮 (播放/合成翻译后的配音语音)
+                let hasTranslation = !item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                Button(action: {
+                    onAudition(.translated)
+                }) {
+                    HStack(spacing: 2) {
+                        Image(systemName: item.isGeneratingAudio ? "waveform" : "speaker.wave.2")
+                        Text(item.isGeneratingAudio ? "生成中" : "试听译文")
+                            .font(.caption)
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(item.isGeneratingAudio || !hasTranslation)
+                .help(hasTranslation ? "试听当前行翻译后的新配音语音" : "暂无译文，请先执行字幕翻译")
 
                 // 向下合并按钮 (直接与下一行合并)
                 if canMergeWithNext {
@@ -204,6 +195,15 @@ public struct SubtitleRowView: View {
                 )
         )
         .contextMenu {
+            Button(action: { onAudition(.original) }) {
+                Label("试听原声", systemImage: "play.circle")
+            }
+            if !item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button(action: { onAudition(.translated) }) {
+                    Label("试听译文配音", systemImage: "speaker.wave.2")
+                }
+            }
+            Divider()
             if canMergeWithNext {
                 Button(action: onMergeNext) {
                     Label("与下一行合并", systemImage: "arrow.triangle.merge")
