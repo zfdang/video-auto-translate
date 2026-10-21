@@ -13,11 +13,28 @@ public enum SubtitleExportMode: String, CaseIterable, Identifiable {
         case .bilingual:
             return "双语对照"
         case .translatedOnly:
-            return "仅目标语言 (译文)"
+            return "仅目标语"
         case .originalOnly:
-            return "仅原始语言 (原文)"
+            return "仅原始语"
         case .none:
-            return "不内嵌字幕"
+            return "没有字幕"
+        }
+    }
+}
+
+/// 视频成片导出时的音频语言模式
+public enum VideoAudioExportMode: String, CaseIterable, Identifiable {
+    case translated = "translated" // 自动翻译的语言
+    case original = "original"     // 原始语言
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .translated:
+            return "自动翻译的语言"
+        case .original:
+            return "原始语言"
         }
     }
 }

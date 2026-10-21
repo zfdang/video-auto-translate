@@ -94,6 +94,16 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertEqual(noneSRT, "")
     }
 
+    func testVideoExportModesDefinitions() {
+        XCTAssertEqual(SubtitleExportMode.bilingual.displayName, "双语对照")
+        XCTAssertEqual(SubtitleExportMode.translatedOnly.displayName, "仅目标语")
+        XCTAssertEqual(SubtitleExportMode.originalOnly.displayName, "仅原始语")
+        XCTAssertEqual(SubtitleExportMode.none.displayName, "没有字幕")
+
+        XCTAssertEqual(VideoAudioExportMode.translated.displayName, "自动翻译的语言")
+        XCTAssertEqual(VideoAudioExportMode.original.displayName, "原始语言")
+    }
+
     func testVideoComposerWithSubtitleEmbedding() async throws {
         let testVideoPath = "/Users/zfdang/workspaces/video-auto-translate/Tests/Fme9C5ShSr2fuWQ8_Translated.mp4"
         guard FileManager.default.fileExists(atPath: testVideoPath) else { return }
