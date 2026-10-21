@@ -21,6 +21,7 @@ public final class AppState: ObservableObject {
     public var asrEngine = LocalASRService()
     public let translator = SubtitleTranslator()
     public let subtitleManager = SubtitleManager()
+    public let timelineAligner = TimelineAligner()
     public let audioMixer = AudioMixer()
     public let videoComposer = VideoComposer()
     public let ttsService = SystemTTSService()
@@ -644,23 +645,46 @@ public final class AppState: ObservableObject {
 
         var charIndex = atCharIndex
         if charIndex == nil {
-            if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
-               textView.string == item.originalText {
-                let loc = textView.selectedRange().location
-                if loc != NSNotFound {
-                    charIndex = loc
+            if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
+                let textStr = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                let itemStr = item.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if textStr == itemStr || textView.string == item.originalText {
+                    let loc = textView.selectedRange().location
+                    if loc != NSNotFound && loc > 0 && loc < item.originalText.count {
+                        charIndex = loc
+                    }
                 }
             }
         }
 
-        guard let targetIndex = charIndex, targetIndex > 0, targetIndex < item.originalText.count else {
+        var targetIndex = charIndex
+        if targetIndex == nil || targetIndex! <= 0 || targetIndex! >= item.originalText.count {
+            // 智能兜底：若用户未放置光标，在句子中间寻找最自然的标点/空格断句点
+            let chars = Array(item.originalText)
+            let mid = chars.count / 2
+            var bestBreak: Int? = nil
+            var minDiff = Int.max
+            for (idx, ch) in chars.enumerated() {
+                guard idx > 0 && idx < chars.count - 1 else { continue }
+                if "，,。!?.!?；; ".contains(ch) {
+                    let diff = abs(idx - mid)
+                    if diff < minDiff {
+                        minDiff = diff
+                        bestBreak = idx + 1 // 断在标点/空格之后
+                    }
+                }
+            }
+            targetIndex = bestBreak ?? (mid > 0 ? mid : nil)
+        }
+
+        guard let finalIndex = targetIndex, finalIndex > 0, finalIndex < item.originalText.count else {
             errorMessage = "请先在文本框中将光标放置在想要拆分的字词之间"
             statusMessage = "拆分提示：请先在字幕文本中放置光标"
             NSSound.beep()
             return
         }
 
-        splitSubtitle(id: selectedID, atCharIndex: targetIndex)
+        splitSubtitle(id: selectedID, atCharIndex: finalIndex)
     }
 
     /// 执行大模型语义智能分句规整 (将每个词的精确定位发给大模型重构断句时间轴)
@@ -704,6 +728,39 @@ public final class AppState: ObservableObject {
             statusMessage = "智能分句失败: \(error.localizedDescription)"
             errorMessage = "智能分句失败: \(error.localizedDescription)"
         }
+    }
+
+    /// 根据目标语言翻译后的结果重新调整时间轴（利用空隙平滑发音语速，消除配音忽快忽慢）
+    public func realignTimelineForTranslationPacing() async {
+        guard !project.subtitles.isEmpty else { return }
+
+        let hasTranslations = project.subtitles.contains { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard hasTranslations else {
+            errorMessage = "尚未检测到翻译结果，请先执行「字幕翻译」后再校对时间轴"
+            return
+        }
+
+        recordUndoSnapshot()
+        project.isProcessing = true
+        project.progress = 0.3
+        statusMessage = "正在结合大模型与译文文字量校对时间轴，平衡发音语速..."
+
+        let client = OpenAICompatibleClient(baseURL: project.llmConfig.effectiveBaseURL, apiKey: project.llmConfig.effectiveAPIKey)
+        let aligned = await timelineAligner.alignTimelineWithLLM(
+            items: project.subtitles,
+            config: project.llmConfig,
+            client: client
+        )
+
+        project.subtitles = aligned
+        // 重调时间轴后使旧配音缓存失效，以便后续以平滑语速重新试听与合成
+        for item in project.subtitles {
+            item.dubbedAudioURL = nil
+        }
+        project.isProcessing = false
+        project.progress = 1.0
+        project.isDirty = true
+        statusMessage = "时间轴已成功根据译文重新校对！发音语速已平滑平衡"
     }
 
     /// 合并选中的字幕 (Cmd+J) (支持多选相邻合并，或单选/当前行向下合并)

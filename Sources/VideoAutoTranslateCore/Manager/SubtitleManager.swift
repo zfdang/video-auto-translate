@@ -32,7 +32,14 @@ public final class SubtitleManager {
             var wordRanges: [(word: WordToken, range: Range<String.Index>, startOffset: Int, endOffset: Int)] = []
             var searchRange = text.startIndex..<text.endIndex
             for word in item.words {
-                if let found = text.range(of: word.text, options: [], range: searchRange) {
+                var foundRange = text.range(of: word.text, options: [.caseInsensitive], range: searchRange)
+                if foundRange == nil {
+                    let clean = word.text.trimmingCharacters(in: .punctuationCharacters)
+                    if !clean.isEmpty {
+                        foundRange = text.range(of: clean, options: [.caseInsensitive], range: searchRange)
+                    }
+                }
+                if let found = foundRange {
                     let start = text.distance(from: text.startIndex, to: found.lowerBound)
                     let end = text.distance(from: text.startIndex, to: found.upperBound)
                     wordRanges.append((word, found, start, end))
@@ -41,36 +48,62 @@ public final class SubtitleManager {
             }
 
             if wordRanges.count >= 2 {
-                // 寻找最接近用户光标的词间边界（必须确保左右各至少拥有一个词）
+                // 寻找最符合用户光标意图的切分词边界 (0 <= bestSplitIdx < wordRanges.count - 1)
                 var bestSplitIdx = 0
-                var minDistance = Int.max
+                var foundBoundary = false
 
-                for i in 0..<(wordRanges.count - 1) {
-                    let boundary = wordRanges[i].endOffset
-                    let dist = abs(charIndex - boundary)
-                    if dist < minDistance {
-                        minDistance = dist
-                        bestSplitIdx = i
+                for k in 1..<wordRanges.count {
+                    let prevEnd = wordRanges[k - 1].endOffset
+                    let currStart = wordRanges[k].startOffset
+                    let currEnd = wordRanges[k].endOffset
+
+                    // 1. 光标位于上一词末尾到当前词开头之间（包括当前词首字符），用户意图在当前词前断句
+                    if prevEnd <= charIndex && charIndex <= currStart {
+                        bestSplitIdx = k - 1
+                        foundBoundary = true
+                        break
+                    }
+
+                    // 2. 光标位于当前词内部：依据距词首词尾的距离智能判定归属
+                    if currStart < charIndex && charIndex < currEnd {
+                        let midpoint = Double(currStart + currEnd) / 2.0
+                        if Double(charIndex) < midpoint {
+                            bestSplitIdx = k - 1
+                        } else {
+                            bestSplitIdx = min(k, wordRanges.count - 2)
+                        }
+                        foundBoundary = true
+                        break
                     }
                 }
 
-                firstWords = wordRanges[0...bestSplitIdx].map { $0.word }
-                secondWords = wordRanges[(bestSplitIdx + 1)...].map { $0.word }
+                if !foundBoundary {
+                    if charIndex <= wordRanges[0].startOffset {
+                        bestSplitIdx = 0
+                    } else {
+                        bestSplitIdx = wordRanges.count - 2
+                    }
+                }
 
-                // 文字切分点严格吸附至词边界，杜绝词内斩断导致文本与 Token 脱节 (FU03)
-                let splitStrIndex = wordRanges[bestSplitIdx].range.upperBound
-                firstPartText = String(text[..<splitStrIndex]).trimmingCharacters(in: .whitespaces)
-                secondPartText = String(text[splitStrIndex...]).trimmingCharacters(in: .whitespaces)
+                firstWords = Array(wordRanges[0...bestSplitIdx].map { $0.word })
+                secondWords = Array(wordRanges[(bestSplitIdx + 1)...].map { $0.word })
 
-                // 时间切分点：取左句末词结束时间点
+                // 文本切分点以第二句首词的起始位置为界，完整保留前半句末尾所有标点符号
+                let nextWordStartRange = wordRanges[bestSplitIdx + 1].range
+                firstPartText = String(text[..<nextWordStartRange.lowerBound]).trimmingCharacters(in: .whitespaces)
+                secondPartText = String(text[nextWordStartRange.lowerBound...]).trimmingCharacters(in: .whitespaces)
+
+                // 时间切分点：取左句末词结束时间点 (FU03)
                 splitTime = firstWords.last!.endCMTime
             } else {
-                // 词序列少于 2 个时，回退至字符截断
+                // 词序列少于 2 个匹配时，回退至字符截断
                 let index = text.index(text.startIndex, offsetBy: charIndex)
                 firstPartText = String(text[..<index]).trimmingCharacters(in: .whitespaces)
                 secondPartText = String(text[index...]).trimmingCharacters(in: .whitespaces)
                 let ratio = Double(charIndex) / Double(text.count)
                 splitTime = CMTimeAdd(item.startTime, CMTime.from(seconds: item.durationSeconds * ratio))
+                firstWords = item.words.filter { $0.endCMTime <= splitTime }
+                secondWords = item.words.filter { $0.startCMTime >= splitTime }
             }
         } else {
             // 保底机制：无词级序列时按字符比例切分
