@@ -138,7 +138,6 @@ final class UserJourneySimulator {
 
 final class UserJourneyE2ETests: XCTestCase {
     var session: UserJourneySimulator!
-    let testVideoURL = URL(fileURLWithPath: "/Users/zfdang/workspaces/video-auto-translate/Tests/Fme9C5ShSr2fuWQ8_Translated.mp4")
 
     override func setUp() async throws {
         try await super.setUp()
@@ -150,20 +149,63 @@ final class UserJourneyE2ETests: XCTestCase {
         try await super.tearDown()
     }
 
+    /// 动态生成轻量有效测试视频，确保在无外部视频大文件的 CI 环境中也能独立完成 AVAsset 全链路测试
+    private static func createMockTestVideo(at url: URL, durationSeconds: Double = 6.0) async throws {
+        try? FileManager.default.removeItem(at: url)
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let videoSettings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: 320,
+            AVVideoHeightKey: 240
+        ]
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+        input.expectsMediaDataInRealTime = false
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
+                kCVPixelBufferWidthKey as String: 320,
+                kCVPixelBufferHeightKey as String: 240
+            ]
+        )
+        writer.add(input)
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+
+        var pixelBuffer: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, 320, 240, kCVPixelFormatType_32ARGB, nil, &pixelBuffer)
+        if let buffer = pixelBuffer {
+            adaptor.append(buffer, withPresentationTime: .zero)
+            adaptor.append(buffer, withPresentationTime: CMTime(seconds: durationSeconds, preferredTimescale: 600))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+    }
+
     /// 用户核心使用旅程端到端全链路测试
     func testFullUserJourneyFromImportToExport() async throws {
         print("====== [User Journey E2E] 开始全链路用户视角测试 ======")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: testVideoURL.path), "测试视频文件必须存在")
 
         // -------------------------------------------------------------
         // 步骤 1: 用户打开视频文件
         // -------------------------------------------------------------
         print("--> 步骤 1: 用户打开待翻译视频...")
-        session.openVideo(url: testVideoURL)
-        XCTAssertEqual(session.project.videoURL, testVideoURL)
+        let localPath = "/Users/zfdang/workspaces/video-auto-translate/Tests/Fme9C5ShSr2fuWQ8_Translated.mp4"
+        let activeVideoURL: URL
+        if FileManager.default.fileExists(atPath: localPath) {
+            activeVideoURL = URL(fileURLWithPath: localPath)
+        } else {
+            let tempVideoURL = FileManager.default.temporaryDirectory.appendingPathComponent("e2e_ci_video_\(UUID().uuidString).mp4")
+            try await Self.createMockTestVideo(at: tempVideoURL, durationSeconds: 6.0)
+            activeVideoURL = tempVideoURL
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: activeVideoURL.path), "测试视频文件必须存在")
+        session.openVideo(url: activeVideoURL)
+        XCTAssertEqual(session.project.videoURL, activeVideoURL)
 
         // 校验视频时长是否能够被 AVAsset 读取
-        let asset = AVURLAsset(url: testVideoURL)
+        let asset = AVURLAsset(url: activeVideoURL)
         let duration = try await asset.load(.duration)
         XCTAssertGreaterThan(duration.seconds, 5.0, "视频实际时长应当大于 5 秒")
         print("  ✓ 视频载入成功，总时长: \(String(format: "%.2f", duration.seconds)) 秒")
