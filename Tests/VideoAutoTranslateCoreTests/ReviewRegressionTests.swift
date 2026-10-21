@@ -22,4 +22,16 @@ final class ReviewRegressionTests: XCTestCase {
         XCTAssertNil(SubtitleManager.characterOffset(in: "😀a bc", utf16Offset: 1))
     }
 
+    func testCrowdedTimelinePreservesValidInputInsteadOfOverlapping() {
+        let rows = (0..<5).map { index in
+            SubtitleItem(startTime: .from(seconds: Double(index) * 0.2), endTime: .from(seconds: Double(index) * 0.2 + 0.15), originalText: "row", translatedText: "这是一段很长的翻译结果")
+        }
+        let result = TimelineAligner().matchTimelineToTranslation(items: rows, videoDuration: 1)
+        XCTAssertEqual(result.count, rows.count)
+        for i in result.indices {
+            XCTAssertLessThanOrEqual(result[i].endTime.secondsValue, 1)
+            if i > 0 { XCTAssertGreaterThanOrEqual(result[i].startTime, result[i-1].endTime) }
+        }
+    }
+
 }
