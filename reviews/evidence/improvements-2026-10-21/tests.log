@@ -1,0 +1,509 @@
+Building for debugging...
+[0/12] /tmp/vat-improvements-final-test/arm64-apple-macosx/debug/VideoAutoTranslatePackageTests.derived/runner.swift
+[1/12] Write sources
+[5/12] Write VideoAutoTranslateApp-entitlement.plist
+[6/12] Write swift-version--58304C5D6DBC2206.txt
+[8/41] Compiling VideoAutoTranslateCore AudioMixer.swift
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioMixer.swift:205:23: warning: capture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+203 |         await withTaskCancellationHandler {
+204 |             await exportSession.export()
+205 |         } onCancel: { exportSession.cancelExport() }
+    |                       `- warning: capture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+206 |         try Task.checkCancellation()
+207 |
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetExportSession.h:159:12: note: class 'AVAssetExportSession' does not conform to the 'Sendable' protocol
+157 | NS_SWIFT_NONSENDABLE
+158 | API_AVAILABLE(macos(10.7), ios(4.0), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+159 | @interface AVAssetExportSession : NSObject
+    |            `- note: class 'AVAssetExportSession' does not conform to the 'Sendable' protocol
+160 | {
+161 | @private
+
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+[9/41] Compiling VideoAutoTranslateCore AudioWaveform.swift
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioMixer.swift:205:23: warning: capture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+203 |         await withTaskCancellationHandler {
+204 |             await exportSession.export()
+205 |         } onCancel: { exportSession.cancelExport() }
+    |                       `- warning: capture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+206 |         try Task.checkCancellation()
+207 |
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetExportSession.h:159:12: note: class 'AVAssetExportSession' does not conform to the 'Sendable' protocol
+157 | NS_SWIFT_NONSENDABLE
+158 | API_AVAILABLE(macos(10.7), ios(4.0), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+159 | @interface AVAssetExportSession : NSObject
+    |            `- note: class 'AVAssetExportSession' does not conform to the 'Sendable' protocol
+160 | {
+161 | @private
+
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+[10/41] Compiling VideoAutoTranslateCore TimePitchEngine.swift
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioMixer.swift:205:23: warning: capture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+203 |         await withTaskCancellationHandler {
+204 |             await exportSession.export()
+205 |         } onCancel: { exportSession.cancelExport() }
+    |                       `- warning: capture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+206 |         try Task.checkCancellation()
+207 |
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetExportSession.h:159:12: note: class 'AVAssetExportSession' does not conform to the 'Sendable' protocol
+157 | NS_SWIFT_NONSENDABLE
+158 | API_AVAILABLE(macos(10.7), ios(4.0), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+159 | @interface AVAssetExportSession : NSObject
+    |            `- note: class 'AVAssetExportSession' does not conform to the 'Sendable' protocol
+160 | {
+161 | @private
+
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+[11/44] Compiling VideoAutoTranslateCore ApplicationPreferences.swift
+[12/44] Compiling VideoAutoTranslateCore FileSecurity.swift
+[13/44] Compiling VideoAutoTranslateCore LLMConfiguration.swift
+[14/44] Compiling VideoAutoTranslateCore SubtitleItem.swift
+[15/44] Compiling VideoAutoTranslateCore SubtitleTiming.swift
+[16/44] Compiling VideoAutoTranslateCore TimeTypes.swift
+[17/44] Compiling VideoAutoTranslateCore TimelineAligner.swift
+[18/44] Compiling VideoAutoTranslateCore SubtitleManager.swift
+[19/44] Compiling VideoAutoTranslateCore ASRConfiguration.swift
+[20/44] Compiling VideoAutoTranslateCore ModelStorageConfig.swift
+[21/44] Compiling VideoAutoTranslateCore ProjectState.swift
+[22/44] Compiling VideoAutoTranslateCore ProjectStore.swift
+[23/44] Compiling VideoAutoTranslateCore OllamaProbe.swift
+[24/44] Compiling VideoAutoTranslateCore OpenAICompatibleClient.swift
+[25/44] Compiling VideoAutoTranslateCore SubtitleTranslator.swift
+[26/44] Compiling VideoAutoTranslateCore NaturalLanguageSegmenter.swift
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:108:23: warning: capture of 'writerInput' with non-Sendable type 'AVAssetWriterInput' in a '@Sendable' closure [#SendableClosureCaptures]
+106 |
+107 |             writerInput.requestMediaDataWhenReady(on: queue) {
+108 |                 while writerInput.isReadyForMoreMediaData {
+    |                       `- warning: capture of 'writerInput' with non-Sendable type 'AVAssetWriterInput' in a '@Sendable' closure [#SendableClosureCaptures]
+109 |                     if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+110 |                         if !writerInput.append(sampleBuffer) {
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetWriterInput.h:39:12: note: class 'AVAssetWriterInput' does not conform to the 'Sendable' protocol
+ 37 | NS_SWIFT_NONSENDABLE
+ 38 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+ 39 | @interface AVAssetWriterInput : NSObject
+    |            `- note: class 'AVAssetWriterInput' does not conform to the 'Sendable' protocol
+ 40 | {
+ 41 | @private
+
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:109:43: warning: capture of 'readerOutput' with non-Sendable type 'AVAssetReaderTrackOutput' in a '@Sendable' closure [#SendableClosureCaptures]
+107 |             writerInput.requestMediaDataWhenReady(on: queue) {
+108 |                 while writerInput.isReadyForMoreMediaData {
+109 |                     if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+    |                                           `- warning: capture of 'readerOutput' with non-Sendable type 'AVAssetReaderTrackOutput' in a '@Sendable' closure [#SendableClosureCaptures]
+110 |                         if !writerInput.append(sampleBuffer) {
+111 |                             reader.cancelReading()
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetReaderOutput.h:201:12: note: class 'AVAssetReaderTrackOutput' does not conform to the 'Sendable' protocol
+199 |  */
+200 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+201 | @interface AVAssetReaderTrackOutput : AVAssetReaderOutput
+    |            `- note: class 'AVAssetReaderTrackOutput' does not conform to the 'Sendable' protocol
+202 | {
+203 | @private
+
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:111:29: warning: capture of 'reader' with non-Sendable type 'AVAssetReader' in a '@Sendable' closure [#SendableClosureCaptures]
+109 |                     if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+110 |                         if !writerInput.append(sampleBuffer) {
+111 |                             reader.cancelReading()
+    |                             `- warning: capture of 'reader' with non-Sendable type 'AVAssetReader' in a '@Sendable' closure [#SendableClosureCaptures]
+112 |                             writer.cancelWriting()
+113 |                             safeResume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "数据写入失败"))
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetReader.h:63:12: note: class 'AVAssetReader' does not conform to the 'Sendable' protocol
+ 61 | NS_SWIFT_NONSENDABLE
+ 62 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+ 63 | @interface AVAssetReader : NSObject
+    |            `- note: class 'AVAssetReader' does not conform to the 'Sendable' protocol
+ 64 | {
+ 65 | @private
+
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:112:29: warning: capture of 'writer' with non-Sendable type 'AVAssetWriter' in a '@Sendable' closure [#SendableClosureCaptures]
+110 |                         if !writerInput.append(sampleBuffer) {
+111 |                             reader.cancelReading()
+112 |                             writer.cancelWriting()
+    |                             `- warning: capture of 'writer' with non-Sendable type 'AVAssetWriter' in a '@Sendable' closure [#SendableClosureCaptures]
+113 |                             safeResume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "数据写入失败"))
+114 |                             return
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetWriter.h:66:12: note: class 'AVAssetWriter' does not conform to the 'Sendable' protocol
+ 64 | NS_SWIFT_NONSENDABLE
+ 65 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+ 66 | @interface AVAssetWriter : NSObject
+    |            `- note: class 'AVAssetWriter' does not conform to the 'Sendable' protocol
+ 67 | {
+ 68 | @private
+
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+[27/44] Compiling VideoAutoTranslateCore QwenASREngine.swift
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:108:23: warning: capture of 'writerInput' with non-Sendable type 'AVAssetWriterInput' in a '@Sendable' closure [#SendableClosureCaptures]
+106 |
+107 |             writerInput.requestMediaDataWhenReady(on: queue) {
+108 |                 while writerInput.isReadyForMoreMediaData {
+    |                       `- warning: capture of 'writerInput' with non-Sendable type 'AVAssetWriterInput' in a '@Sendable' closure [#SendableClosureCaptures]
+109 |                     if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+110 |                         if !writerInput.append(sampleBuffer) {
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetWriterInput.h:39:12: note: class 'AVAssetWriterInput' does not conform to the 'Sendable' protocol
+ 37 | NS_SWIFT_NONSENDABLE
+ 38 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+ 39 | @interface AVAssetWriterInput : NSObject
+    |            `- note: class 'AVAssetWriterInput' does not conform to the 'Sendable' protocol
+ 40 | {
+ 41 | @private
+
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:109:43: warning: capture of 'readerOutput' with non-Sendable type 'AVAssetReaderTrackOutput' in a '@Sendable' closure [#SendableClosureCaptures]
+107 |             writerInput.requestMediaDataWhenReady(on: queue) {
+108 |                 while writerInput.isReadyForMoreMediaData {
+109 |                     if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+    |                                           `- warning: capture of 'readerOutput' with non-Sendable type 'AVAssetReaderTrackOutput' in a '@Sendable' closure [#SendableClosureCaptures]
+110 |                         if !writerInput.append(sampleBuffer) {
+111 |                             reader.cancelReading()
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetReaderOutput.h:201:12: note: class 'AVAssetReaderTrackOutput' does not conform to the 'Sendable' protocol
+199 |  */
+200 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+201 | @interface AVAssetReaderTrackOutput : AVAssetReaderOutput
+    |            `- note: class 'AVAssetReaderTrackOutput' does not conform to the 'Sendable' protocol
+202 | {
+203 | @private
+
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:111:29: warning: capture of 'reader' with non-Sendable type 'AVAssetReader' in a '@Sendable' closure [#SendableClosureCaptures]
+109 |                     if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+110 |                         if !writerInput.append(sampleBuffer) {
+111 |                             reader.cancelReading()
+    |                             `- warning: capture of 'reader' with non-Sendable type 'AVAssetReader' in a '@Sendable' closure [#SendableClosureCaptures]
+112 |                             writer.cancelWriting()
+113 |                             safeResume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "数据写入失败"))
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetReader.h:63:12: note: class 'AVAssetReader' does not conform to the 'Sendable' protocol
+ 61 | NS_SWIFT_NONSENDABLE
+ 62 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+ 63 | @interface AVAssetReader : NSObject
+    |            `- note: class 'AVAssetReader' does not conform to the 'Sendable' protocol
+ 64 | {
+ 65 | @private
+
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:112:29: warning: capture of 'writer' with non-Sendable type 'AVAssetWriter' in a '@Sendable' closure [#SendableClosureCaptures]
+110 |                         if !writerInput.append(sampleBuffer) {
+111 |                             reader.cancelReading()
+112 |                             writer.cancelWriting()
+    |                             `- warning: capture of 'writer' with non-Sendable type 'AVAssetWriter' in a '@Sendable' closure [#SendableClosureCaptures]
+113 |                             safeResume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "数据写入失败"))
+114 |                             return
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetWriter.h:66:12: note: class 'AVAssetWriter' does not conform to the 'Sendable' protocol
+ 64 | NS_SWIFT_NONSENDABLE
+ 65 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+ 66 | @interface AVAssetWriter : NSObject
+    |            `- note: class 'AVAssetWriter' does not conform to the 'Sendable' protocol
+ 67 | {
+ 68 | @private
+
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+[28/44] Compiling VideoAutoTranslateCore AudioExtractor.swift
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:108:23: warning: capture of 'writerInput' with non-Sendable type 'AVAssetWriterInput' in a '@Sendable' closure [#SendableClosureCaptures]
+106 |
+107 |             writerInput.requestMediaDataWhenReady(on: queue) {
+108 |                 while writerInput.isReadyForMoreMediaData {
+    |                       `- warning: capture of 'writerInput' with non-Sendable type 'AVAssetWriterInput' in a '@Sendable' closure [#SendableClosureCaptures]
+109 |                     if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+110 |                         if !writerInput.append(sampleBuffer) {
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetWriterInput.h:39:12: note: class 'AVAssetWriterInput' does not conform to the 'Sendable' protocol
+ 37 | NS_SWIFT_NONSENDABLE
+ 38 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+ 39 | @interface AVAssetWriterInput : NSObject
+    |            `- note: class 'AVAssetWriterInput' does not conform to the 'Sendable' protocol
+ 40 | {
+ 41 | @private
+
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:109:43: warning: capture of 'readerOutput' with non-Sendable type 'AVAssetReaderTrackOutput' in a '@Sendable' closure [#SendableClosureCaptures]
+107 |             writerInput.requestMediaDataWhenReady(on: queue) {
+108 |                 while writerInput.isReadyForMoreMediaData {
+109 |                     if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+    |                                           `- warning: capture of 'readerOutput' with non-Sendable type 'AVAssetReaderTrackOutput' in a '@Sendable' closure [#SendableClosureCaptures]
+110 |                         if !writerInput.append(sampleBuffer) {
+111 |                             reader.cancelReading()
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetReaderOutput.h:201:12: note: class 'AVAssetReaderTrackOutput' does not conform to the 'Sendable' protocol
+199 |  */
+200 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+201 | @interface AVAssetReaderTrackOutput : AVAssetReaderOutput
+    |            `- note: class 'AVAssetReaderTrackOutput' does not conform to the 'Sendable' protocol
+202 | {
+203 | @private
+
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:111:29: warning: capture of 'reader' with non-Sendable type 'AVAssetReader' in a '@Sendable' closure [#SendableClosureCaptures]
+109 |                     if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+110 |                         if !writerInput.append(sampleBuffer) {
+111 |                             reader.cancelReading()
+    |                             `- warning: capture of 'reader' with non-Sendable type 'AVAssetReader' in a '@Sendable' closure [#SendableClosureCaptures]
+112 |                             writer.cancelWriting()
+113 |                             safeResume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "数据写入失败"))
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetReader.h:63:12: note: class 'AVAssetReader' does not conform to the 'Sendable' protocol
+ 61 | NS_SWIFT_NONSENDABLE
+ 62 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+ 63 | @interface AVAssetReader : NSObject
+    |            `- note: class 'AVAssetReader' does not conform to the 'Sendable' protocol
+ 64 | {
+ 65 | @private
+
+/private<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:112:29: warning: capture of 'writer' with non-Sendable type 'AVAssetWriter' in a '@Sendable' closure [#SendableClosureCaptures]
+110 |                         if !writerInput.append(sampleBuffer) {
+111 |                             reader.cancelReading()
+112 |                             writer.cancelWriting()
+    |                             `- warning: capture of 'writer' with non-Sendable type 'AVAssetWriter' in a '@Sendable' closure [#SendableClosureCaptures]
+113 |                             safeResume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "数据写入失败"))
+114 |                             return
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetWriter.h:66:12: note: class 'AVAssetWriter' does not conform to the 'Sendable' protocol
+ 64 | NS_SWIFT_NONSENDABLE
+ 65 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+ 66 | @interface AVAssetWriter : NSObject
+    |            `- note: class 'AVAssetWriter' does not conform to the 'Sendable' protocol
+ 67 | {
+ 68 | @private
+
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+[29/44] Compiling VideoAutoTranslateCore WordToken.swift
+[30/44] Compiling VideoAutoTranslateCore SystemTTSService.swift
+[31/44] Compiling VideoAutoTranslateCore TTSServiceProtocol.swift
+[32/44] Emitting module VideoAutoTranslateCore
+[33/44] Compiling VideoAutoTranslateCore SRTExporter.swift
+/private<repo>/Sources/VideoAutoTranslateCore/Exporter/VideoComposer.swift:243:23: warning: capture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+241 |         await withTaskCancellationHandler {
+242 |             await exportSession.export()
+243 |         } onCancel: { exportSession.cancelExport() }
+    |                       `- warning: capture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+244 |         try Task.checkCancellation()
+245 |
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetExportSession.h:159:12: note: class 'AVAssetExportSession' does not conform to the 'Sendable' protocol
+157 | NS_SWIFT_NONSENDABLE
+158 | API_AVAILABLE(macos(10.7), ios(4.0), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+159 | @interface AVAssetExportSession : NSObject
+    |            `- note: class 'AVAssetExportSession' does not conform to the 'Sendable' protocol
+160 | {
+161 | @private
+
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+[34/44] Compiling VideoAutoTranslateCore VideoComposer.swift
+/private<repo>/Sources/VideoAutoTranslateCore/Exporter/VideoComposer.swift:243:23: warning: capture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+241 |         await withTaskCancellationHandler {
+242 |             await exportSession.export()
+243 |         } onCancel: { exportSession.cancelExport() }
+    |                       `- warning: capture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+244 |         try Task.checkCancellation()
+245 |
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetExportSession.h:159:12: note: class 'AVAssetExportSession' does not conform to the 'Sendable' protocol
+157 | NS_SWIFT_NONSENDABLE
+158 | API_AVAILABLE(macos(10.7), ios(4.0), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+159 | @interface AVAssetExportSession : NSObject
+    |            `- note: class 'AVAssetExportSession' does not conform to the 'Sendable' protocol
+160 | {
+161 | @private
+
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+[35/44] Compiling VideoAutoTranslateCore LLMSegmenter.swift
+/private<repo>/Sources/VideoAutoTranslateCore/Exporter/VideoComposer.swift:243:23: warning: capture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+241 |         await withTaskCancellationHandler {
+242 |             await exportSession.export()
+243 |         } onCancel: { exportSession.cancelExport() }
+    |                       `- warning: capture of 'exportSession' with non-Sendable type 'AVAssetExportSession' in a '@Sendable' closure; this is an error in the Swift 6 language mode [#SendableClosureCaptures]
+244 |         try Task.checkCancellation()
+245 |
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetExportSession.h:159:12: note: class 'AVAssetExportSession' does not conform to the 'Sendable' protocol
+157 | NS_SWIFT_NONSENDABLE
+158 | API_AVAILABLE(macos(10.7), ios(4.0), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+159 | @interface AVAssetExportSession : NSObject
+    |            `- note: class 'AVAssetExportSession' does not conform to the 'Sendable' protocol
+160 | {
+161 | @private
+
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+[36/44] Compiling VideoAutoTranslateCore ASREngineProtocol.swift
+[37/44] Compiling VideoAutoTranslateCore ASRSidecarManager.swift
+[38/44] Compiling VideoAutoTranslateCore LocalASRService.swift
+[39/44] Compiling VideoAutoTranslateCore ModelStorageManager.swift
+[40/58] Compiling VideoAutoTranslateApp ExportJob.swift
+[41/58] Compiling VideoAutoTranslateApp ExportView.swift
+[42/58] Compiling VideoAutoTranslateApp SettingsView.swift
+[43/58] Compiling VideoAutoTranslateApp SplitReviewView.swift
+[44/58] Compiling VideoAutoTranslateApp AppState.swift
+[45/58] Compiling VideoAutoTranslateApp EditProposalView.swift
+[46/58] Compiling VideoAutoTranslateApp SubtitleListView.swift
+[47/58] Compiling VideoAutoTranslateApp HelpView.swift
+[48/58] Compiling VideoAutoTranslateApp MainView.swift
+[49/58] Emitting module VideoAutoTranslateApp
+[50/58] Compiling VideoAutoTranslateApp SubtitleRowView.swift
+[51/58] Compiling VideoAutoTranslateApp VideoAutoTranslateApp.swift
+[52/58] Compiling VideoAutoTranslateApp VideoPlayerView.swift
+[53/58] Compiling VideoAutoTranslateApp TimingInspector.swift
+[54/59] Compiling VideoAutoTranslateApp WindowCloseGuard.swift
+[54/59] Write Objects.LinkFileList
+[55/59] Linking VideoAutoTranslateApp
+[56/59] Applying VideoAutoTranslateApp
+[58/64] Compiling VideoAutoTranslateCoreTests VideoAutoTranslateCoreTests.swift
+[59/64] Compiling VideoAutoTranslateCoreTests ReviewRegressionTests.swift
+[60/64] Compiling VideoAutoTranslateCoreTests AppStateRegressionTests.swift
+[61/64] Emitting module VideoAutoTranslateCoreTests
+[62/64] Compiling VideoAutoTranslateCoreTests UserJourneyE2ETests.swift
+[63/66] Compiling VideoAutoTranslatePackageTests runner.swift
+[64/66] Emitting module VideoAutoTranslatePackageTests
+[64/66] Write Objects.LinkFileList
+[65/66] Linking VideoAutoTranslatePackageTests
+Build complete! (25.04s)
+Test Suite 'All tests' started at 2026-10-21 21:02:45.019.
+Test Suite 'VideoAutoTranslatePackageTests.xctest' started at 2026-10-21 21:02:45.021.
+Test Suite 'AppStateRegressionTests' started at 2026-10-21 21:02:45.021.
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testAutomaticEditsRequireConfirmationAndCanUndo]' started.
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testAutomaticEditsRequireConfirmationAndCanUndo]' passed (0.029 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testExportCancellationPreservesExistingDestination]' started.
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testExportCancellationPreservesExistingDestination]' passed (0.002 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testFirstTextEditCanUndoAndLoadClearsHistory]' started.
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testFirstTextEditCanUndoAndLoadClearsHistory]' passed (0.011 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testLateEditingResultCannotReplaceAnotherVideo]' started.
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testLateEditingResultCannotReplaceAnotherVideo]' passed (0.010 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testRecoveryContainsCommittedTextAndSaveClearsCheckpoint]' started.
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testRecoveryContainsCommittedTextAndSaveClearsCheckpoint]' passed (1.067 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testTimingApplicationIsOneUndoableTransaction]' started.
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testTimingApplicationIsOneUndoableTransaction]' passed (0.012 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testTranslatedSplitWaitsForUserDistribution]' started.
+Test Case '-[VideoAutoTranslateCoreTests.AppStateRegressionTests testTranslatedSplitWaitsForUserDistribution]' passed (0.014 seconds).
+Test Suite 'AppStateRegressionTests' passed at 2026-10-21 21:02:46.167.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 1.146 (1.147) seconds
+Test Suite 'ReviewRegressionTests' started at 2026-10-21 21:02:46.167.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testCrowdedTimelinePreservesValidInputInsteadOfOverlapping]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testCrowdedTimelinePreservesValidInputInsteadOfOverlapping]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testDubbingSignatureExpiresWhenContentOrTimingChanges]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testDubbingSignatureExpiresWhenContentOrTimingChanges]' passed (0.001 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testFirstWordAndUnicodeSplitBoundaries]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testFirstWordAndUnicodeSplitBoundaries]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testIncompleteSubtitleExportRequiresExplicitSkipping]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testIncompleteSubtitleExportRequiresExplicitSkipping]' passed (0.001 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testLateSpeechCannotInstallAnOutdatedCache]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testLateSpeechCannotInstallAnOutdatedCache]' passed (0.073 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testLoadingProjectCannotReuseAnotherServiceCredential]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testLoadingProjectCannotReuseAnotherServiceCredential]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testMixerRejectsMissingSpeechInsteadOfSilentlySkipping]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testMixerRejectsMissingSpeechInsteadOfSilentlySkipping]' passed (0.001 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testOriginalAuditionAnchorsSurviveTimingChangesAndPersistence]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testOriginalAuditionAnchorsSurviveTimingChangesAndPersistence]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testPreferencesEncodingExcludesCredentials]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testPreferencesEncodingExcludesCredentials]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testProjectAudioSurvivesTemporarySourceRemoval]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testProjectAudioSurvivesTemporarySourceRemoval]' passed (0.005 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testSegmentationCannotChangeWordsAndSupportsUnspacedText]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testSegmentationCannotChangeWordsAndSupportsUnspacedText]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testTimelineRejectsDuplicateAndMissingIDs]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testTimelineRejectsDuplicateAndMissingIDs]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testTimingEditsRejectOverlapsAndMediaOverflow]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testTimingEditsRejectOverlapsAndMediaOverflow]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testTranslationSequenceBaseAndCompleteCoverage]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testTranslationSequenceBaseAndCompleteCoverage]' passed (0.001 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testWaveformEnvelopeReadsTheSelectedInterval]' started.
+Test Case '-[VideoAutoTranslateCoreTests.ReviewRegressionTests testWaveformEnvelopeReadsTheSelectedInterval]' passed (0.028 seconds).
+Test Suite 'ReviewRegressionTests' passed at 2026-10-21 21:02:46.281.
+	 Executed 15 tests, with 0 failures (0 unexpected) in 0.112 (0.114) seconds
+Test Suite 'UserJourneyE2ETests' started at 2026-10-21 21:02:46.281.
+Test Case '-[VideoAutoTranslateCoreTests.UserJourneyE2ETests testFullUserJourneyFromImportToExport]' started.
+Test Case '-[VideoAutoTranslateCoreTests.UserJourneyE2ETests testFullUserJourneyFromImportToExport]' passed (9.819 seconds).
+Test Suite 'UserJourneyE2ETests' passed at 2026-10-21 21:02:56.100.
+	 Executed 1 test, with 0 failures (0 unexpected) in 9.819 (9.819) seconds
+Test Suite 'VideoAutoTranslateCoreTests' started at 2026-10-21 21:02:56.100.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testASRVerboseJSONParsing]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testASRVerboseJSONParsing]' passed (0.001 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testCMTimeFormatting]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testCMTimeFormatting]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testLLMConfigurationEffectiveValues]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testLLMConfigurationEffectiveValues]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testModelStorageManagerSymlinkDetection]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testModelStorageManagerSymlinkDetection]' passed (0.012 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testOllamaModelPresetDefinitions]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testOllamaModelPresetDefinitions]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testOllamaProbeAndLiveTranslation]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testOllamaProbeAndLiveTranslation]' passed (3.830 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR01_VideoComposerRejectsSameSourceAndDestination]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR01_VideoComposerRejectsSameSourceAndDestination]' passed (0.004 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR04_ProjectPersistenceSerialization]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR04_ProjectPersistenceSerialization]' passed (0.001 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR05_R06_SubtitleSplittingPreservesTranslationAndEnforcesMinDuration]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR05_R06_SubtitleSplittingPreservesTranslationAndEnforcesMinDuration]' passed (0.001 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR15_SubtitleMergingNestedIntervals]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR15_SubtitleMergingNestedIntervals]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR27_TimeTypesAccuracyAndBounds]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR27_TimeTypesAccuracyAndBounds]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR31_TranslatedOnlyModeDoesNotFallbackToOriginalText]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testR31_TranslatedOnlyModeDoesNotFallbackToOriginalText]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSRTExport]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSRTExport]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleItemMerging]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleItemMerging]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleItemSplitting]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleItemSplitting]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleItemSplittingUserReportedCase]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleItemSplittingUserReportedCase]' passed (0.001 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleTranslatorResilientParsing]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testSubtitleTranslatorResilientParsing]' passed (0.002 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerLocalClusterAntiDrift]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerLocalClusterAntiDrift]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerLongListPreservation]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerLongListPreservation]' passed (0.002 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerNaturalDurationEstimation]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerNaturalDurationEstimation]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerPacingSmoothing]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerPacingSmoothing]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerShortTranslationNoDragging]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testTimelineAlignerShortTranslationNoDragging]' passed (0.000 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testVideoComposerWithSubtitleEmbedding]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testVideoComposerWithSubtitleEmbedding]' passed (12.663 seconds).
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testVideoExportModesDefinitions]' started.
+Test Case '-[VideoAutoTranslateCoreTests.VideoAutoTranslateCoreTests testVideoExportModesDefinitions]' passed (0.000 seconds).
+Test Suite 'VideoAutoTranslateCoreTests' passed at 2026-10-21 21:03:12.624.
+	 Executed 24 tests, with 0 failures (0 unexpected) in 16.520 (16.524) seconds
+Test Suite 'VideoAutoTranslatePackageTests.xctest' passed at 2026-10-21 21:03:12.624.
+	 Executed 47 tests, with 0 failures (0 unexpected) in 27.597 (27.604) seconds
+Test Suite 'All tests' passed at 2026-10-21 21:03:12.624.
+	 Executed 47 tests, with 0 failures (0 unexpected) in 27.597 (27.605) seconds
+====== [User Journey E2E] 开始全链路用户视角测试 ======
+--> 步骤 1: 用户打开待翻译视频...
+  ✓ 视频载入成功，总时长: 78.36 秒
+--> 步骤 2: 用户点击「语音转录」按钮...
+  ✓ 本地 ASR 服务状态: 离线
+  ✓ 语音识别字幕已填充，共 4 行字幕
+--> 步骤 3: 用户交互式微调字幕...
+  3.1 用户在第 2 行 'You' 前面 (字符索引 19) 触发拆分...
+    ✓ 拆分成功！前半句: Bonjour, yes, yes.，后半句: You are for the tour, Très bien.
+  3.2 用户按下 Cmd+Z 撤销刚才的拆分...
+    ✓ 撤销成功，恢复为 4 行
+  3.3 用户按下 Cmd+Shift+Z 重做拆分...
+    ✓ 重做成功，重新切分为 5 行
+  3.4 用户选中第 4 行与第 5 行，触发合并...
+    ✓ 合并成功，合并后末行文本: Welcome mes amis Welcome to Paris City Tours Today I show you the real Paris Follow me
+--> 步骤 4: 用户配置中文并执行「字幕翻译」...
+  [1] 原文: Bonjour -> 译文: 你好
+  [2] 原文: Bonjour, yes, yes. -> 译文: 是的是的
+  [3] 原文: You are for the tour, Très bien. -> 译文: 你们是来参加这次观光游的，太好了
+  [4] 原文: Welcome mes amis Welcome to Paris City Tours Today I show you the real Paris Follow me -> 译文: 欢迎各位朋友参加巴黎城市之旅，今天我要带你们看看真正的巴黎，跟我来吧
+  ✓ 双语字幕翻译就绪
+--> 步骤 5: 用户点击「匹配译文时间轴」（跟译文期望发音时间做匹配，原文译文一一对应不变）...
+  匹配前各行语速（与原声绑定）: ["8.3字/s", "6.5字/s", "17.8字/s", "9.2字/s"]
+  匹配后各行语速（契合译文自然发音）: ["2.7字/s", "7.1字/s", "8.2字/s", "8.4字/s"]
+  ✓ 译文时间轴匹配成功：原文译文对应保持不变，建议保留对应关系，需复核语速并试听。
+--> 步骤 6: 用户测试单句试听与配音合成...
+  ✓ 单句试听配音生成成功 (e2e_audition_46D839C1-3613-42EC-AF90-B029CF39DF23.wav)
+--> 步骤 7: 用户测试导出最终成品...
+  ✓ 双语 SRT 字幕导出校验成功
+====== [User Journey E2E] 测试全部圆满通过！ ======
+Live Qwen translation result: 人工智能正在改变世界。
+◇ Test run started.
+↳ Testing Library Version: 1501
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

@@ -1,0 +1,22 @@
+Window: "", App: VideoReviewPreview.
+0 sheet Secondary Actions: Raise
+	1 container
+		2 text 确认拆分与译文分配 原译文（确认前保持完整） 这是第1句的人工译文，用来检查实际显示与操作。 无字词锚点：以下时间按文字比例估算，确认后请在调时面板试听并修正。 Hello everyone, welcome to our subtitle editing review. 结束：00:00.49 起点：00:00.49
+		3 scroll area Secondary Actions: Scroll Up, Scroll Down
+			4 text entry area (settable)
+			5 scroll bar (disabled, settable, float) 0
+		6 scroll area Secondary Actions: Scroll Up, Scroll Down
+			7 text entry area (settable)
+			8 scroll bar (disabled, settable, float) 0
+		9 text 请将译文分配到两句；如需稍后处理，取消会保留原字幕和完整译文。
+		10 button 取消
+		11 button (disabled) 确认拆分
+12 menu bar
+	13 VideoReviewPreview
+	14 File
+	15 Edit
+	16 View
+	17 Window
+	18 Help
+
+The focused UI element is 4 text entry area (settable)
