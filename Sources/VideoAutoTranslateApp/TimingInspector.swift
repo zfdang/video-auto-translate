@@ -9,6 +9,9 @@ struct TimingInspector: View {
     @State private var end: Double = 0
     @State private var duration: Double = 0
     @State private var peaks: [Float] = []
+    @State private var waveformLower = 0.0
+    @State private var waveformUpper = 0.0
+    private var waveformKey: String { "\(appState.project.videoURL?.path ?? "")|\(item.id)|\(item.startTime.value)|\(item.endTime.value)" }
     @State private var feedback = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -21,14 +24,14 @@ struct TimingInspector: View {
                 Stepper("", value: $end, in: 0...max(duration, 1), step: 0.01).labelsHidden()
             }
             GeometryReader { geometry in
-                let lower = max(0, item.startTime.secondsValue - 1)
-                let upper = min(duration, item.endTime.secondsValue + 1)
+                let lower = min(max(0, item.startTime.secondsValue - 1), max(0, duration - 0.1))
+                let upper = max(lower + 0.1, min(duration, item.endTime.secondsValue + 1))
                 let span = max(0.1, upper - lower)
                 ZStack(alignment: .leading) {
                     Canvas { context, size in
                         var path = Path()
                         for (index, peak) in peaks.enumerated() {
-                            let time = Double(index) / Double(max(1, peaks.count - 1)) * duration
+                            let time = waveformLower + Double(index) / Double(max(1, peaks.count - 1)) * (waveformUpper - waveformLower)
                             guard time >= lower, time <= upper else { continue }
                             let x = (time - lower) / span * size.width
                             path.move(to: CGPoint(x: x, y: size.height * (0.5 - Double(peak) * 0.45)))
@@ -59,13 +62,17 @@ struct TimingInspector: View {
         .onChange(of: item.id) { _, _ in reset() }
         .onChange(of: item.startTime) { _, _ in reset() }
         .onChange(of: item.endTime) { _, _ in reset() }
-        .task(id: appState.project.videoURL) {
+        .task(id: waveformKey) {
             guard let url = appState.project.videoURL else { return }
             do {
                 let seconds = try await AVURLAsset(url: url).load(.duration).seconds
-                let envelope = try await AudioWaveform.load(url: url)
+                let lower = min(max(0, item.startTime.secondsValue - 1), max(0, seconds - 0.1))
+                let upper = max(lower + 0.1, min(seconds, item.endTime.secondsValue + 1))
+                let envelope = try await AudioWaveform.load(url: url, range: lower...upper)
                 guard !Task.isCancelled else { return }
                 duration = seconds
+                waveformLower = lower
+                waveformUpper = upper
                 peaks = envelope
             } catch { if !Task.isCancelled { feedback = "波形不可用；请确认媒体可读取" } }
         }

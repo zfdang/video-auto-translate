@@ -1,5 +1,6 @@
 import XCTest
 import CoreMedia
+import AVFoundation
 @testable import VideoAutoTranslateCore
 
 final class ReviewRegressionTests: XCTestCase {
@@ -142,6 +143,23 @@ final class ReviewRegressionTests: XCTestCase {
         XCTAssertFalse(String(data: data, encoding: .utf8)!.contains("secret-review-sentinel"))
         XCTAssertTrue(TargetLanguagePreset.defaultPresets.contains { $0.name == LLMConfiguration().targetLanguage })
     }
+    func testWaveformEnvelopeReadsTheSelectedInterval() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            let format = AVAudioFormat(standardFormatWithSampleRate: 8000, channels: 1)!
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16000)!
+            buffer.frameLength = 16000
+            for index in 0..<16000 { buffer.floatChannelData![0][index] = index < 8000 ? 0 : 0.5 }
+            try file.write(from: buffer)
+        }
+        let silent = try await AudioWaveform.load(url: url, range: 0...0.8)
+        let speech = try await AudioWaveform.load(url: url, range: 1.2...1.8)
+        XCTAssertEqual(silent.max(), 0)
+        XCTAssertGreaterThan(speech.max() ?? 0, 0.4)
+    }
+
 }
 
 private struct DelayedReviewTTS: TTSServiceProtocol {
