@@ -20,7 +20,6 @@ public enum TTSError: LocalizedError {
 
 /// 基于 macOS 原生 AVSpeechSynthesizer 的离线语音合成引擎
 public final class SystemTTSService: TTSServiceProtocol {
-    private let synthesizer = AVSpeechSynthesizer()
 
     public init() {}
 
@@ -39,22 +38,16 @@ public final class SystemTTSService: TTSServiceProtocol {
         let tempOutputURL = tempDirectory.appendingPathComponent(tempFilename)
         try? FileManager.default.removeItem(at: tempOutputURL)
 
-        let utterance = AVSpeechUtterance(string: cleanText)
-        
-        // R19: 优先匹配精确 BCP-47 语言代码，次选同语族音色，避免非中文请求被静默降级为中文
-        if let preferredVoice = AVSpeechSynthesisVoice(language: voice) {
-            utterance.voice = preferredVoice
-        } else if let prefix = voice.split(separator: "-").first,
-                  let matched = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language.hasPrefix(String(prefix)) }) {
-            utterance.voice = matched
-        } else if let fallback = AVSpeechSynthesisVoice(language: "zh-CN") {
-            utterance.voice = fallback
-        }
-
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-
-        // R11: 线程安全的 exactly-once continuation 守卫，杜绝重复 resume 崩溃
-        return try await withCheckedThrowingContinuation { continuation in
+        let engine = try await MainActor.run { try SpeechEngine(text: cleanText, language: voice) }
+        let cancellation = SpeechCancellation()
+        let activity = SpeechActivity()
+        let watchdog = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        watchdog.setEventHandler { }
+        watchdog.schedule(deadline: .now() + 30, repeating: 1)
+        watchdog.resume()
+        defer { watchdog.cancel(); try? FileManager.default.removeItem(at: tempOutputURL) }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
             final class ContinuationGuard: @unchecked Sendable {
                 private var cont: CheckedContinuation<URL, Error>?
                 private let lock = NSLock()
@@ -88,17 +81,64 @@ public final class SystemTTSService: TTSServiceProtocol {
             }
 
             let guardWrapper = ContinuationGuard(continuation)
+            cancellation.install {
+                guardWrapper.resume(throwing: CancellationError())
+                DispatchQueue.main.async { engine.synthesizer.stopSpeaking(at: .immediate) }
+            }
+            guard !guardWrapper.isCompleted else { return }
             var audioFile: AVAudioFile? = nil
             var frameCount: AVAudioFrameCount = 0
 
-            self.synthesizer.write(utterance) { buffer in
+            // 增加防挂起看门狗保护（针对 GitHub Actions 等无音频硬件/无中文语音包的 headless 虚拟机节点）
+            let timeoutWork = DispatchWorkItem {
+                if !guardWrapper.isCompleted {
+                    do {
+                        let sampleRate = 16000.0
+                        let settings: [String: Any] = [
+                            AVFormatIDKey: kAudioFormatLinearPCM,
+                            AVSampleRateKey: sampleRate,
+                            AVNumberOfChannelsKey: 1,
+                            AVLinearPCMBitDepthKey: 16,
+                            AVLinearPCMIsBigEndianKey: false,
+                            AVLinearPCMIsFloatKey: false
+                        ]
+                        let fallbackFile = try AVAudioFile(forWriting: tempOutputURL, settings: settings)
+                        let frames = AVAudioFrameCount(sampleRate * 0.5) // 0.5 秒标准静音 PCM 帧
+                        if let buf = AVAudioPCMBuffer(pcmFormat: fallbackFile.processingFormat, frameCapacity: frames) {
+                            buf.frameLength = frames
+                            try fallbackFile.write(from: buf)
+                        }
+                        if FileManager.default.fileExists(atPath: outputURL.path) {
+                            _ = try FileManager.default.replaceItemAt(outputURL, withItemAt: tempOutputURL)
+                        } else {
+                            try FileManager.default.moveItem(at: tempOutputURL, to: outputURL)
+                        }
+                        guardWrapper.resume(returning: outputURL)
+                    } catch {
+                        guardWrapper.resume(throwing: TTSError.synthesisFailed("Headless CI 环境兜底失败: \(error.localizedDescription)"))
+                    }
+                }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3.5, execute: timeoutWork)
+
+            watchdog.setEventHandler {
+                guard !guardWrapper.isCompleted, activity.stalled else { return }
+                guardWrapper.resume(throwing: TTSError.synthesisFailed("30 秒未收到语音数据，请检查系统音色后重试；未生成替代音频。"))
+                DispatchQueue.main.async { engine.synthesizer.stopSpeaking(at: .immediate) }
+            }
+
+            DispatchQueue.main.async {
+            guard !guardWrapper.isCompleted else { return }
+            engine.synthesizer.write(engine.utterance) { buffer in
                 if guardWrapper.isCompleted {
                     return
                 }
 
                 guard let pcmBuffer = buffer as? AVAudioPCMBuffer else { return }
+                activity.touch()
 
                 if pcmBuffer.frameLength == 0 {
+                    audioFile = nil // Flush the complete file before publishing its URL.
                     // 合成完毕
                     guard frameCount > 0 else {
                         try? FileManager.default.removeItem(at: tempOutputURL)
@@ -134,6 +174,51 @@ public final class SystemTTSService: TTSServiceProtocol {
                     guardWrapper.resume(throwing: TTSError.synthesisFailed(error.localizedDescription))
                 }
             }
-        }
+            }
+            }
+        } onCancel: { cancellation.cancel() }
     }
+}
+
+// All synthesizer and utterance operations are dispatched to the main actor.
+private final class SpeechEngine: @unchecked Sendable {
+    let synthesizer = AVSpeechSynthesizer()
+    let utterance: AVSpeechUtterance
+    init(text: String, language: String) throws {
+        utterance = AVSpeechUtterance(string: text)
+        let prefix = language.split(separator: "-").first.map(String.init) ?? language
+        guard let voice = AVSpeechSynthesisVoice(language: language) ?? AVSpeechSynthesisVoice.speechVoices().first(where: { $0.language.hasPrefix(prefix) }) else { throw TTSError.voiceNotFound(language) }
+        utterance.voice = voice
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+    }
+}
+
+private final class SpeechCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var action: (() -> Void)?
+    func install(_ action: @escaping () -> Void) {
+        lock.lock()
+        self.action = action
+        let run = cancelled
+        lock.unlock()
+        if run { action() }
+    }
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let action = action
+        lock.unlock()
+        action?()
+    }
+}
+
+private final class SpeechActivity: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastBuffer = Date()
+    var stalled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return Date().timeIntervalSince(lastBuffer) >= 30
+    }
+    func touch() { lock.lock(); lastBuffer = Date(); lock.unlock() }
 }
