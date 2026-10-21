@@ -424,4 +424,56 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertFalse(res7.isEmpty)
         XCTAssertEqual(res7[0].translation, "Bonjour")
     }
+
+    func testModelStorageManagerSymlinkDetection() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("test_hf_cache_\(UUID().uuidString)")
+        let blobsDir = tempDir.appendingPathComponent("blobs")
+        let snapshotDir = tempDir.appendingPathComponent("snapshots/testhash123")
+        try FileManager.default.createDirectory(at: blobsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: snapshotDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Create blob files
+        let configBlob = blobsDir.appendingPathComponent("config_blob")
+        let weightsBlob = blobsDir.appendingPathComponent("weights_blob")
+        try Data("{\"architectures\": [\"Qwen3ForCausalLM\"]}".utf8).write(to: configBlob)
+        // Write 1.5MB of dummy data
+        let dummyWeights = Data(repeating: 0x42, count: 1_500_000)
+        try dummyWeights.write(to: weightsBlob)
+
+        // Create symlinks in snapshotDir
+        let configLink = snapshotDir.appendingPathComponent("config.json")
+        let weightsLink = snapshotDir.appendingPathComponent("model.safetensors")
+        try FileManager.default.createSymbolicLink(at: configLink, withDestinationURL: configBlob)
+        try FileManager.default.createSymbolicLink(at: weightsLink, withDestinationURL: weightsBlob)
+
+        let config = ModelStorageConfig(locationType: .custom, customDirectoryPath: tempDir.deletingLastPathComponent().path)
+        let manager = ModelStorageManager(config: config)
+
+        let preset = ASRModelPreset(
+            id: "test-model",
+            displayName: "Test Model",
+            repoOrFileName: tempDir.lastPathComponent,
+            sizeDescription: "~1.5 MB",
+            approxSizeBytes: 1_500_000,
+            isRepo: true,
+            note: "Test"
+        )
+
+        let state = manager.detectModel(preset)
+        switch state {
+        case .ready(let localPath, let sizeDescription):
+            XCTAssertTrue(localPath.contains(tempDir.lastPathComponent))
+            XCTAssertTrue(sizeDescription.contains("MB"))
+        default:
+            XCTFail("Symlinked HuggingFace cache must be detected as .ready, got \(state)")
+        }
+    }
+
+    func testOllamaModelPresetDefinitions() {
+        let presets = OllamaModelPreset.recommended
+        XCTAssertFalse(presets.isEmpty)
+        XCTAssertTrue(presets.contains(where: { $0.name == "qwen2.5:latest" }))
+        XCTAssertEqual(presets.first?.name, "qwen2.5:latest")
+    }
 }

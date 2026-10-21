@@ -307,21 +307,28 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
     // MARK: - 工具方法
 
     /// R26 / FU09: 严格校验目录是否包含真实有效的模型文件（非空 config.json 与大于 1MB 的实体权重文件）
+    /// 支持 HuggingFace Hub 软链接（symlink）智能解析与大小计算
     private func isDirectoryValidModel(at folderURL: URL) -> Bool {
         let fileManager = FileManager.default
-        guard let enumerator = fileManager.enumerator(at: folderURL, includingPropertiesForKeys: [.fileSizeKey]) else { return false }
+        guard let enumerator = fileManager.enumerator(at: folderURL, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) else { return false }
         var hasConfig = false
         var hasWeights = false
         for case let fileURL as URL in enumerator {
-            let res = try? fileURL.resourceValues(forKeys: [.fileSizeKey])
+            let resolved = fileURL.resolvingSymlinksInPath()
+            let res = try? resolved.resourceValues(forKeys: [.fileSizeKey])
             let size = res?.fileSize ?? 0
 
-            if fileURL.lastPathComponent == "config.json" && size > 10 {
+            let name = fileURL.lastPathComponent.lowercased()
+            let ext = fileURL.pathExtension.lowercased()
+
+            if name == "config.json" && size > 10 {
                 hasConfig = true
             }
-            let ext = fileURL.pathExtension.lowercased()
             if ["safetensors", "bin", "npz"].contains(ext) && size > 1024 * 1024 {
                 hasWeights = true
+            }
+            if hasConfig && hasWeights {
+                return true
             }
         }
         return hasConfig && hasWeights
@@ -329,14 +336,25 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
 
     private func calculateDirectorySize(at url: URL) -> String {
         let fileManager = FileManager.default
-        guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles]) else {
+        guard let enumerator = fileManager.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
             return "~1.8 GB"
         }
+        var countedPaths = Set<String>()
         var total: Int64 = 0
         for case let fileURL as URL in enumerator {
-            if let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
-               let size = resourceValues.fileSize {
-                total += Int64(size)
+            let resolved = fileURL.resolvingSymlinksInPath()
+            let canonical = resolved.path
+            if !countedPaths.contains(canonical) {
+                countedPaths.insert(canonical)
+                if let isRegular = (try? resolved.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile, isRegular {
+                    if let size = (try? resolved.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+                        total += Int64(size)
+                    }
+                }
             }
         }
         let gb = Double(total) / (1024 * 1024 * 1024)

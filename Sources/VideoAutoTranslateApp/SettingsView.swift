@@ -14,14 +14,14 @@ public struct SettingsView: View {
     enum SettingsTab: String, CaseIterable, Identifiable {
         case asrModels = "模型与存储"
         case asrService = "ASR 服务"
-        case translation = "翻译引擎"
+        case translation = "大语言模型 (LLM)"
 
         var id: String { rawValue }
         var icon: String {
             switch self {
             case .asrModels: return "externaldrive.fill.badge.icloud"
             case .asrService: return "waveform"
-            case .translation: return "character.bubble"
+            case .translation: return "brain"
             }
         }
     }
@@ -42,7 +42,7 @@ public struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 320)
+                .frame(width: 380)
 
                 Spacer()
 
@@ -318,12 +318,19 @@ public struct SettingsView: View {
         .formStyle(.grouped)
     }
 
-    // MARK: - 翻译引擎 Tab
+    // MARK: - 大语言模型 (LLM) Tab
 
     private var translationSettingsView: some View {
         Form {
-            Section(header: Text("大语言模型翻译引擎").font(.headline)) {
-                Picker("模式选择", selection: $appState.project.llmConfig.providerType) {
+            Section(header: Text("大语言模型 (LLM) 底层支持").font(.headline)) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("用途说明：大语言模型（LLM）不仅用于第 3 步「字幕翻译」，同时在第 2 步语音转录完成后负责「智能语义断句规整」，将零散的音频时间戳智能重组为断句通顺、长短适中的自然字幕。")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 2)
+
+                Picker("服务模式", selection: $appState.project.llmConfig.providerType) {
                     ForEach(LLMProviderType.allCases) { type in
                         Text(type.rawValue).tag(type)
                     }
@@ -332,7 +339,7 @@ public struct SettingsView: View {
                 .padding(.vertical, 4)
 
                 if appState.project.llmConfig.providerType == .localOllama {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             TextField("Ollama 服务地址", text: $appState.project.llmConfig.ollamaBaseURL)
                             Button("刷新探测") {
@@ -343,25 +350,52 @@ public struct SettingsView: View {
                         }
 
                         if !appState.availableOllamaModels.isEmpty {
-                            Picker("选择本地已安装模型", selection: $appState.project.llmConfig.ollamaModel) {
+                            Picker("当前生效模型", selection: $appState.project.llmConfig.ollamaModel) {
                                 ForEach(appState.availableOllamaModels, id: \.self) { model in
                                     Text(model).tag(model)
                                 }
                             }
+
+                            Divider()
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("推荐模型与一键安装")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+
+                                ForEach(OllamaModelPreset.recommended) { preset in
+                                    ollamaPresetRow(preset)
+                                }
+
+                                Text("💡 提示：您也可以在 macOS 终端随时执行 `ollama run qwen2.5:latest` 命令行拉取模型。")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .padding(.top, 4)
+                            }
                         } else {
-                            HStack {
-                                Image(systemName: "exclamationmark.triangle")
-                                    .foregroundColor(.orange)
-                                Text("未检测到运行中的 Ollama 服务，请确认终端已执行 `ollama serve`")
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundColor(.orange)
+                                    Text("未检测到运行中的 Ollama 服务 (http://localhost:11434)")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                }
+
+                                Text("Ollama 是本地开源大模型运行时。如需完全离线运行：\n1. 访问 ollama.com 下载安装 Ollama 应用\n2. 打开终端执行 `ollama serve` 启动服务\n3. 执行 `ollama run qwen2.5:latest` 安装推荐模型\n4. 返回此处点击「刷新探测」即可自动绑定\n\n您也可以直接切换为上方「在线 API (兼容 OpenAI)」模式，免去本地显存负担。")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
+                                    .lineSpacing(3)
                             }
+                            .padding(8)
+                            .background(Color.orange.opacity(0.08))
+                            .cornerRadius(6)
                         }
                     }
                     .padding(.vertical, 4)
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        TextField("API Base URL", text: $appState.project.llmConfig.onlineBaseURL)
+                        TextField("API Base URL (如 https://api.deepseek.com/v1)", text: $appState.project.llmConfig.onlineBaseURL)
                         SecureField("API Key", text: $appState.project.llmConfig.onlineAPIKey)
                         TextField("模型 ID (如 deepseek-chat)", text: $appState.project.llmConfig.onlineModel)
                     }
@@ -369,7 +403,7 @@ public struct SettingsView: View {
                 }
             }
 
-            Section(header: Text("翻译目标语言与参数").font(.headline)) {
+            Section(header: Text("字幕翻译目标语言与推理参数").font(.headline)) {
                 VStack(alignment: .leading, spacing: 8) {
                     Picker("目标语言", selection: $selectedLanguageOption) {
                         ForEach(TargetLanguagePreset.defaultPresets) { preset in
@@ -402,5 +436,73 @@ public struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func ollamaPresetRow(_ preset: OllamaModelPreset) -> some View {
+        let isInstalled = appState.availableOllamaModels.contains(where: {
+            $0 == preset.name || $0.hasPrefix(preset.name.split(separator: ":").first.map(String.init) ?? preset.name)
+        })
+        let isCurrent = appState.project.llmConfig.ollamaModel == preset.name
+        let pullState = appState.ollamaPullStates[preset.name]
+
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(preset.displayName)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Text(preset.sizeDescription)
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.15))
+                            .cornerRadius(4)
+                    }
+                    Text(preset.note)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                if let pullState = pullState, case .downloading(let progress, let speed) = pullState {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        ProgressView(value: progress)
+                            .frame(width: 90)
+                        Text("\(Int(progress * 100))% · \(speed)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                } else if isInstalled {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("已就绪")
+                            .font(.caption)
+                            .foregroundColor(.green)
+
+                        if isCurrent {
+                            Text("（当前生效）")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        } else {
+                            Button("设为当前") {
+                                appState.project.llmConfig.ollamaModel = preset.name
+                            }
+                            .font(.caption)
+                        }
+                    }
+                } else {
+                    Button("一键下载到 Ollama") {
+                        appState.pullOllamaModel(name: preset.name)
+                    }
+                    .font(.caption)
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .padding(.vertical, 2)
     }
 }

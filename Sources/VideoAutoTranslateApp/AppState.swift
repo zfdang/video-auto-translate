@@ -30,6 +30,7 @@ public final class AppState: ObservableObject {
 
     // 设置与探测
     @Published public var availableOllamaModels: [String] = []
+    @Published public var ollamaPullStates: [String: ModelState] = [:]
     @Published public var isASRServerOnline: Bool = false
     @Published public var showSettings: Bool = false
     @Published public var showHelp: Bool = false
@@ -161,6 +162,33 @@ public final class AppState: ObservableObject {
             if let preferred = self.ollamaProbe.findPreferredQwenModel(in: models) {
                 self.project.llmConfig.ollamaModel = preferred
                 self.project.llmConfig.providerType = .localOllama
+            }
+        }
+    }
+
+    /// 一键从 Ollama 官方源拉取推荐大语言模型并实时报告下载进度
+    public func pullOllamaModel(name: String) {
+        Task {
+            await MainActor.run {
+                self.ollamaPullStates[name] = .downloading(progress: 0.05, speed: "连接 Ollama 服务...")
+            }
+            do {
+                try await ollamaProbe.pullModel(name: name, baseURL: project.llmConfig.ollamaBaseURL) { [weak self] progress, speed in
+                    Task { @MainActor in
+                        self?.ollamaPullStates[name] = .downloading(progress: progress, speed: speed)
+                    }
+                }
+                await probeLocalOllama()
+                await MainActor.run {
+                    self.ollamaPullStates[name] = .ready(localPath: "Ollama: \(name)", sizeDescription: "")
+                    self.project.llmConfig.ollamaModel = name
+                    self.statusMessage = "模型 \(name) 已成功下载至 Ollama 并设为当前模型"
+                }
+            } catch {
+                await MainActor.run {
+                    self.ollamaPullStates[name] = .failed(error.localizedDescription)
+                    self.errorMessage = "Ollama 拉取模型失败: \(error.localizedDescription)"
+                }
             }
         }
     }
