@@ -63,5 +63,8 @@ EOF
 
 echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
 
-echo "==> 3. 打包完成！应用位于: $APP_DIR"
+echo "==> 3. 对应用进行 Ad-hoc 签名..."
+codesign --force --deep --sign - "$APP_DIR"
+
+echo "==> 4. 打包完成！应用位于: $APP_DIR"
 echo "您可以直接运行: open \"$APP_DIR\""

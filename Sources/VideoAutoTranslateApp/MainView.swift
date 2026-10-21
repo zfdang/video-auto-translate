@@ -40,6 +40,9 @@ public struct MainView: View {
         .sheet(isPresented: $appState.showSettings) {
             SettingsView(appState: appState)
         }
+        .sheet(isPresented: $appState.showHelp) {
+            HelpView(appState: appState)
+        }
         .sheet(isPresented: $appState.showExportSheet) {
             ExportView(appState: appState)
         }
@@ -147,7 +150,7 @@ public struct MainView: View {
                     .buttonStyle(.borderedProminent)
                     .fixedSize()
                     .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
-                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳并切分字幕")
+                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳，并自动调用大模型进行智能语义断句规整")
                 } else {
                     Button(action: {
                         Task {
@@ -160,7 +163,7 @@ public struct MainView: View {
                     .buttonStyle(.bordered)
                     .fixedSize()
                     .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
-                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳并切分字幕")
+                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳，并自动调用大模型进行智能语义断句规整")
                 }
             }
             .padding(.horizontal, 6)
@@ -306,6 +309,17 @@ public struct MainView: View {
             .layoutPriority(1)
 
             Spacer()
+
+            // 帮助按钮
+            Button(action: {
+                appState.showHelp = true
+            }) {
+                Image(systemName: "questionmark.circle")
+                    .font(.body)
+            }
+            .buttonStyle(.bordered)
+            .help("使用帮助与快捷键指南 (⌘?)")
+            .keyboardShortcut("?", modifiers: .command)
 
             // 设置按钮
             Button(action: {

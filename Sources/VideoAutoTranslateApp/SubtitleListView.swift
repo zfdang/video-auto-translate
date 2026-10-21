@@ -137,9 +137,9 @@ public struct SubtitleListView: View {
                                         appState.seek(to: item.startTime)
                                         appState.project.selectedSubtitleID = item.id
                                     },
-                                    onAudition: {
+                                    onAudition: { target in
                                         Task {
-                                            await appState.auditionSubtitle(item)
+                                            await appState.auditionSubtitle(item, target: target)
                                         }
                                     },
                                     onSplit: { cursorIndex in
