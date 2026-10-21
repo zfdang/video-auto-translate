@@ -60,13 +60,16 @@ public struct ProjectState: Equatable {
         progress = 0.0
     }
 
-    /// R04: 导出工程持久化数据
+    /// R04 / FU04: 导出工程持久化数据（自动剔除敏感 API Key，杜绝明文凭据泄露）
     public func encodeDocument() throws -> Data {
+        var safeLLMConfig = llmConfig
+        safeLLMConfig.onlineAPIKey = ""
+
         let doc = ProjectDocument(
             version: 1,
             videoPath: videoURL?.path,
             subtitles: subtitles,
-            llmConfig: llmConfig,
+            llmConfig: safeLLMConfig,
             asrConfig: asrConfig
         )
         let encoder = JSONEncoder()
@@ -80,13 +83,17 @@ public struct ProjectState: Equatable {
         return try decoder.decode(ProjectDocument.self, from: data)
     }
 
-    /// R04: 从持久化数据恢复工程
+    /// R04 / FU04: 从持久化数据恢复工程（保留本地既有在线凭据）
     public mutating func restore(from document: ProjectDocument) {
         if let path = document.videoPath {
             self.videoURL = URL(fileURLWithPath: path)
         }
         self.subtitles = document.subtitles
+        let existingKey = self.llmConfig.onlineAPIKey
         self.llmConfig = document.llmConfig
+        if !existingKey.isEmpty && self.llmConfig.onlineAPIKey.isEmpty {
+            self.llmConfig.onlineAPIKey = existingKey
+        }
         self.asrConfig = document.asrConfig
         self.isDirty = false
     }

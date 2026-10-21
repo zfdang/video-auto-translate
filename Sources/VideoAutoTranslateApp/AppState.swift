@@ -6,7 +6,11 @@ import VideoAutoTranslateCore
 
 @MainActor
 public final class AppState: ObservableObject {
-    @Published public var project: ProjectState = ProjectState()
+    @Published public var project: ProjectState = ProjectState() {
+        didSet {
+            bindProjectSubtitles()
+        }
+    }
     public let player: AVPlayer = AVPlayer()
     @Published public var isPlaying: Bool = false
     @Published public var currentTime: CMTime = .zero
@@ -34,16 +38,31 @@ public final class AppState: ObservableObject {
     // R20: 持有试听播放器实例，防止局部变量析构导致播放被打断
     public var auditionPlayer: AVPlayer?
 
-    // R03: 任务代际与句柄持有，防止更换视频后旧任务写入新项目
+    // R03 & FU05: 任务代际与句柄持有，防止更换视频或取消后旧任务写入新项目
     private var projectGeneration: Int = 0
     private var transcriptionTask: Task<Void, Never>?
     private var translationTask: Task<Void, Never>?
     private var dubbingTask: Task<Void, Never>?
+    private var activeTranscriptionTask: Task<Void, Never>?
+    private var activeTranslationTask: Task<Void, Error>?
+    private var activeDubbingTask: Task<Void, Error>?
 
     private var timeObserverToken: Any?
 
+    private func bindProjectSubtitles() {
+        for item in project.subtitles {
+            item.onModified = { [weak self] in
+                guard let self = self else { return }
+                if !self.project.isDirty {
+                    self.project.isDirty = true
+                }
+            }
+        }
+    }
+
     public init() {
         setupTimeObserver()
+        bindProjectSubtitles()
         Task {
             await sidecarManager.probeExistingStatus()
             await probeLocalOllama()
@@ -132,14 +151,23 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 取消所有正在执行的后台任务 (R03)
+    /// 取消所有正在执行的后台任务 (R03 & FU05)
     public func cancelAllTasks() {
+        projectGeneration += 1
+        activeTranscriptionTask?.cancel()
+        activeTranscriptionTask = nil
+        activeTranslationTask?.cancel()
+        activeTranslationTask = nil
+        activeDubbingTask?.cancel()
+        activeDubbingTask = nil
         transcriptionTask?.cancel()
         transcriptionTask = nil
         translationTask?.cancel()
         translationTask = nil
         dubbingTask?.cancel()
         dubbingTask = nil
+        project.isProcessing = false
+        statusMessage = "任务已取消"
     }
 
     /// 打开本地视频文件 (R03: 递增代际，终止旧任务)
@@ -160,11 +188,12 @@ public final class AppState: ObservableObject {
         player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
-    /// 执行本地音频提取与语音转录 (R03: 严格代际校验与取消保护)
+    /// 执行本地音频提取与语音转录 (R03 & FU05: 严格代际校验与取消保护)
     public func runTranscription() async {
         guard let videoURL = project.videoURL else { return }
 
         transcriptionTask?.cancel()
+        activeTranscriptionTask?.cancel()
         let currentGen = projectGeneration
 
         project.isProcessing = true
@@ -172,33 +201,48 @@ public final class AppState: ObservableObject {
         project.progress = 0.1
         statusMessage = "正在提取音频..."
 
-        do {
+        let worker = Task { () -> [SubtitleItem] in
             let tempDir = FileManager.default.temporaryDirectory
             let wavURL = tempDir.appendingPathComponent("extracted_\(UUID().uuidString).wav")
             try await audioExtractor.extract16kMonoWav(from: videoURL, to: wavURL)
-            guard currentGen == projectGeneration, !Task.isCancelled else { return }
-            project.audioURL = wavURL
-
-            project.currentStepName = "正在按需准备本地 ASR 推理引擎..."
-            project.progress = 0.25
-            statusMessage = "正在按需准备本地 ASR 推理引擎..."
+            guard currentGen == self.projectGeneration, !Task.isCancelled else { throw CancellationError() }
+            await MainActor.run {
+                if currentGen == self.projectGeneration && !Task.isCancelled {
+                    self.project.audioURL = wavURL
+                    self.project.currentStepName = "正在按需准备本地 ASR 推理引擎..."
+                    self.project.progress = 0.25
+                    self.statusMessage = "正在按需准备本地 ASR 推理引擎..."
+                }
+            }
             _ = await sidecarManager.ensureRunning()
             await probeLocalASR()
 
-            guard currentGen == projectGeneration, !Task.isCancelled else { return }
+            guard currentGen == self.projectGeneration, !Task.isCancelled else { throw CancellationError() }
 
-            project.currentStepName = "正在调用 Qwen3-ASR 执行转录与词级对齐..."
-            project.progress = 0.4
-            statusMessage = "正在识别语音并生成逐词时间戳..."
+            await MainActor.run {
+                if currentGen == self.projectGeneration && !Task.isCancelled {
+                    self.project.currentStepName = "正在调用 Qwen3-ASR 执行转录与词级对齐..."
+                    self.project.progress = 0.4
+                    self.statusMessage = "正在识别语音并生成逐词时间戳..."
+                }
+            }
 
             let asrService = LocalASRService(config: project.asrConfig)
-            let items = try await asrService.transcribe(audioURL: wavURL) { [weak self] progress in
+            return try await asrService.transcribe(audioURL: wavURL) { [weak self] progress in
                 Task { @MainActor [weak self] in
                     guard let self = self, self.projectGeneration == currentGen, !Task.isCancelled else { return }
                     self.project.progress = 0.4 + progress * 0.5
                 }
             }
+        }
+        self.activeTranscriptionTask = Task { _ = try? await worker.value }
 
+        do {
+            let items = try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.subtitles = items
             project.isProcessing = false
@@ -206,25 +250,26 @@ public final class AppState: ObservableObject {
             project.isDirty = true
             statusMessage = "识别完成，共生成 \(items.count) 行字幕"
         } catch {
-            guard currentGen == projectGeneration else { return }
+            guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
             statusMessage = "识别失败: \(error.localizedDescription)"
             errorMessage = "转录识别失败: \(error.localizedDescription)"
         }
     }
 
-    /// 执行字幕翻译 (R03 & R07: 任务防交叉与脏状态标记)
+    /// 执行字幕翻译 (R03, R07 & FU05: 任务防交叉、取消传递与脏状态标记)
     public func runTranslation() async {
         guard !project.subtitles.isEmpty else { return }
 
         translationTask?.cancel()
+        activeTranslationTask?.cancel()
         let currentGen = projectGeneration
 
         project.isProcessing = true
         project.currentStepName = "正在使用 \(project.llmConfig.effectiveModel) 翻译字幕..."
         project.progress = 0.0
 
-        do {
+        let worker = Task { () -> Void in
             try await translator.translate(
                 items: project.subtitles,
                 config: project.llmConfig
@@ -234,6 +279,15 @@ public final class AppState: ObservableObject {
                     self.project.progress = progress
                 }
             }
+        }
+        self.activeTranslationTask = worker
+
+        do {
+            try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.subtitles = Array(project.subtitles)
             project.isProcessing = false
@@ -241,18 +295,19 @@ public final class AppState: ObservableObject {
             project.isDirty = true
             statusMessage = "翻译完成，已为 \(project.subtitles.count) 行字幕生成译文"
         } catch {
-            guard currentGen == projectGeneration else { return }
+            guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
             statusMessage = "翻译失败: \(error.localizedDescription)"
             errorMessage = "翻译失败: \(error.localizedDescription)"
         }
     }
 
-    /// 执行多语言配音与混音 (R19: 传入所选目标语言音色代码)
+    /// 执行多语言配音与混音 (R19 & FU05: 传入所选目标语言音色代码，await 前后严格代际校验)
     public func runFullDubbing() async {
         guard !project.subtitles.isEmpty else { return }
 
         dubbingTask?.cancel()
+        activeDubbingTask?.cancel()
         let currentGen = projectGeneration
 
         project.isProcessing = true
@@ -261,17 +316,26 @@ public final class AppState: ObservableObject {
 
         let voice = project.llmConfig.targetLanguageVoiceCode
 
-        do {
+        let worker = Task { () -> Void in
             let total = Double(project.subtitles.count)
             for (idx, item) in project.subtitles.enumerated() {
-                guard currentGen == projectGeneration, !Task.isCancelled else { return }
+                guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
                 try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
-                project.progress = Double(idx + 1) / total
+                guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
+                await MainActor.run {
+                    if currentGen == self.projectGeneration && !Task.isCancelled {
+                        self.project.progress = Double(idx + 1) / total
+                    }
+                }
             }
 
-            guard currentGen == projectGeneration, !Task.isCancelled else { return }
+            guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
 
-            project.currentStepName = "正在执行音频无损伸缩与闪避混音..."
+            await MainActor.run {
+                if currentGen == self.projectGeneration && !Task.isCancelled {
+                    self.project.currentStepName = "正在执行音频无损伸缩与闪避混音..."
+                }
+            }
             let tempDir = FileManager.default.temporaryDirectory
             let mixedAudioURL = tempDir.appendingPathComponent("mixed_dubbed_\(UUID().uuidString).m4a")
 
@@ -280,13 +344,21 @@ public final class AppState: ObservableObject {
                 subtitles: project.subtitles,
                 to: mixedAudioURL
             )
+        }
+        self.activeDubbingTask = worker
 
+        do {
+            try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
             project.isDirty = true
             statusMessage = "配音合成完成！可导出新视频"
         } catch {
-            guard currentGen == projectGeneration else { return }
+            guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
             statusMessage = "配音生成失败: \(error.localizedDescription)"
         }

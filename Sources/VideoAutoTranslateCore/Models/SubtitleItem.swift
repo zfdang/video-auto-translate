@@ -5,11 +5,24 @@ import Combine
 /// 单行字幕项
 public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equatable, Codable {
     public let id: UUID
-    @Published public var startTime: CMTime
-    @Published public var endTime: CMTime
-    @Published public var originalText: String
-    @Published public var translatedText: String
-    @Published public var words: [WordToken]
+    // R04 & R29: 编辑修改通知回调，确保人工改写属性即时标记工程为脏
+    public var onModified: (() -> Void)?
+
+    @Published public var startTime: CMTime {
+        didSet { if startTime != oldValue { onModified?() } }
+    }
+    @Published public var endTime: CMTime {
+        didSet { if endTime != oldValue { onModified?() } }
+    }
+    @Published public var originalText: String {
+        didSet { if originalText != oldValue { onModified?() } }
+    }
+    @Published public var translatedText: String {
+        didSet { if translatedText != oldValue { onModified?() } }
+    }
+    @Published public var words: [WordToken] {
+        didSet { onModified?() }
+    }
 
     // 配音缓存状态
     @Published public var dubbedAudioURL: URL?

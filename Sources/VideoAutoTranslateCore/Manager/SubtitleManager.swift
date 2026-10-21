@@ -1,5 +1,6 @@
 import Foundation
 import CoreMedia
+import AVFoundation
 
 /// 字幕管理与交互剪辑管理器（核心业务逻辑）
 public final class SubtitleManager {
@@ -16,48 +17,71 @@ public final class SubtitleManager {
         let text = item.originalText
         guard charIndex > 0 && charIndex < text.count else { return nil }
 
-        let minDuration = CMTime(value: 80, timescale: 1000) // 最少 80ms，避免产生 0 时长或超短无意义切片 (R06)
-        guard item.duration >= CMTime(value: 160, timescale: 1000) else { return nil }
+        // PRD 规范：单条字幕最低持续时长约束为 100ms，拆分需至少 200ms 总时长 (FU03)
+        let minDuration = CMTime(value: 100, timescale: 1000)
+        guard item.duration >= CMTime(value: 200, timescale: 1000) else { return nil }
 
-        let index = text.index(text.startIndex, offsetBy: charIndex)
-        let firstPartText = String(text[..<index]).trimmingCharacters(in: .whitespaces)
-        let secondPartText = String(text[index...]).trimmingCharacters(in: .whitespaces)
-
-        guard !firstPartText.isEmpty, !secondPartText.isEmpty else { return nil }
-
+        var firstPartText = ""
+        var secondPartText = ""
         var splitTime = item.startTime
         var firstWords: [WordToken] = []
         var secondWords: [WordToken] = []
 
-        // 若拥有词级时间序列，根据在文本中的实际出现范围精准映射词与时间 (R06)
+        // 若拥有词级时间序列，根据在文本中的实际出现范围建立拆分提案，吸附到词边界 (FU03)
         if !item.words.isEmpty {
+            var wordRanges: [(word: WordToken, range: Range<String.Index>, startOffset: Int, endOffset: Int)] = []
             var searchRange = text.startIndex..<text.endIndex
             for word in item.words {
                 if let found = text.range(of: word.text, options: [], range: searchRange) {
-                    let wordEndOffset = text.distance(from: text.startIndex, to: found.upperBound)
-                    let wordStartOffset = text.distance(from: text.startIndex, to: found.lowerBound)
+                    let start = text.distance(from: text.startIndex, to: found.lowerBound)
+                    let end = text.distance(from: text.startIndex, to: found.upperBound)
+                    wordRanges.append((word, found, start, end))
                     searchRange = found.upperBound..<text.endIndex
-
-                    if charIndex >= wordEndOffset {
-                        firstWords.append(word)
-                        splitTime = word.endCMTime
-                    } else if charIndex <= wordStartOffset {
-                        secondWords.append(word)
-                    } else {
-                        // 光标落在词中间，该词归属前半部分
-                        firstWords.append(word)
-                        splitTime = word.endCMTime
-                    }
-                } else {
-                    secondWords.append(word)
                 }
             }
+
+            if wordRanges.count >= 2 {
+                // 寻找最接近用户光标的词间边界（必须确保左右各至少拥有一个词）
+                var bestSplitIdx = 0
+                var minDistance = Int.max
+
+                for i in 0..<(wordRanges.count - 1) {
+                    let boundary = wordRanges[i].endOffset
+                    let dist = abs(charIndex - boundary)
+                    if dist < minDistance {
+                        minDistance = dist
+                        bestSplitIdx = i
+                    }
+                }
+
+                firstWords = wordRanges[0...bestSplitIdx].map { $0.word }
+                secondWords = wordRanges[(bestSplitIdx + 1)...].map { $0.word }
+
+                // 文字切分点严格吸附至词边界，杜绝词内斩断导致文本与 Token 脱节 (FU03)
+                let splitStrIndex = wordRanges[bestSplitIdx].range.upperBound
+                firstPartText = String(text[..<splitStrIndex]).trimmingCharacters(in: .whitespaces)
+                secondPartText = String(text[splitStrIndex...]).trimmingCharacters(in: .whitespaces)
+
+                // 时间切分点：取左句末词结束时间点
+                splitTime = firstWords.last!.endCMTime
+            } else {
+                // 词序列少于 2 个时，回退至字符截断
+                let index = text.index(text.startIndex, offsetBy: charIndex)
+                firstPartText = String(text[..<index]).trimmingCharacters(in: .whitespaces)
+                secondPartText = String(text[index...]).trimmingCharacters(in: .whitespaces)
+                let ratio = Double(charIndex) / Double(text.count)
+                splitTime = CMTimeAdd(item.startTime, CMTime.from(seconds: item.durationSeconds * ratio))
+            }
         } else {
-            // 保底机制：按字符比例估算切分点
+            // 保底机制：无词级序列时按字符比例切分
+            let index = text.index(text.startIndex, offsetBy: charIndex)
+            firstPartText = String(text[..<index]).trimmingCharacters(in: .whitespaces)
+            secondPartText = String(text[index...]).trimmingCharacters(in: .whitespaces)
             let ratio = Double(charIndex) / Double(text.count)
-            let durationSeconds = item.durationSeconds
-            splitTime = CMTimeAdd(item.startTime, CMTime.from(seconds: durationSeconds * ratio))
+            splitTime = CMTimeAdd(item.startTime, CMTime.from(seconds: item.durationSeconds * ratio))
         }
+
+        guard !firstPartText.isEmpty, !secondPartText.isEmpty else { return nil }
 
         // 确保切分点严格位于 [startTime + minDuration, endTime - minDuration] 内部，防止 0 时长 (R06)
         let earliestValid = CMTimeAdd(item.startTime, minDuration)
@@ -175,4 +199,3 @@ public final class SubtitleManager {
         }
     }
 }
-import AVFoundation

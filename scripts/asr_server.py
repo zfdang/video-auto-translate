@@ -13,6 +13,7 @@ import os
 import sys
 import time
 import shutil
+import asyncio
 import tempfile
 import argparse
 import threading
@@ -78,29 +79,39 @@ PRESET_MODELS = [
     }
 ]
 
+def has_non_empty_weights(dir_path: Path) -> bool:
+    """FU09: 校验目录中是否存在有效的大于 1MB 的实体权重文件，防止 0 字节虚假文件通过"""
+    for pattern in ("*.safetensors", "*.bin", "*.npz"):
+        for f in dir_path.glob(pattern):
+            try:
+                if f.is_file() and f.stat().st_size > 1024 * 1024:
+                    return True
+            except OSError:
+                continue
+    return False
+
+
 def has_valid_model_files(p: Path) -> bool:
-    """R26: 严格检验模型完整性，仅当存在配置文件和权重文件时才视为就绪"""
+    """R26 / FU09: 严格检验模型完整性，仅当存在配置文件和非空权重文件时才视为就绪"""
     if not p.exists() or not p.is_dir():
         return False
     # 检查当前目录
-    has_cfg = (p / "config.json").exists()
-    has_w = any(p.glob("*.safetensors")) or any(p.glob("*.bin")) or any(p.glob("*.npz"))
-    if has_cfg and has_w:
+    cfg = p / "config.json"
+    if cfg.exists() and cfg.stat().st_size > 10 and has_non_empty_weights(p):
         return True
     # 检查 snapshots 目录
     snapshots_dir = p / "snapshots"
     if snapshots_dir.exists() and snapshots_dir.is_dir():
         for snap in snapshots_dir.iterdir():
             if snap.is_dir():
-                s_cfg = (snap / "config.json").exists()
-                s_w = any(snap.glob("*.safetensors")) or any(snap.glob("*.bin")) or any(snap.glob("*.npz"))
-                if s_cfg and s_w:
+                s_cfg = snap / "config.json"
+                if s_cfg.exists() and s_cfg.stat().st_size > 10 and has_non_empty_weights(snap):
                     return True
     return False
 
 
 def find_model_path(repo_or_filename: str, is_repo: bool = True) -> Optional[Path]:
-    """多目录扫描模型是否存在并自动定位快照或实体目录 (R26: 增加完整性校验)"""
+    """多目录扫描模型是否存在并自动定位快照或实体目录 (R26 / FU09: 增加非空权重完整性校验)"""
     candidate_dirs = [
         CURRENT_STORAGE_DIR,
         DEFAULT_SHARED_DIR,
@@ -112,9 +123,10 @@ def find_model_path(repo_or_filename: str, is_repo: bool = True) -> Optional[Pat
         if snapshots_dir.exists() and any(snapshots_dir.iterdir()):
             snapshots = sorted(snapshots_dir.glob("*"), key=os.path.getmtime)
             for snap in reversed(snapshots):
-                if snap.is_dir() and (snap / "config.json").exists() and (any(snap.glob("*.safetensors")) or any(snap.glob("*.bin")) or any(snap.glob("*.npz"))):
+                if snap.is_dir() and (snap / "config.json").exists() and (snap / "config.json").stat().st_size > 10 and has_non_empty_weights(snap):
                     return snap
-        if (p / "config.json").exists() and (any(p.glob("*.safetensors")) or any(p.glob("*.bin")) or any(p.glob("*.npz"))):
+        cfg = p / "config.json"
+        if cfg.exists() and cfg.stat().st_size > 10 and has_non_empty_weights(p):
             return p
         return None
 

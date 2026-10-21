@@ -31,15 +31,14 @@ public final class AudioMixer {
         to outputURL: URL,
         duckingVolume: Float = 0.35
     ) async throws {
-        // 安全检查：严禁输出路径与背景音频或配音片段相同 (R01)
-        let stdOutput = outputURL.standardizedFileURL
+        // 安全检查：严禁输出路径与背景音频或配音片段相同（防符号链接别名覆盖，R01 / FU02）
         if let bgURL = backgroundAudioURL {
-            guard stdOutput != bgURL.standardizedFileURL else {
+            guard !outputURL.pointsToSameFile(as: bgURL) else {
                 throw AudioMixerError.exportFailed("输出文件路径不能与背景音频输入路径相同")
             }
         }
         for item in subtitles {
-            if let snip = item.dubbedAudioURL, stdOutput == snip.standardizedFileURL {
+            if let snip = item.dubbedAudioURL, outputURL.pointsToSameFile(as: snip) {
                 throw AudioMixerError.exportFailed("输出文件路径不能与配音切片路径相同")
             }
         }

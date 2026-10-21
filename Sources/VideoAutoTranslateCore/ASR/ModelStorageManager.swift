@@ -306,26 +306,25 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
 
     // MARK: - 工具方法
 
-    /// R26: 校验目录是否包含真实有效的模型文件（配置与权重文件，或总大小大于 50MB）
+    /// R26 / FU09: 严格校验目录是否包含真实有效的模型文件（非空 config.json 与大于 1MB 的实体权重文件）
     private func isDirectoryValidModel(at folderURL: URL) -> Bool {
         let fileManager = FileManager.default
         guard let enumerator = fileManager.enumerator(at: folderURL, includingPropertiesForKeys: [.fileSizeKey]) else { return false }
         var hasConfig = false
         var hasWeights = false
-        var totalBytes: Int64 = 0
         for case let fileURL as URL in enumerator {
-            if fileURL.lastPathComponent == "config.json" {
+            let res = try? fileURL.resourceValues(forKeys: [.fileSizeKey])
+            let size = res?.fileSize ?? 0
+
+            if fileURL.lastPathComponent == "config.json" && size > 10 {
                 hasConfig = true
             }
             let ext = fileURL.pathExtension.lowercased()
-            if ["safetensors", "bin", "npz"].contains(ext) {
+            if ["safetensors", "bin", "npz"].contains(ext) && size > 1024 * 1024 {
                 hasWeights = true
             }
-            if let res = try? fileURL.resourceValues(forKeys: [.fileSizeKey]), let s = res.fileSize {
-                totalBytes += Int64(s)
-            }
         }
-        return (hasConfig && hasWeights) || totalBytes > 50 * 1024 * 1024
+        return hasConfig && hasWeights
     }
 
     private func calculateDirectorySize(at url: URL) -> String {

@@ -38,13 +38,12 @@ public final class VideoComposer {
         subtitles: [SubtitleItem] = [],
         subtitleMode: SubtitleExportMode = .bilingual
     ) async throws {
-        // 安全检查：严禁输出路径与输入视频或输入音频相同，防止误删源文件 (R01)
-        let stdOutput = outputURL.standardizedFileURL
-        guard stdOutput != videoURL.standardizedFileURL else {
+        // 安全检查：严禁输出路径与输入视频或输入音频相同或指向同一文件（防父目录别名与符号链接，R01 / FU02）
+        guard !outputURL.pointsToSameFile(as: videoURL) else {
             throw VideoComposerError.exportFailed("输出文件路径不能与源视频路径相同，避免覆盖源素材")
         }
         if let newAudio = newAudioURL {
-            guard stdOutput != newAudio.standardizedFileURL else {
+            guard !outputURL.pointsToSameFile(as: newAudio) else {
                 throw VideoComposerError.exportFailed("输出文件路径不能与输入音频路径相同")
             }
         }
@@ -155,8 +154,9 @@ public final class VideoComposer {
                         secondaryText = ""
                     }
                 case .translatedOnly:
-                    // R31: 仅译文模式下不静默回退填入原文，若未翻译则不展示
-                    primaryText = item.translatedText
+                    // R31 & FU08: 仅译文模式下未翻译行以占位符展示，防止静默漏句
+                    let trans = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    primaryText = trans.isEmpty ? "[待翻译]" : trans
                     secondaryText = ""
                 case .originalOnly:
                     primaryText = item.originalText
@@ -170,7 +170,7 @@ public final class VideoComposer {
 
                 let startSec = item.startTime.seconds
                 let endSec = item.endTime.seconds
-                guard endSec > startSec else { continue }
+                guard endSec - startSec >= 0.001 else { continue }
 
                 if let cgImage = renderSubtitlePill(
                     primary: primaryText,
@@ -242,6 +242,12 @@ public final class VideoComposer {
         if exportSession.status != .completed {
             try? FileManager.default.removeItem(at: tempOutputURL)
             throw VideoComposerError.exportFailed(exportSession.error?.localizedDescription ?? "未知导出错误")
+        }
+
+        // R01 / FU02: 最终原子替换前再次核验目标文件身份，严禁覆盖源文件
+        guard !outputURL.pointsToSameFile(as: videoURL) else {
+            try? FileManager.default.removeItem(at: tempOutputURL)
+            throw VideoComposerError.exportFailed("输出文件路径指向源视频文件，已终止替换")
         }
 
         // R01: 校验导出结果并原子替换目标文件
