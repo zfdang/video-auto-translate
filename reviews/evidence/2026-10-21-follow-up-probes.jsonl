@@ -1,0 +1,20 @@
+{"baseline": "10ff89c94ef03f4ec5ed11e542aaad496958d044", "python": "3.12.13"}
+{"probe": "core", "exit": 0, "stdout": "split 2: left=He, leftWords=[\"Hello\"], boundary=2.0, right=llo world, rightWords=[\"world\"], translations=[完整人工译文|]\nsplit 6: left=Hello, leftWords=[\"Hello\"], boundary=2.0, right=world, rightWords=[\"world\"], translations=[完整人工译文|]\nsplit 10: left=Hello worl, leftWords=[\"Hello\", \"world\"], boundary=2.92, right=d, rightWords=[], translations=[完整人工译文|]\ntiny split rejected=true\nmilliseconds fixed=00:00:01,001\nnested merged end=10.0\nproject contains plaintext API key=true\nrestored audioURL nil=true\nzero-byte weights state=ready(localPath: \"<temporary-model-path>\", sizeDescription: \"0.0 MB\")\ntranslated-only mixed result=1|00:00:01,000 --> 00:00:02,000|完成||\nsub-ms exported=1|00:00:00,000 --> 00:00:00,000|sub-ms||\ncustom French voice=en-US\ntmp audio writer opened=true\nwav audio writer opened=true", "fatal": ""}
+{"probe": "audio", "exit": 0, "stdout": "4s input requested rate8 -> stretched seconds=2.0853333333333333\n0.5s cue with 2.0853333333333333s speech -> mixed seconds=2.0853333333333333\ntwo 2s clips at0s and1s -> mixed seconds=3.0, requested timeline ends3s", "fatal": ""}
+{"probe": "duplicate", "exit": 0, "stdout": "duplicate returned success, translation=One", "fatal": ""}
+{"probe": "missing", "exit": 0, "stdout": "missing returned success, translation=Initial", "fatal": ""}
+{"probe": "stale", "exit": 0, "stdout": "stale returned success, translation=Manual", "fatal": ""}
+{"probe": "clear", "exit": 0, "stdout": "clear returned success, translation=Generated from old source", "fatal": ""}
+{"probe": "cancel", "exit": 0, "stdout": "cancel error=网络连接失败: cancelled, translation=Initial", "fatal": ""}
+{"probe": "format-huge", "exit": -5, "stdout": "", "fatal": "Swift/arm64e-apple-macos.swiftinterface:43090: Fatal error: Double value cannot be converted to Int64 because the result would be greater than Int64.max"}
+{"probe": "app-cancel", "exit": 0, "stdout": "cancelAllTasks returned, eventual translation=Generated from old source, status=翻译完成，已为 1 行字幕生成译文\nmanual text edit set isDirty=false", "fatal": ""}
+{"probe": "alias-export", "exit": 0, "stdout": "parent-alias export accepted=true\nsource bytes changed=true", "fatal": ""}
+{"probe": "tts-callback-success", "exit": 0, "stdout": "success frames=24000, header=caff", "fatal": ""}
+{"probe": "tts-callback-write-error", "exit": 0, "stdout": "synthesis returned error without crash: 语音合成失败: The operation couldn’t be completed. (com.apple.coreaudio.avfaudio error 2003334207.)", "fatal": ""}
+{"probe": "no-model-production", "error": "mlx_audio 依赖库未就绪，无法在 Apple Silicon 上执行物理模型转录"}
+{"probe": "explicit-mock", "flag": true}
+{"probe": "empty-weight-model", "accepted": true}
+{"probe": "as-is-asr-route", "status": 500, "body": {"detail": "name 'asyncio' is not defined"}}
+{"probe": "untrusted-origin-storage", "status": 200, "allow_origin": null, "created": true}
+{"probe": "untrusted-origin-preflight", "status": 400}
+{"probe": "thread-offload-with-import-injected", "statuses": [200, 200], "max_parallel_inferences": 2}
