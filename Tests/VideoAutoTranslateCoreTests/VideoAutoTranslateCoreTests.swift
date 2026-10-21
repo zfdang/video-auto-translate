@@ -177,9 +177,22 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
             originalText: "Artificial intelligence is changing the world."
         )
 
-        try await translator.translate(items: [item], config: config)
+        var statusStages: [String] = []
+        var progressValues: [Double] = []
+
+        try await translator.translate(items: [item], config: config) { progress, status in
+            progressValues.append(progress)
+            statusStages.append(status)
+        }
+
         print("Live Qwen translation result: \(item.translatedText)")
         XCTAssertFalse(item.translatedText.isEmpty, "翻译结果不应为空")
+
+        // 验证生命周期三阶段提示：启动模型 -> 翻译文本 -> 终止模型
+        XCTAssertTrue(statusStages.contains(where: { $0.contains("启动模型") }), "应包含启动模型阶段提示: \(statusStages)")
+        XCTAssertTrue(statusStages.contains(where: { $0.contains("翻译文本") }), "应包含翻译文本阶段提示: \(statusStages)")
+        XCTAssertTrue(statusStages.contains(where: { $0.contains("终止模型") }), "应包含终止模型阶段提示: \(statusStages)")
+        XCTAssertTrue((progressValues.last ?? 0.0) >= 0.95, "最终进度应接近完成")
     }
 
     func testASRVerboseJSONParsing() throws {

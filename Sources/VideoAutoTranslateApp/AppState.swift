@@ -368,17 +368,18 @@ public final class AppState: ObservableObject {
         let currentGen = projectGeneration
 
         project.isProcessing = true
-        project.currentStepName = "正在使用 \(project.llmConfig.effectiveModel) 翻译字幕..."
-        project.progress = 0.0
+        project.currentStepName = "正在启动模型 (\(project.llmConfig.effectiveModel))..."
+        project.progress = 0.05
 
         let worker = Task { () -> Void in
             try await translator.translate(
                 items: project.subtitles,
                 config: project.llmConfig
-            ) { [weak self] progress in
+            ) { [weak self] progress, status in
                 Task { @MainActor [weak self] in
                     guard let self = self, self.projectGeneration == currentGen, !Task.isCancelled else { return }
                     self.project.progress = progress
+                    self.project.currentStepName = status
                 }
             }
         }
@@ -399,8 +400,12 @@ public final class AppState: ObservableObject {
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
-            statusMessage = "翻译失败: \(error.localizedDescription)"
-            errorMessage = "翻译失败: \(error.localizedDescription)"
+            if Task.isCancelled {
+                statusMessage = "翻译已取消"
+            } else {
+                statusMessage = "翻译失败: \(error.localizedDescription)"
+                errorMessage = "翻译失败: \(error.localizedDescription)"
+            }
         }
     }
 

@@ -56,6 +56,44 @@ public final class OllamaProbe {
         return res.models
     }
 
+    /// 预加载 / 启动指定模型至显存/内存
+    public func preloadModel(baseURL: String = "http://localhost:11434", model: String) async {
+        var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if base.hasSuffix("/") { base.removeLast() }
+        if base.hasSuffix("/v1") {
+            base = String(base.dropLast(3))
+        }
+        guard let url = URL(string: "\(base)/api/generate") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30.0
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload: [String: Any] = ["model": model]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+        _ = try? await URLSession.shared.data(for: request)
+    }
+
+    /// 终止指定模型并释放显存 (keep_alive: 0)
+    public func unloadModel(baseURL: String = "http://localhost:11434", model: String) async {
+        var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if base.hasSuffix("/") { base.removeLast() }
+        if base.hasSuffix("/v1") {
+            base = String(base.dropLast(3))
+        }
+        guard let url = URL(string: "\(base)/api/generate") else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10.0
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload: [String: Any] = ["model": model, "keep_alive": 0]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+        _ = try? await URLSession.shared.data(for: request)
+    }
+
     /// 详细探测本地 Ollama 服务连接与模型状态，包含网络延迟与清晰说明
     public func probeDetailed(baseURL: String = "http://localhost:11434") async -> (success: Bool, message: String, models: [String]) {
         var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)

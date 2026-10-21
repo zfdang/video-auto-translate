@@ -427,6 +427,16 @@ public struct MainView: View {
                 Text(appState.project.currentStepName)
                     .font(.caption)
                     .foregroundColor(.accentColor)
+
+                Button(action: {
+                    appState.cancelAllTasks()
+                }) {
+                    Text("取消")
+                        .font(.caption2)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .help("取消当前任务并释放模型资源")
             } else {
                 Circle()
                     .fill(Color.green)
