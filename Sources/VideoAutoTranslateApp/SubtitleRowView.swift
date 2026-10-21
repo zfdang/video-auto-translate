@@ -82,33 +82,33 @@ public struct SubtitleRowView: View {
 
                 Spacer()
 
-                // 试听原声按钮 (播放原视频对应时间戳的原声音频)
+                // 原声音频播放按钮 (播放原视频对应时间戳的原声音频)
                 Button(action: {
                     onAudition(.original)
                 }) {
                     HStack(spacing: 2) {
                         Image(systemName: "play.circle")
-                        Text("试听原声")
+                        Text("原声")
                             .font(.caption)
                     }
                 }
                 .buttonStyle(.borderless)
-                .help("试听当前行原视频原声音频片段")
+                .help("播放当前行原视频原声音频片段")
 
-                // 试听译文按钮 (播放/合成翻译后的配音语音)
+                // 译文配音播放按钮 (播放/合成翻译后的配音语音)
                 let hasTranslation = !item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 Button(action: {
                     onAudition(.translated)
                 }) {
                     HStack(spacing: 2) {
                         Image(systemName: item.isGeneratingAudio ? "waveform" : "speaker.wave.2")
-                        Text(item.isGeneratingAudio ? "生成中" : "试听译文")
+                        Text(item.isGeneratingAudio ? "生成中" : "译文")
                             .font(.caption)
                     }
                 }
                 .buttonStyle(.borderless)
                 .disabled(item.isGeneratingAudio || !hasTranslation)
-                .help(hasTranslation ? "试听当前行翻译后的新配音语音" : "暂无译文，请先执行字幕翻译")
+                .help(hasTranslation ? "播放/合成当前行翻译后的新配音语音" : "暂无译文，请先执行字幕翻译")
 
                 // 向下合并按钮 (直接与下一行合并)
                 if canMergeWithNext {

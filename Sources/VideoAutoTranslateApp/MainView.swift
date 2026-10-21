@@ -46,8 +46,14 @@ public struct MainView: View {
         .sheet(isPresented: $appState.showExportSheet) {
             ExportView(appState: appState)
         }
+        .navigationTitle(windowTitle)
         .focusedSceneObject(appState)
-        .focusedSceneObject(appState)
+        .onAppear {
+            updateWindowDocumentState(title: windowTitle)
+        }
+        .onChange(of: windowTitle) { _, newTitle in
+            updateWindowDocumentState(title: newTitle)
+        }
         .alert("提示", isPresented: Binding(
             get: { appState.errorMessage != nil },
             set: { if !$0 { appState.errorMessage = nil } }
@@ -76,6 +82,45 @@ public struct MainView: View {
                 }
             }
             return true
+        }
+    }
+
+    // MARK: - 窗口标题与文档状态
+    private var windowTitle: String {
+        let projectName: String
+        let saveState: String
+
+        if let docURL = appState.documentURL {
+            projectName = docURL.lastPathComponent
+            saveState = appState.project.isDirty ? "保存后有新修改" : "已保存"
+        } else {
+            projectName = "未命名工程"
+            saveState = (appState.project.videoURL != nil || !appState.project.subtitles.isEmpty) ? "未保存" : "新工程"
+        }
+
+        let mediaInfo: String
+        if let videoURL = appState.project.videoURL {
+            mediaInfo = "媒体: \(videoURL.lastPathComponent)"
+        } else {
+            mediaInfo = "未打开媒体"
+        }
+
+        return "VideoAutoTranslate — \(projectName) [\(saveState)] — \(mediaInfo)"
+    }
+
+    private func updateWindowDocumentState(title: String) {
+        DispatchQueue.main.async {
+            if let window = NSApp.keyWindow ?? NSApp.windows.first {
+                window.title = title
+                window.isDocumentEdited = appState.project.isDirty
+                if let docURL = appState.documentURL {
+                    window.representedURL = docURL
+                } else if let vidURL = appState.project.videoURL {
+                    window.representedURL = vidURL
+                } else {
+                    window.representedURL = nil
+                }
+            }
         }
     }
 
