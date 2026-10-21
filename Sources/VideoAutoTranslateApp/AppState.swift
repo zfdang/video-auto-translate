@@ -1108,6 +1108,7 @@ public final class AppState: ObservableObject {
     }
 
     public func clearRecoveryCheckpoint() {
+        guard persistsRecovery else { return }
         recoveryTask?.cancel()
         recoveryWrite?.cancel()
         ProjectStore.removeCheckpoint(at: recoveryURL)
