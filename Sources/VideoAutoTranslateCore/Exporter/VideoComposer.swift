@@ -121,6 +121,7 @@ public final class VideoComposer {
         let tempOutputURL = tempDirectory.appendingPathComponent(tempFilename)
         try? FileManager.default.removeItem(at: tempOutputURL)
 
+        defer { try? FileManager.default.removeItem(at: tempOutputURL) }
         exportSession.outputURL = tempOutputURL
         exportSession.outputFileType = .mp4
         exportSession.shouldOptimizeForNetworkUse = true
@@ -237,7 +238,10 @@ public final class VideoComposer {
             exportSession.videoComposition = videoComposition
         }
 
-        await exportSession.export()
+        await withTaskCancellationHandler {
+            await exportSession.export()
+        } onCancel: { exportSession.cancelExport() }
+        try Task.checkCancellation()
 
         if exportSession.status != .completed {
             try? FileManager.default.removeItem(at: tempOutputURL)

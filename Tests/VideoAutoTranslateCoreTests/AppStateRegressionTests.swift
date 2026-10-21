@@ -77,4 +77,17 @@ import CoreMedia
         XCTAssertFalse(app.canUndo)
     }
 
+    func testExportCancellationPreservesExistingDestination() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
+        try Data("Previous output".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let job = ExportJob()
+        job.start(video: URL(fileURLWithPath: "/missing.mp4"), background: nil, rows: [], voice: "zh-CN", audioMode: .original, subtitleMode: .none, destination: url, skipped: 0)
+        job.cancel()
+        while job.isRunning { await Task.yield() }
+        XCTAssertNil(job.outputURL)
+        XCTAssertNil(job.error)
+        XCTAssertEqual(try Data(contentsOf: url), Data("Previous output".utf8))
+    }
+
 }

@@ -59,6 +59,7 @@ public final class AppState: ObservableObject {
     @Published public var showSettings: Bool = false
     @Published public var showHelp: Bool = false
     @Published public var showExportSheet: Bool = false
+    public let exportJob = ExportJob()
     @Published public var statusMessage: String = "就绪"
     @Published public var errorMessage: String? = nil
 
@@ -133,6 +134,7 @@ public final class AppState: ObservableObject {
             }
         }
 
+        exportJob.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         // 监听外部打开视频文件事件
         NotificationCenter.default.addObserver(
             forName: Notification.Name("com.videoautotranslate.openVideoFile"),

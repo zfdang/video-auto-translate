@@ -448,7 +448,11 @@ public struct MainView: View {
     // MARK: - 底部状态栏
     private var bottomStatusBar: some View {
         HStack(spacing: 12) {
-            if appState.project.isProcessing {
+            if appState.exportJob.isRunning {
+                ProgressView(value: appState.exportJob.progress).frame(width: 120)
+                Text(appState.exportJob.message).font(.caption)
+                Button("取消导出") { appState.exportJob.cancel() }
+            } else if appState.project.isProcessing {
                 ProgressView(value: appState.project.progress)
                     .progressViewStyle(.linear)
                     .frame(width: 140)

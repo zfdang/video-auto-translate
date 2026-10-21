@@ -78,6 +78,7 @@ public final class AudioMixer {
         let sortedSubtitles = subtitles.sorted { $0.startTime < $1.startTime }
 
         for item in sortedSubtitles {
+            try Task.checkCancellation()
             guard let snippetURL = item.dubbedAudioURL,
                   FileManager.default.fileExists(atPath: snippetURL.path) else {
                 throw AudioMixerError.exportFailed("缺少配音：\(item.originalText.prefix(30))")
@@ -192,13 +193,17 @@ public final class AudioMixer {
             throw AudioMixerError.exportFailed("无法创建导出任务")
         }
 
+        defer { try? FileManager.default.removeItem(at: tempOutputURL) }
         exportSession.outputURL = tempOutputURL
         exportSession.outputFileType = .m4a
         if let audioMix = audioMix {
             exportSession.audioMix = audioMix
         }
 
-        await exportSession.export()
+        await withTaskCancellationHandler {
+            await exportSession.export()
+        } onCancel: { exportSession.cancelExport() }
+        try Task.checkCancellation()
 
         if exportSession.status != .completed {
             try? FileManager.default.removeItem(at: tempOutputURL)
