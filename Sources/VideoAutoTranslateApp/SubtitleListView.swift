@@ -79,7 +79,31 @@ public struct SubtitleListView: View {
                 .disabled(!hasTranslations || appState.project.isProcessing)
                 .help("跟译文的时间轴做匹配：保持原文与译文对应关系不变，根据译文期望发音时长重新排布时间轴，实现语调与语速自然一致")
 
+                // 5. 合并按钮 (仅当选中多个且连续时可用，平时置灰禁用)
+                let canMergeMulti = appState.canMergeMultipleConsecutive(ids: selectedIDs)
+                let mergeButtonTitle: String = {
+                    if selectedIDs.count >= 2 {
+                        return "合并 (\(selectedIDs.count))"
+                    } else {
+                        return "合并"
+                    }
+                }()
 
+                Button(action: {
+                    appState.mergeSubtitles(ids: selectedIDs)
+                    selectedIDs.removeAll()
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.triangle.merge")
+                        Text(mergeButtonTitle)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .tint(canMergeMulti ? .accentColor : nil)
+                .controlSize(.small)
+                .disabled(!canMergeMulti)
+                .keyboardShortcut("j", modifiers: .command)
+                .help(canMergeMulti ? "合并当前选中的 \(selectedIDs.count) 行连续字幕 (Cmd+J)" : (selectedIDs.count >= 2 ? "选中的字幕行必须连续方可合并" : "勾选多个且连续的字幕行即可激活合并功能"))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)

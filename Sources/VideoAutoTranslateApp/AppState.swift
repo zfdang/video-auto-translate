@@ -577,6 +577,22 @@ public final class AppState: ObservableObject {
         statusMessage = "已重做操作"
     }
 
+    /// 校验是否选中了 2 行及以上且位置连续的字幕行
+    public func canMergeMultipleConsecutive(ids: Set<UUID>) -> Bool {
+        guard ids.count >= 2 else { return false }
+        let indices = project.subtitles.enumerated()
+            .filter { ids.contains($1.id) }
+            .map { $0.offset }
+            .sorted()
+        guard indices.count == ids.count else { return false }
+        for i in 0..<(indices.count - 1) {
+            if indices[i+1] != indices[i] + 1 {
+                return false
+            }
+        }
+        return true
+    }
+
     /// 校验是否满足合并条件：多选需连续；单选或聚焦需存在下一行
     public func canMerge(ids: Set<UUID>) -> Bool {
         if ids.count >= 2 {
