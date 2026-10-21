@@ -8,14 +8,14 @@ public enum TimePitchError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidRate:
-            return "语速速率超出有效范围 (0.5x - 2.0x)"
+            return "语速速率超出有效范围 (0.5x - 2.5x)"
         case .renderingFailed(let msg):
             return "音频语速变换渲染失败: \(msg)"
         }
     }
 }
 
-/// 纯原生语速无损伸缩引擎：音调不变，离线毫秒级渲染
+/// 原生音频变速引擎：保持音调，离线渲染
 public final class TimePitchEngine {
     public init() {}
 
@@ -23,9 +23,10 @@ public final class TimePitchEngine {
     /// - Parameters:
     ///   - inputURL: 输入音频路径 (.wav / .m4a)
     ///   - outputURL: 输出音频路径 (.wav)
-    ///   - rate: 语速倍率（0.5 ~ 2.0，1.0为原始语速）
+    ///   - rate: 语速倍率（0.5 ~ 2.5，1.0为原始语速）
     public func changeSpeed(inputURL: URL, outputURL: URL, rate: Float) throws {
-        let clampedRate = max(0.5, min(2.5, rate))
+        guard rate.isFinite, rate >= 0.5, rate <= 2.5 else { throw TimePitchError.invalidRate }
+        let clampedRate = rate
         try? FileManager.default.removeItem(at: outputURL)
 
         let inputFile = try AVAudioFile(forReading: inputURL)
@@ -64,11 +65,12 @@ public final class TimePitchEngine {
             throw TimePitchError.renderingFailed("无法创建 PCM 缓冲区")
         }
 
+        // Render the requested duration; extra padding would spill into the next utterance.
         let estimatedTotalFrames = AVAudioFramePosition(Double(inputFile.length) / Double(clampedRate))
         var framesRendered: AVAudioFramePosition = 0
 
-        while framesRendered < estimatedTotalFrames + 2048 {
-            let framesToRender = min(maxFrames, AVAudioFrameCount(estimatedTotalFrames + 2048 - framesRendered))
+        while framesRendered < estimatedTotalFrames {
+            let framesToRender = min(maxFrames, AVAudioFrameCount(estimatedTotalFrames - framesRendered))
             let status = try engine.renderOffline(framesToRender, to: buffer)
 
             switch status {

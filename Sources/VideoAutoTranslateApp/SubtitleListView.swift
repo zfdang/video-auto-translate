@@ -77,7 +77,7 @@ public struct SubtitleListView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(!hasTranslations || appState.project.isProcessing)
-                .help("跟译文的时间轴做匹配：保持原文与译文对应关系不变，根据译文期望发音时长重新排布时间轴，实现语调与语速自然一致")
+                .help("用所选音色测量正常配音时长，逐句保持原始开讲位置；预览时间建议和超长句提示后应用")
 
                 // 5. 合并按钮 (仅当选中多个且连续时可用，平时置灰禁用)
                 let canMergeMulti = appState.canMergeMultipleConsecutive(ids: selectedIDs)

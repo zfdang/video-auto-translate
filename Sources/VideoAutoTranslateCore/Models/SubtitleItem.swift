@@ -21,14 +21,28 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
     }
     @Published public var originalText: String {
         willSet { if originalText != newValue { onModified?() } }
-        didSet { if originalText != oldValue { words = []; dubbedAudioURL = nil; dubbedAudioSignature = nil; translationNeedsReview = !translatedText.isEmpty } }
+        didSet { if originalText != oldValue { words = []; naturalSpeech = nil; dubbedAudioURL = nil; dubbedAudioSignature = nil; translationNeedsReview = !translatedText.isEmpty } }
     }
     @Published public var translatedText: String {
         willSet { if translatedText != newValue { onModified?() } }
-        didSet { if translatedText != oldValue { dubbedAudioURL = nil; dubbedAudioSignature = nil } }
+        didSet { if translatedText != oldValue { naturalSpeech = nil; dubbedAudioURL = nil; dubbedAudioSignature = nil } }
     }
     @Published public var words: [WordToken] {
         willSet { if words != newValue { onModified?() } }
+    }
+
+    // Natural speech is independent of timing and is deliberately not persisted.
+    @Published public var naturalSpeech: NaturalSpeechAudio?
+    public var currentNaturalSpeech: NaturalSpeechAudio? {
+        guard let audio = naturalSpeech, audio.text == translatedText,
+              FileManager.default.fileExists(atPath: audio.url.path) else { return nil }
+        return audio
+    }
+
+    public var dubbingTimingIssue: String? {
+        guard let audio = currentNaturalSpeech else { return nil }
+        do { _ = try DubbingPacing.rate(naturalDuration: audio.duration, availableDuration: durationSeconds); return nil }
+        catch { return error.localizedDescription }
     }
 
     // 配音缓存状态
@@ -50,9 +64,11 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         dubbedAudioSignature: String? = nil,
         translationNeedsReview: Bool = false,
         sourceStartTime: CMTime? = nil,
-        sourceEndTime: CMTime? = nil
+        sourceEndTime: CMTime? = nil,
+        naturalSpeech: NaturalSpeechAudio? = nil
     ) {
         self.id = id
+        self.naturalSpeech = naturalSpeech
         self.sourceStartTime = sourceStartTime ?? startTime
         self.sourceEndTime = sourceEndTime ?? endTime
         self.startTime = startTime
@@ -66,7 +82,7 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
     }
 
     public func audioSignature(voice: String) -> String {
-        let input = "\(translatedText)|\(voice)|\(startTime.value)/\(startTime.timescale)|\(endTime.value)/\(endTime.timescale)"
+        let input = "anchored-pacing-v1|\(translatedText)|\(voice)|\(startTime.value)/\(startTime.timescale)|\(endTime.value)/\(endTime.timescale)"
         return SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -75,7 +91,7 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
     }
 
     public func snapshot() -> SubtitleItem {
-        SubtitleItem(id: id, startTime: startTime, endTime: endTime, originalText: originalText, translatedText: translatedText, words: words, dubbedAudioURL: dubbedAudioURL, dubbedAudioSignature: dubbedAudioSignature, translationNeedsReview: translationNeedsReview, sourceStartTime: sourceStartTime, sourceEndTime: sourceEndTime)
+        SubtitleItem(id: id, startTime: startTime, endTime: endTime, originalText: originalText, translatedText: translatedText, words: words, dubbedAudioURL: dubbedAudioURL, dubbedAudioSignature: dubbedAudioSignature, translationNeedsReview: translationNeedsReview, sourceStartTime: sourceStartTime, sourceEndTime: sourceEndTime, naturalSpeech: naturalSpeech)
     }
 
     public var duration: CMTime {

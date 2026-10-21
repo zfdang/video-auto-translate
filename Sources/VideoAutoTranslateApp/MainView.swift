@@ -43,6 +43,9 @@ public struct MainView: View {
         .sheet(isPresented: $appState.showHelp) {
             HelpView(appState: appState)
         }
+        .sheet(item: $appState.editProposal) { proposal in
+            EditProposalView(appState: appState, proposal: proposal)
+        }
         .sheet(isPresented: $appState.showExportSheet) {
             ExportView(appState: appState)
         }
@@ -325,7 +328,7 @@ public struct MainView: View {
                 .buttonStyle(.bordered)
                 .fixedSize()
                 .disabled(!hasTranslations || appState.project.isProcessing)
-                .help("可选步骤：合成新语言配音，并执行自适应语速对齐与背景音自动闪避混音（可跳过直接进入第5步导出成片）")
+                .help("可选步骤：使用已确认的时间与配音结果生成音轨；需要调整时请先匹配译文时间轴，支持背景音自动闪避混音（可跳过直接进入第5步导出成片）")
 
                 Text(")")
                     .font(.system(size: 13, weight: .bold))

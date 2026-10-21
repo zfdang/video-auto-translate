@@ -1,17 +1,16 @@
 import Foundation
 import CoreMedia
-import AVFoundation
 
-/// 根据目标语言译文文字量与期望发音时长，匹配并重构时间轴的智能引擎
-/// 采用“基于局部语音段/对话簇（Speech Clusters）自适应平滑”架构：
-/// 1. 彻底避免在整个视频范围内做全局平均或无限累积延后，杜绝音画严重脱节；
-/// 2. 原视频存在自然停顿（>=0.65s）处进行物理分簇，各簇起点严格锚定对应原声位置；
-/// 3. 仅在局部簇内小范围根据译文字数做语速平衡，既避免个别句子极度急促，又避免短译文慢放拖沓。
+/// Keeps every utterance at its immutable source anchor; timing is never accumulated.
 public final class TimelineAligner {
     public init() {}
 
     public static func pacingIssues(items: [SubtitleItem], language: String) -> Set<UUID> {
-        Set(items.filter { estimateNaturalDuration(text: $0.translatedText.isEmpty ? $0.originalText : $0.translatedText, language: language) > $0.durationSeconds * 1.25 }.map(\.id))
+        Set(items.filter {
+            let duration = $0.currentNaturalSpeech?.duration
+                ?? estimateNaturalDuration(text: $0.translatedText.isEmpty ? $0.originalText : $0.translatedText, language: language)
+            return duration > $0.durationSeconds * DubbingPacing.maximumRate + DubbingPacing.timeTolerance
+        }.map(\.id))
     }
 
     /// 估算特定语言文本的自然舒适发音时长 (秒)
@@ -43,430 +42,114 @@ public final class TimelineAligner {
         }
     }
 
-    /// 获取单条字幕在译文期望下的发音基准时长
+
     public func expectedDurationForSubtitle(_ item: SubtitleItem, language: String = "zh") -> Double {
-        let text = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? item.originalText
-            : item.translatedText
-        return Self.estimateNaturalDuration(text: text, language: language)
+        item.currentNaturalSpeech?.duration ?? Self.estimateNaturalDuration(
+            text: item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? item.originalText : item.translatedText, language: language)
     }
 
-    /// 核心算法：基于局部语音段/对话簇（Speech Clusters）的译文时间轴自适应平滑匹配
-    /// - 原文与译文 1:1 严格对应关系保持完全不变；
-    /// - 绝不进行全视频全局平均或累积时移，避免音画与视频内容脱节；
-    /// - 在原视频自然停顿处进行物理分簇，簇起点严格锚定原声位置；
-    /// - 仅在局部簇内根据译文字数与期望时长分配发音时间，兼顾自然语速与音画对齐。
-    /// - Parameters:
-    ///   - items: 原始字幕列表（含原文与已翻译译文）
-    ///   - language: 目标译文语言
-    ///   - clusterGapThreshold: 自然分簇静音阈值（默认 0.65 秒，原视频有停顿即切分独立簇）
-    ///   - maxClusterItems: 单簇最大容纳字幕行数（默认 5 行，防止长单口相声无停顿导致范围过大）
-    ///   - maxClusterDuration: 单簇最大时间跨度（默认 16 秒）
-    ///   - naturalPauseSeconds: 簇内句子间自然呼吸与换气停顿（默认 0.16 秒）
-    ///   - videoDuration: 视频总时长（可选安全边界保护）
-    /// - Returns: 原文译文一一对应、各簇音画精确对齐、局部语速平滑自然的新字幕列表
+    /// Short speech leaves silence in place. Long speech can borrow at most 500ms
+    /// after its source interval, without moving the following utterance.
+    /// Text estimates are for offline suggestions only; the app measures TTS first.
+    /// Source overlaps up to 30ms reduce the preceding usable interval only.
+    /// Without videoDuration, the final utterance cannot borrow beyond its source end.
     public func matchTimelineToTranslation(
-        items: [SubtitleItem],
-        language: String = "zh",
-        clusterGapThreshold: Double = 0.65,
-        maxClusterItems: Int = 5,
-        maxClusterDuration: Double = 16.0,
-        naturalPauseSeconds: Double = 0.16,
-        videoDuration: Double? = nil
+        items: [SubtitleItem], language: String = "zh", videoDuration: Double? = nil
     ) -> [SubtitleItem] {
-        guard !items.isEmpty else { return [] }
-
-        // 1. 按照原视频时间顺序与停顿特性切分为独立的局部对话簇 (Speech Clusters)
-        let clusters = partitionIntoClusters(
-            items: items,
-            gapThreshold: clusterGapThreshold,
-            maxItems: maxClusterItems,
-            maxDuration: maxClusterDuration
-        )
-
-        var alignedItems: [SubtitleItem] = []
-        var previousClusterActualEnd: Double = 0.0
-
-        for (clusterIndex, cluster) in clusters.enumerated() {
-            let nextClusterOrigStart: Double
-            if clusterIndex + 1 < clusters.count {
-                nextClusterOrigStart = clusters[clusterIndex + 1].first!.startTime.secondsValue
-            } else if let vidDur = videoDuration, vidDur > cluster.last!.endTime.secondsValue {
-                nextClusterOrigStart = vidDur
-            } else {
-                nextClusterOrigStart = cluster.last!.endTime.secondsValue + 3.0
+        guard let sourceEnds = validatedSourceEnds(items, videoDuration: videoDuration) else { return items }
+        return items.enumerated().map { index, item in
+            let start = item.sourceStartTime.secondsValue
+            let sourceEnd = sourceEnds[index].secondsValue
+            let nextStart = index + 1 < items.count ? items[index + 1].sourceStartTime.secondsValue : videoDuration
+            let gap = nextStart.map { max(0, $0 - sourceEnd) } ?? 0
+            let pause = min(0.08, gap)
+            var latestEnd = sourceEnd + min(0.5, max(0, gap - pause))
+            if let videoDuration { latestEnd = min(latestEnd, videoDuration) }
+            let natural = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? sourceEnd - start : expectedDurationForSubtitle(item, language: language)
+            let end = min(latestEnd, start + max(0.1, natural))
+            let result = item.snapshot()
+            result.startTime = item.sourceStartTime
+            result.endTime = .from(seconds: end)
+            if index + 1 < items.count {
+                // Keep sub-millisecond anchors exact when the proposed end rounds up.
+                result.endTime = min(result.endTime, items[index + 1].sourceStartTime)
             }
-
-            let alignedCluster = alignCluster(
-                cluster: cluster,
-                language: language,
-                naturalPauseSeconds: naturalPauseSeconds,
-                prevActualEnd: previousClusterActualEnd,
-                nextOrigStart: nextClusterOrigStart,
-                videoDuration: videoDuration
-            )
-
-            alignedItems.append(contentsOf: alignedCluster)
-            if let lastItem = alignedCluster.last {
-                previousClusterActualEnd = lastItem.endTime.secondsValue
-            }
+            return result
         }
-
-        let constrained = enforceStrictConstraints(alignedItems, videoDuration: videoDuration)
-        return constrained.isEmpty ? items : constrained
     }
 
-    /// 使用大模型 (LLM) 进行语义感知的译文时间轴精细匹配
-    /// - Parameters:
-    ///   - items: 原始字幕项列表
-    ///   - config: 大模型配置
-    ///   - client: OpenAI API 客户端
-    ///   - videoDuration: 视频总时长
+    /// No timestamp-generating language model participates in scheduling.
+    /// Kept as a source-compatible entry point for existing clients.
     public func matchTimelineWithLLM(
-        items: [SubtitleItem],
-        config: LLMConfiguration,
-        client: OpenAICompatibleClient,
+        items: [SubtitleItem], config: LLMConfiguration, client: OpenAICompatibleClient,
         videoDuration: Double? = nil
     ) async -> [SubtitleItem] {
-        guard !items.isEmpty else { return items }
-
-        // 先获取基于局部簇的确定性对齐结果作为基准
-        let baseMatched = matchTimelineToTranslation(
-            items: items,
-            language: config.targetLanguage,
-            videoDuration: videoDuration
-        )
-
-        // 构造提示词请求大模型在各句语义停顿上进行细致微调
-        var inputData: [[String: Any]] = []
-        for (idx, item) in baseMatched.enumerated() {
-            inputData.append([
-                "id": idx,
-                "orig": item.originalText,
-                "trans": item.translatedText,
-                "start": round(item.startTime.secondsValue * 100) / 100,
-                "end": round(item.endTime.secondsValue * 100) / 100,
-                "dur": round(item.durationSeconds * 100) / 100
-            ])
-        }
-
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: inputData, options: []),
-              let jsonString = String(data: jsonData, encoding: .utf8) else {
-            return baseMatched
-        }
-
-        let systemPrompt = """
-        You are an expert audio-visual dubbing supervisor.
-        The timeline has been partitioned and pre-aligned into speech clusters anchored to the video scenes.
-        Original text and translated text MUST remain strictly 1-to-1 matched.
-        You may refine the [start, end] seconds for each subtitle slightly (within ±0.5s from input values):
-        1. Keep speaking duration natural for each sentence (around 3.8-4.2 chars/sec for Chinese, 2.6 words/sec for English).
-        2. Do NOT drift timestamps across video gaps. Keep natural silences between speech clusters.
-        3. Maintain strict chronological sequence: start[i] >= end[i-1] + 0.05 (ABSOLUTELY NO OVERLAPPING).
-        4. Do NOT drop, merge, or change any subtitle row.
-        5. Return ONLY a valid JSON object matching:
-        {
-          "subtitles": [
-            {"id": 0, "start": 0.16, "end": 1.25},
-            {"id": 1, "start": 1.45, "end": 3.10}
-          ]
-        }
-        """
-
-        let userPrompt = "Refine the translation-matched timeline for the following subtitles:\n\(jsonString)"
-        let messages = [
-            ["role": "system", "content": systemPrompt],
-            ["role": "user", "content": userPrompt]
-        ]
-
-        do {
-            let responseText = try await client.chatCompletion(
-                model: config.effectiveModel,
-                messages: messages,
-                temperature: 0.1,
-                responseFormatJSON: true
-            )
-
-            if let parsed = parseLLMTimeline(from: responseText, baseMatched: baseMatched, language: config.targetLanguage, videoDuration: videoDuration) {
-                let constrained = enforceStrictConstraints(parsed, videoDuration: videoDuration)
-                return constrained.isEmpty ? baseMatched : constrained
-            }
-        } catch {
-            // 大模型异常或网络不可用时平滑使用确定性匹配结果
-        }
-
-        return baseMatched
+        matchTimelineToTranslation(items: items, language: config.targetLanguage, videoDuration: videoDuration)
     }
 
-    // MARK: - 内部辅助方法：分簇与局部平滑引擎
-
-    /// 将全量字幕依原声静音间隙与上限切分为独立的局部对话簇
-    private func partitionIntoClusters(
-        items: [SubtitleItem],
-        gapThreshold: Double,
-        maxItems: Int,
-        maxDuration: Double
-    ) -> [[SubtitleItem]] {
-        var clusters: [[SubtitleItem]] = []
-        var currentCluster: [SubtitleItem] = []
-
-        for item in items {
-            if currentCluster.isEmpty {
-                currentCluster.append(item)
+    /// Measures normal-speed audio on isolated snapshots; failures never substitute
+    /// a character estimate for a successfully measured dubbing proposal.
+    public func matchTimelineUsingSpeech(
+        items: [SubtitleItem], language: String, voice: String,
+        ttsService: TTSServiceProtocol, manager: SubtitleManager,
+        videoDuration: Double,
+        progress: @MainActor (Int, Int) -> Void = { _, _ in }
+    ) async throws -> [SubtitleItem] {
+        guard validatedSourceEnds(items, videoDuration: videoDuration) != nil else {
+            throw TTSError.synthesisFailed("原始时间重叠超过 30ms、修正后不足 100ms、存在无效值或超出视频范围，无法自动匹配；请重新分句或跳过匹配进行手动调时。")
+        }
+        let measured = items.map { $0.snapshot() }
+        for (index, row) in measured.enumerated() {
+            try Task.checkCancellation()
+            guard !row.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            _ = try await manager.prepareNaturalSpeech(item: row, ttsService: ttsService, voice: voice)
+            await progress(index + 1, measured.count)
+        }
+        try Task.checkCancellation()
+        let planned = matchTimelineToTranslation(items: measured, language: language, videoDuration: videoDuration)
+        var rendered: [URL] = []
+        var completed = false
+        defer {
+            if !completed { for url in rendered { try? FileManager.default.removeItem(at: url) } }
+        }
+        for row in planned where row.currentNaturalSpeech != nil {
+            try Task.checkCancellation()
+            // Infeasible sentences remain reviewable conflicts. Do not render a
+            // rushed substitute or shift another sentence to hide the problem.
+            guard row.dubbingTimingIssue == nil else {
+                row.dubbedAudioURL = nil
+                row.dubbedAudioSignature = nil
                 continue
             }
-
-            let prev = currentCluster.last!
-            let gap = item.startTime.secondsValue - prev.endTime.secondsValue
-            let currentSpan = prev.endTime.secondsValue - currentCluster.first!.startTime.secondsValue
-
-            // 遇到明显的停顿、行数达到上限、或时长过长时，封口当前簇并开启新簇
-            if gap >= gapThreshold || currentCluster.count >= maxItems || currentSpan >= maxDuration {
-                clusters.append(currentCluster)
-                currentCluster = [item]
-            } else {
-                currentCluster.append(item)
-            }
+            let previousURL = row.dubbedAudioURL
+            try await manager.renderMatchedSpeech(item: row, voice: voice)
+            if let url = row.dubbedAudioURL, url != previousURL { rendered.append(url) }
         }
-
-        if !currentCluster.isEmpty {
-            clusters.append(currentCluster)
-        }
-
-        return clusters
+        try Task.checkCancellation()
+        completed = true
+        return planned
     }
 
-    /// 在局部对话簇内进行语速平滑与微调，杜绝全局时移
-    private func alignCluster(
-        cluster: [SubtitleItem],
-        language: String,
-        naturalPauseSeconds: Double,
-        prevActualEnd: Double,
-        nextOrigStart: Double,
-        videoDuration: Double?
-    ) -> [SubtitleItem] {
-        guard !cluster.isEmpty else { return [] }
-
-        let origStart = cluster.first!.startTime.secondsValue
-        let origEnd = cluster.last!.endTime.secondsValue
-
-        // 1. 簇起始时间：牢牢锚定在原声开讲时刻，且确保与前簇安全隔离（至少 40ms）
-        let clusterStart = max(origStart, prevActualEnd + 0.04)
-
-        // 2. 簇最大截止时间：允许安全借用后方自然静音缓冲（最多 1.2 秒），但绝不侵入下一簇原声起始区
-        let trailingGap = max(0.0, nextOrigStart - origEnd)
-        let safeBorrowSilence = min(1.2, max(0.0, trailingGap - 0.20))
-        var maxClusterEnd = origEnd + safeBorrowSilence
-        if let vidDur = videoDuration {
-            maxClusterEnd = min(maxClusterEnd, vidDur)
-        }
-        maxClusterEnd = max(clusterStart + 0.35, maxClusterEnd)
-
-        // 3. 计算簇内各句期望发音自然时长
-        let expectedDurations = cluster.map { expectedDurationForSubtitle($0, language: language) }
-        let totalExpectedDuration = expectedDurations.reduce(0.0, +)
-        let m = cluster.count
-
-        // 单句对话簇
-        if m == 1 {
-            let item = cluster[0]
-            let needed = expectedDurations[0]
-            let origSpan = max(0.3, origEnd - origStart)
-
-            let finalDur: Double
-            if needed <= origSpan {
-                // 译文较短：按自然舒适语速发音，略留余量，剩余时间作为自然静音停顿，避免极度拖沓
-                finalDur = max(0.35, min(origSpan, needed * 1.05))
-            } else {
-                // 译文较长：安全借用静音缓冲，最多延展至 maxClusterEnd
-                finalDur = max(0.35, min(needed, maxClusterEnd - clusterStart))
+    /// Validate and normalize usable ends without rewriting immutable ASR anchors.
+    /// Compare overlap as CMTime so exactly 30ms is accepted at any time offset.
+    private func validatedSourceEnds(_ items: [SubtitleItem], videoDuration: Double?) -> [CMTime]? {
+        if let videoDuration, !videoDuration.isFinite || videoDuration <= 0 { return nil }
+        let overlapTolerance = CMTime(value: 30, timescale: 1000)
+        var ends: [CMTime] = []
+        for (index, item) in items.enumerated() {
+            let start = CMTimeGetSeconds(item.sourceStartTime)
+            let end = CMTimeGetSeconds(item.sourceEndTime)
+            guard start.isFinite, end.isFinite, start >= 0,
+                  end - start >= 0.0999, videoDuration.map({ end <= $0 }) ?? true else { return nil }
+            if let previousEnd = ends.last, item.sourceStartTime < previousEnd {
+                guard CMTimeSubtract(previousEnd, item.sourceStartTime) <= overlapTolerance,
+                      start - items[index - 1].sourceStartTime.secondsValue >= 0.0999 else { return nil }
+                ends[index - 1] = item.sourceStartTime
             }
-
-            return [
-                SubtitleItem(
-                    id: item.id,
-                    startTime: CMTime.from(seconds: clusterStart),
-                    endTime: CMTime.from(seconds: clusterStart + finalDur),
-                    originalText: item.originalText,
-                    translatedText: item.translatedText,
-                    words: item.words,
-                    dubbedAudioURL: nil, sourceStartTime: item.sourceStartTime, sourceEndTime: item.sourceEndTime
-                )
-            ]
+            ends.append(item.sourceEndTime)
         }
-
-        // 多句对话簇：簇内共享时间预算，平衡各句语速
-        let targetPause = naturalPauseSeconds
-        let totalIdealPause = Double(m - 1) * targetPause
-        let idealClusterSpan = totalExpectedDuration + totalIdealPause
-        let origSpan = max(0.4, origEnd - clusterStart)
-        let availableSpan = max(0.4, maxClusterEnd - clusterStart)
-
-        var itemDurations: [Double] = []
-        var itemPause: Double = targetPause
-
-        if idealClusterSpan <= origSpan {
-            // 情况 A：译文文字量较少，充裕在原时段内
-            // 保持 1.0x 舒适发音时长，略加句间微停顿，留白自然停顿在簇末尾，绝不慢放拖拉
-            itemDurations = expectedDurations
-            itemPause = min(0.25, max(0.12, (origSpan - totalExpectedDuration) / Double(m)))
-        } else if idealClusterSpan <= availableSpan {
-            // 情况 B：译文文字量稍大，可在借用静音后以 1.0x 完美自然语速舒适展开
-            itemDurations = expectedDurations
-            itemPause = targetPause
-        } else {
-            // 情况 C：时间紧凑，簇内所有句子等比例分摊时间预算，避免单句急促爆发或单句停顿过长
-            let minPause = max(0.08, min(0.14, (availableSpan - totalExpectedDuration * 0.75) / Double(m - 1)))
-            let reservedPauses = Double(m - 1) * minPause
-            let speechBudget = max(Double(m) * 0.35, availableSpan - reservedPauses)
-            let ratio = speechBudget / max(0.1, totalExpectedDuration)
-            itemDurations = expectedDurations.map { max(0.35, $0 * ratio) }
-            itemPause = minPause
-        }
-
-        var result: [SubtitleItem] = []
-        var curStart = clusterStart
-
-        for (i, orig) in cluster.enumerated() {
-            let dur = itemDurations[i]
-            let curEnd = curStart + dur
-            result.append(
-                SubtitleItem(
-                    id: orig.id,
-                    startTime: CMTime.from(seconds: curStart),
-                    endTime: CMTime.from(seconds: curEnd),
-                    originalText: orig.originalText,
-                    translatedText: orig.translatedText,
-                    words: orig.words,
-                    dubbedAudioURL: nil, sourceStartTime: orig.sourceStartTime, sourceEndTime: orig.sourceEndTime
-                )
-            )
-            curStart = curEnd + itemPause
-        }
-
-        return result
-    }
-
-    /// 解析大模型返回的时间轴数据，并施加发音自然时长与局部防漂移的保底校验
-    internal func parseLLMTimeline(
-        from response: String,
-        baseMatched: [SubtitleItem],
-        language: String,
-        videoDuration: Double?
-    ) -> [SubtitleItem]? {
-        guard let data = response.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8) else {
-            return nil
-        }
-
-        struct LLMTimelineResponse: Codable {
-            struct Item: Codable {
-                let id: Int
-                let start: Double
-                let end: Double
-            }
-            let subtitles: [Item]
-        }
-
-        guard let decoded = try? JSONDecoder().decode(LLMTimelineResponse.self, from: data) else {
-            return nil
-        }
-
-        guard decoded.subtitles.count == baseMatched.count,
-              Set(decoded.subtitles.map(\.id)) == Set(baseMatched.indices),
-              decoded.subtitles.allSatisfy({ $0.start.isFinite && $0.end.isFinite && $0.start >= 0 && $0.end > $0.start }) else {
-            return nil
-        }
-        let map = Dictionary(decoded.subtitles.map { ($0.id, ($0.start, $0.end)) }, uniquingKeysWith: { first, _ in first })
-        var result: [SubtitleItem] = []
-        var lastEnd = 0.0
-
-        for (idx, base) in baseMatched.enumerated() {
-
-            if let timing = map[idx] {
-                let requestedDur = timing.1 - timing.0
-                let safeDur = max(0.20, min(base.durationSeconds + 0.5, requestedDur))
-
-                // 防漂移约束：大模型微调的结果，起止时间不得偏离局部基准超过 0.6 秒，杜绝跨场景漂移
-                let maxDrift = 0.6
-                let boundedStart = max(base.startTime.secondsValue - maxDrift,
-                                       min(base.startTime.secondsValue + maxDrift, timing.0))
-                let safeStart = max(lastEnd + 0.04, boundedStart)
-                let safeEnd = min(base.endTime.secondsValue + maxDrift, safeStart + safeDur)
-                guard safeEnd - safeStart >= 0.20 else { return nil }
-
-                result.append(SubtitleItem(
-                    id: base.id,
-                    startTime: CMTime.from(seconds: max(0, safeStart)),
-                    endTime: CMTime.from(seconds: safeEnd),
-                    originalText: base.originalText,
-                    translatedText: base.translatedText,
-                    words: base.words,
-                    dubbedAudioURL: nil, sourceStartTime: base.sourceStartTime, sourceEndTime: base.sourceEndTime
-                ))
-                lastEnd = safeEnd
-            } else {
-                let start = max(lastEnd + 0.04, base.startTime.secondsValue)
-                let end = start + base.durationSeconds
-                result.append(SubtitleItem(
-                    id: base.id,
-                    startTime: CMTime.from(seconds: start),
-                    endTime: CMTime.from(seconds: end),
-                    originalText: base.originalText,
-                    translatedText: base.translatedText,
-                    words: base.words,
-                    dubbedAudioURL: nil, sourceStartTime: base.sourceStartTime, sourceEndTime: base.sourceEndTime
-                ))
-                lastEnd = end
-            }
-        }
-
-        return result.count == baseMatched.count ? result : nil
-    }
-
-    /// 确定性约束校验器：杜绝字幕重合、保障发音持续时长，且不超过视频上限
-    private func enforceStrictConstraints(_ items: [SubtitleItem], videoDuration: Double? = nil) -> [SubtitleItem] {
-        guard !items.isEmpty else { return [] }
-
-        var sanitized: [SubtitleItem] = []
-        var lastEnd = 0.0
-
-        for (i, item) in items.enumerated() {
-            var start = item.startTime.secondsValue
-            var end = item.endTime.secondsValue
-
-            // 1. 杜绝上一句与下一句重叠交叉 (保持至少 30ms 间距)
-            if i > 0 && start < lastEnd + 0.03 {
-                start = lastEnd + 0.03
-            }
-
-            // 2. 保证单句至少持续 200ms
-            if end < start + 0.20 {
-                end = start + 0.20
-            }
-
-            // Reserve room for all remaining rows; never rewind a start into a previous row.
-            if let maxDur = videoDuration {
-                guard maxDur.isFinite, maxDur > 0 else { return [] }
-                let remaining = Double(items.count - i - 1)
-                let latestEnd = maxDur - remaining * 0.23
-                end = min(end, latestEnd)
-                guard end - start >= 0.199 else { return [] }
-            }
-            guard start.isFinite, end.isFinite, end > start else { return [] }
-
-            let validItem = SubtitleItem(
-                id: item.id,
-                startTime: CMTime.from(seconds: max(0, start)),
-                endTime: CMTime.from(seconds: end),
-                originalText: item.originalText,
-                translatedText: item.translatedText,
-                words: item.words,
-                dubbedAudioURL: nil, sourceStartTime: item.sourceStartTime, sourceEndTime: item.sourceEndTime
-            )
-            sanitized.append(validItem)
-            lastEnd = end
-        }
-
-        return sanitized
+        return ends
     }
 }

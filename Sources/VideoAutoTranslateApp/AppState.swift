@@ -29,6 +29,7 @@ public final class AppState: ObservableObject {
                 for item in project.subtitles {
                     item.dubbedAudioURL = nil
                     item.dubbedAudioSignature = nil
+                    item.naturalSpeech = nil
                     item.translationNeedsReview = !item.translatedText.isEmpty
                 }
                 project.isDirty = true
@@ -53,7 +54,7 @@ public final class AppState: ObservableObject {
     public let timelineAligner = TimelineAligner()
     public let audioMixer = AudioMixer()
     public let videoComposer = VideoComposer()
-    public let ttsService = SystemTTSService()
+    public var ttsService: TTSServiceProtocol = SystemTTSService()
     public let ollamaProbe = OllamaProbe()
     public let llmSegmenter = LLMSegmenter()
     @Published public var modelStorageManager = ModelStorageManager()
@@ -94,6 +95,7 @@ public final class AppState: ObservableObject {
         public let before: [SubtitleItem]
         public let after: [SubtitleItem]
         public let generation: Int
+        public let voice: String
     }
     @Published public var editProposal: EditProposal?
 
@@ -936,20 +938,28 @@ public final class AppState: ObservableObject {
         let config = project.llmConfig
         let media = project.videoURL
         let duration = try? await player.currentItem?.asset.load(.duration)
-        guard media == project.videoURL, snapshot == createSubtitlesSnapshot() else { return }
+        guard media == project.videoURL, config == project.llmConfig, snapshot == createSubtitlesSnapshot() else { return }
         guard let seconds = duration?.secondsValue, seconds.isFinite, seconds > 0 else {
             errorMessage = "无法读取媒体时长，请重新定位媒体后再生成时间建议"
             return
         }
-        let client = OpenAICompatibleClient(baseURL: config.effectiveBaseURL, apiKey: config.effectiveAPIKey)
-        await runEditingJob(name: "匹配译文时间轴", snapshot: snapshot) {
-            await self.timelineAligner.matchTimelineWithLLM(items: snapshot, config: config, client: client, videoDuration: duration?.secondsValue)
+        let voice = config.targetLanguageVoiceCode
+        await runEditingJob(name: "匹配译文时间轴", snapshot: snapshot, reviewUnchangedResult: true) {
+            try await self.timelineAligner.matchTimelineUsingSpeech(
+                items: snapshot, language: config.targetLanguage, voice: voice,
+                ttsService: self.ttsService, manager: self.subtitleManager, videoDuration: seconds
+            ) { current, total in
+                guard media == self.project.videoURL, !Task.isCancelled else { return }
+                self.project.currentStepName = "测量正常语速配音 \(current)/\(total)"
+                self.project.progress = Double(current) / Double(max(1, total))
+            }
         }
     }
 
     /// All automatic editing uses the same ownership and cancellation boundary.
-    public func runEditingJob(name: String, snapshot: [SubtitleItem], operation: @escaping @MainActor () async throws -> [SubtitleItem]) async {
+    public func runEditingJob(name: String, snapshot: [SubtitleItem], reviewUnchangedResult: Bool = false, operation: @escaping @MainActor () async throws -> [SubtitleItem]) async {
         let generation = projectGeneration
+        let voice = project.llmConfig.targetLanguageVoiceCode
         project.isProcessing = true
         project.currentStepName = name
         let worker = Task { try await operation() }
@@ -959,13 +969,13 @@ public final class AppState: ObservableObject {
                 try await worker.value
             } onCancel: { worker.cancel() }
             guard generation == projectGeneration, !worker.isCancelled, !Task.isCancelled else { return }
-            guard createSubtitlesSnapshot() == snapshot else {
+            guard createSubtitlesSnapshot() == snapshot, project.llmConfig.targetLanguageVoiceCode == voice else {
                 throw LLMError.parsingFailed("字幕已修改，请重新生成建议")
             }
             guard !result.isEmpty else { throw LLMError.parsingFailed("未生成有效字幕，原有内容已保留") }
             project.isProcessing = false
-            guard result != snapshot else { statusMessage = "没有可安全应用的新建议，原字幕已保留"; editingTask = nil; return }
-            editProposal = EditProposal(title: name, before: snapshot, after: result, generation: generation)
+            guard result != snapshot || reviewUnchangedResult else { statusMessage = "没有可安全应用的新建议，原字幕已保留"; editingTask = nil; return }
+            editProposal = EditProposal(title: name, before: snapshot, after: result, generation: generation, voice: voice)
             project.progress = 1
             statusMessage = "建议已生成；请预览并确认应用"
 
@@ -979,7 +989,7 @@ public final class AppState: ObservableObject {
     }
 
     public func applyEditProposal() {
-        guard let proposal = editProposal, proposal.generation == projectGeneration, createSubtitlesSnapshot() == proposal.before else {
+        guard let proposal = editProposal, proposal.generation == projectGeneration, proposal.voice == project.llmConfig.targetLanguageVoiceCode, createSubtitlesSnapshot() == proposal.before else {
             editProposal = nil
             errorMessage = "工程已改变，请重新生成建议"
             return
@@ -989,7 +999,12 @@ public final class AppState: ObservableObject {
         project.isDirty = true
         scheduleRecovery()
         editProposal = nil
-        statusMessage = "已应用建议，可撤销；请检查语速提示并试听"
+        let conflicts = proposal.after.filter { $0.dubbingTimingIssue != nil }.count
+        statusMessage = conflicts == 0 ? "已应用建议，可撤销；请试听" : "已应用时间建议；\(conflicts) 句配音超长，请精简译文或手动调时"
+        if previewAudioTrack != .original {
+            previewAudioTrack = .original
+            Task { await self.updatePreviewPlayerItem() }
+        }
     }
 
     /// 保持兼容
