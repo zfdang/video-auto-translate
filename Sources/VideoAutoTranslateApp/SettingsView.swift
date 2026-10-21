@@ -9,6 +9,8 @@ public struct SettingsView: View {
     @State private var selectedTab: SettingsTab = .asrModels
     @State private var isTestingASR: Bool = false
     @State private var asrTestFeedback: (isSuccess: Bool, message: String)? = nil
+    @State private var isProbingOllama: Bool = false
+    @State private var ollamaProbeFeedback: (isSuccess: Bool, message: String)? = nil
     @State private var selectedLanguageOption: String = "简体中文 (Simplified Chinese)"
     private let customLanguageTag: String = "__custom__"
 
@@ -273,12 +275,40 @@ public struct SettingsView: View {
 
                 if appState.project.llmConfig.providerType == .localOllama {
                     VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            TextField("Ollama 服务地址", text: $appState.project.llmConfig.ollamaBaseURL)
-                            Button("刷新探测") {
-                                Task {
-                                    await appState.probeLocalOllama()
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                TextField("Ollama 服务地址", text: $appState.project.llmConfig.ollamaBaseURL)
+                                Button(action: {
+                                    Task {
+                                        isProbingOllama = true
+                                        ollamaProbeFeedback = nil
+                                        let res = await appState.probeLocalOllamaDetailed()
+                                        await MainActor.run {
+                                            self.isProbingOllama = false
+                                            self.ollamaProbeFeedback = (res.success, res.message)
+                                        }
+                                    }
+                                }) {
+                                    HStack(spacing: 4) {
+                                        if isProbingOllama {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                        }
+                                        Text("刷新探测")
+                                    }
                                 }
+                                .disabled(isProbingOllama)
+                            }
+
+                            if let feedback = ollamaProbeFeedback {
+                                HStack(spacing: 6) {
+                                    Image(systemName: feedback.isSuccess ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                        .foregroundColor(feedback.isSuccess ? .green : .red)
+                                    Text(feedback.message)
+                                        .font(.caption)
+                                        .foregroundColor(feedback.isSuccess ? .green : .red)
+                                }
+                                .padding(.top, 2)
                             }
                         }
 

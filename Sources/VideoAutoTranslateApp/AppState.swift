@@ -171,16 +171,29 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 探测本地 Ollama
-    public func probeLocalOllama() async {
-        let models = await ollamaProbe.fetchLocalModels(baseURL: project.llmConfig.ollamaBaseURL)
+    /// 详细探测本地 Ollama 并更新模型列表与即时连通反馈
+    @discardableResult
+    public func probeLocalOllamaDetailed() async -> (success: Bool, message: String) {
+        let res = await ollamaProbe.probeDetailed(baseURL: project.llmConfig.ollamaBaseURL)
         await MainActor.run {
-            self.availableOllamaModels = models
-            if let preferred = self.ollamaProbe.findPreferredQwenModel(in: models) {
-                self.project.llmConfig.ollamaModel = preferred
+            self.availableOllamaModels = res.models
+            if !res.models.isEmpty {
+                if !res.models.contains(self.project.llmConfig.ollamaModel) {
+                    if let preferred = self.ollamaProbe.findPreferredQwenModel(in: res.models) {
+                        self.project.llmConfig.ollamaModel = preferred
+                    } else if let first = res.models.first {
+                        self.project.llmConfig.ollamaModel = first
+                    }
+                }
                 self.project.llmConfig.providerType = .localOllama
             }
         }
+        return (res.success, res.message)
+    }
+
+    /// 探测本地 Ollama
+    public func probeLocalOllama() async {
+        _ = await probeLocalOllamaDetailed()
     }
 
     /// 一键从 Ollama 官方源拉取推荐大语言模型并实时报告下载进度

@@ -52,29 +52,47 @@ public final class OllamaProbe {
 
     /// 检测本地 Ollama 服务是否在线并获取已安装模型列表
     public func fetchLocalModels(baseURL: String = "http://localhost:11434") async -> [String] {
+        let res = await probeDetailed(baseURL: baseURL)
+        return res.models
+    }
+
+    /// 详细探测本地 Ollama 服务连接与模型状态，包含网络延迟与清晰说明
+    public func probeDetailed(baseURL: String = "http://localhost:11434") async -> (success: Bool, message: String, models: [String]) {
         var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if base.hasSuffix("/") { base.removeLast() }
         if base.hasSuffix("/v1") {
             base = String(base.dropLast(3))
         }
 
-        guard let url = URL(string: "\(base)/api/tags") else {
-            return []
+        guard let url = URL(string: "\(base)/api/tags"), let scheme = url.scheme, ["http", "https"].contains(scheme.lowercased()) else {
+            return (false, "URL 格式不合法，请输入有效的 http:// 或 https:// 地址", [])
         }
 
+        let start = Date()
         var request = URLRequest(url: url)
         request.timeoutInterval = 3.0 // 快速探测，超时 3 秒
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                return []
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return (false, "未收到有效的网络响应", [])
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                return (false, "Ollama 响应异常 (HTTP \(httpResponse.statusCode))", [])
             }
 
             let tags = try JSONDecoder().decode(OllamaTagsResponse.self, from: data)
-            return tags.models.map { $0.name }
+            let models = tags.models.map { $0.name }
+            let elapsed = Int(Date().timeIntervalSince(start) * 1000)
+
+            if models.isEmpty {
+                return (true, "连接正常 (延迟 \(elapsed)ms)，但本地尚未安装任何模型", [])
+            } else {
+                return (true, "连接正常 (延迟 \(elapsed)ms)，已检测到 \(models.count) 个可用模型", models)
+            }
         } catch {
-            return []
+            return (false, "无法连接到 \(base)，请检查 Ollama 是否已在后台启动", [])
         }
     }
 
