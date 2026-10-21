@@ -52,13 +52,15 @@ public final class TimelineAligner {
     /// Short speech leaves silence in place. Long speech can borrow at most 500ms
     /// after its source interval, without moving the following utterance.
     /// Text estimates are for offline suggestions only; the app measures TTS first.
+    /// Source overlaps up to 30ms reduce the preceding usable interval only.
+    /// Without videoDuration, the final utterance cannot borrow beyond its source end.
     public func matchTimelineToTranslation(
         items: [SubtitleItem], language: String = "zh", videoDuration: Double? = nil
     ) -> [SubtitleItem] {
-        guard validAnchors(items, videoDuration: videoDuration) else { return items }
+        guard let sourceEnds = validatedSourceEnds(items, videoDuration: videoDuration) else { return items }
         return items.enumerated().map { index, item in
             let start = item.sourceStartTime.secondsValue
-            let sourceEnd = item.sourceEndTime.secondsValue
+            let sourceEnd = sourceEnds[index].secondsValue
             let nextStart = index + 1 < items.count ? items[index + 1].sourceStartTime.secondsValue : videoDuration
             let gap = nextStart.map { max(0, $0 - sourceEnd) } ?? 0
             let pause = min(0.08, gap)
@@ -70,6 +72,10 @@ public final class TimelineAligner {
             let result = item.snapshot()
             result.startTime = item.sourceStartTime
             result.endTime = .from(seconds: end)
+            if index + 1 < items.count {
+                // Keep sub-millisecond anchors exact when the proposed end rounds up.
+                result.endTime = min(result.endTime, items[index + 1].sourceStartTime)
+            }
             return result
         }
     }
@@ -91,8 +97,8 @@ public final class TimelineAligner {
         videoDuration: Double,
         progress: @MainActor (Int, Int) -> Void = { _, _ in }
     ) async throws -> [SubtitleItem] {
-        guard validAnchors(items, videoDuration: videoDuration) else {
-            throw TTSError.synthesisFailed("原始时间存在重叠、无效值或超出视频范围，无法自动匹配；请重新分句或跳过匹配进行手动调时。")
+        guard validatedSourceEnds(items, videoDuration: videoDuration) != nil else {
+            throw TTSError.synthesisFailed("原始时间重叠超过 30ms、修正后不足 100ms、存在无效值或超出视频范围，无法自动匹配；请重新分句或跳过匹配进行手动调时。")
         }
         let measured = items.map { $0.snapshot() }
         for (index, row) in measured.enumerated() {
@@ -126,16 +132,24 @@ public final class TimelineAligner {
         return planned
     }
 
-    private func validAnchors(_ items: [SubtitleItem], videoDuration: Double?) -> Bool {
-        if let videoDuration, !videoDuration.isFinite || videoDuration <= 0 { return false }
-        var lastEnd = 0.0
-        for item in items {
+    /// Validate and normalize usable ends without rewriting immutable ASR anchors.
+    /// Compare overlap as CMTime so exactly 30ms is accepted at any time offset.
+    private func validatedSourceEnds(_ items: [SubtitleItem], videoDuration: Double?) -> [CMTime]? {
+        if let videoDuration, !videoDuration.isFinite || videoDuration <= 0 { return nil }
+        let overlapTolerance = CMTime(value: 30, timescale: 1000)
+        var ends: [CMTime] = []
+        for (index, item) in items.enumerated() {
             let start = CMTimeGetSeconds(item.sourceStartTime)
             let end = CMTimeGetSeconds(item.sourceEndTime)
-            guard start.isFinite, end.isFinite, start >= lastEnd,
-                  end - start >= 0.0999, videoDuration.map({ end <= $0 }) ?? true else { return false }
-            lastEnd = end
+            guard start.isFinite, end.isFinite, start >= 0,
+                  end - start >= 0.0999, videoDuration.map({ end <= $0 }) ?? true else { return nil }
+            if let previousEnd = ends.last, item.sourceStartTime < previousEnd {
+                guard CMTimeSubtract(previousEnd, item.sourceStartTime) <= overlapTolerance,
+                      start - items[index - 1].sourceStartTime.secondsValue >= 0.0999 else { return nil }
+                ends[index - 1] = item.sourceStartTime
+            }
+            ends.append(item.sourceEndTime)
         }
-        return true
+        return ends
     }
 }

@@ -37,6 +37,82 @@ final class AnchoredDubbingTests: XCTestCase {
         XCTAssertEqual(TimelineAligner().matchTimelineToTranslation(items: rows, videoDuration: 4), rows)
     }
 
+    func testMicroOverlapsClampUsableEndsAndPreserveOriginalAnchors() throws {
+        let aligner = TimelineAligner()
+        let long = String(repeating: "长", count: 80)
+        for offset in [0.0, 3600.0] {
+            for overlap in [0.01, 0.02, 0.03] {
+                let rows = [row(offset, offset + 2, text: long), row(offset + 2 - overlap, offset + 4, text: long)]
+                let planned = aligner.matchTimelineToTranslation(items: rows, videoDuration: offset + 4)
+                XCTAssertEqual(planned[0].endTime, rows[1].sourceStartTime)
+                XCTAssertEqual(planned[1].startTime, rows[1].sourceStartTime)
+                XCTAssertEqual(planned[0].sourceEndTime, rows[0].sourceEndTime)
+                XCTAssertEqual(rows[0].endTime.secondsValue, offset + 2, accuracy: 0.00001)
+                XCTAssertEqual(aligner.matchTimelineToTranslation(items: planned, videoDuration: offset + 4), planned)
+                let restored = try JSONDecoder().decode(SubtitleItem.self, from: JSONEncoder().encode(planned[0]))
+                XCTAssertEqual(restored.sourceEndTime, rows[0].sourceEndTime)
+                XCTAssertEqual(restored.endTime, rows[1].sourceStartTime)
+            }
+        }
+    }
+
+    func testLargerOverlapsAndCorrectionsLeavingTooLittleSpeechRemainRejected() {
+        for rows in [[row(0, 2), row(1.969, 4)], [row(0, 0.11), row(0.09, 1)]] {
+            let result = TimelineAligner().matchTimelineToTranslation(items: rows, videoDuration: 4)
+            XCTAssertTrue(result[0] === rows[0], "Unsafe input must remain unchanged")
+            XCTAssertTrue(result[1] === rows[1])
+        }
+    }
+
+    func testMicroOverlapClampingCannotRoundPastASubMillisecondAnchor() {
+        let first = row(0, 2, text: String(repeating: "长", count: 80))
+        let next = SubtitleItem(startTime: CMTime(value: 19706, timescale: 10000), endTime: .from(seconds: 4), originalText: "source", translatedText: "下句")
+        let result = TimelineAligner().matchTimelineToTranslation(items: [first, next], videoDuration: 4)
+        XCTAssertEqual(result[0].endTime, next.sourceStartTime)
+        XCTAssertLessThanOrEqual(result[0].endTime, result[1].startTime)
+    }
+
+    func testFinalUtteranceBorrowsOnlyWithAnExplicitMediaBoundary() {
+        let long = String(repeating: "长", count: 80)
+        let rows = [row(0, 2, text: long), row(8, 9, text: long)]
+        let aligner = TimelineAligner()
+        let unknown = aligner.matchTimelineToTranslation(items: rows)
+        XCTAssertEqual(unknown[0].endTime.secondsValue, 2.5, accuracy: 0.001, "A following anchor bounds borrowing even without video duration")
+        XCTAssertEqual(unknown[1].endTime.secondsValue, 9, accuracy: 0.001)
+        let bounded = aligner.matchTimelineToTranslation(items: rows, videoDuration: 12)
+        XCTAssertEqual(bounded[1].endTime.secondsValue, 9.5, accuracy: 0.001)
+        let atEnd = aligner.matchTimelineToTranslation(items: rows, videoDuration: 9)
+        XCTAssertEqual(atEnd[1].endTime.secondsValue, 9, accuracy: 0.001)
+    }
+
+    @MainActor func testMeasuredMatchingAcceptsMicroOverlapWithoutShiftingSpeechStarts() async throws {
+        let rows = [row(0, 1), row(0.98, 2)]
+        let fixture = TimingFixtureTTS(duration: 1)
+        let result = try await TimelineAligner().matchTimelineUsingSpeech(
+            items: rows, language: "zh", voice: "zh-CN", ttsService: fixture,
+            manager: SubtitleManager(), videoDuration: 2)
+        defer { for item in result { if let url = item.dubbedAudioURL { try? FileManager.default.removeItem(at: url) } } }
+        XCTAssertEqual(fixture.calls, 2)
+        XCTAssertEqual(result[0].endTime, rows[1].sourceStartTime)
+        XCTAssertEqual(result[1].startTime, rows[1].sourceStartTime)
+        XCTAssertEqual(result[0].sourceEndTime, rows[0].sourceEndTime)
+        for item in result { XCTAssertTrue(item.hasCurrentAudio(voice: "zh-CN")) }
+        let actual = try await AVURLAsset(url: XCTUnwrap(result[0].dubbedAudioURL)).load(.duration)
+        XCTAssertLessThanOrEqual(actual.seconds, result[0].durationSeconds + DubbingPacing.timeTolerance)
+    }
+
+    @MainActor func testUnsafeOverlapFailsBeforeSynthesizingSpeech() async {
+        for rows in [[row(0, 2), row(1.969, 4)], [row(0, 0.11), row(0.09, 1)]] {
+            let fixture = TimingFixtureTTS(duration: 1)
+            do {
+                _ = try await TimelineAligner().matchTimelineUsingSpeech(
+                    items: rows, language: "zh", voice: "zh-CN", ttsService: fixture,
+                    manager: SubtitleManager(), videoDuration: 4)
+                XCTFail("Unsafe overlap must be rejected before measurement")
+            } catch { XCTAssertEqual(fixture.calls, 0) }
+        }
+    }
+
     @MainActor func testRealMeasurementOverridesCharacterEstimateAndCacheSurvivesTimingEdits() async throws {
         let tts = TimingFixtureTTS(duration: 1, leading: 0.25, trailing: 0.35)
         let manager = SubtitleManager()
