@@ -342,7 +342,7 @@ public final class TimelineAligner {
     }
 
     /// 解析大模型返回的时间轴数据，并施加发音自然时长与局部防漂移的保底校验
-    private func parseLLMTimeline(
+    internal func parseLLMTimeline(
         from response: String,
         baseMatched: [SubtitleItem],
         language: String,
@@ -365,7 +365,12 @@ public final class TimelineAligner {
             return nil
         }
 
-        let map = Dictionary(uniqueKeysWithValues: decoded.subtitles.map { ($0.id, ($0.start, $0.end)) })
+        guard decoded.subtitles.count == baseMatched.count,
+              Set(decoded.subtitles.map(\.id)) == Set(baseMatched.indices),
+              decoded.subtitles.allSatisfy({ $0.start.isFinite && $0.end.isFinite && $0.start >= 0 && $0.end > $0.start }) else {
+            return nil
+        }
+        let map = Dictionary(decoded.subtitles.map { ($0.id, ($0.start, $0.end)) }, uniquingKeysWith: { first, _ in first })
         var result: [SubtitleItem] = []
         var lastEnd = 0.0
 
