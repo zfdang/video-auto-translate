@@ -101,4 +101,17 @@ final class ReviewRegressionTests: XCTestCase {
         } catch { XCTAssertTrue(error.localizedDescription.contains("缺少配音")) }
     }
 
+    func testIncompleteSubtitleExportRequiresExplicitSkipping() throws {
+        let good = SubtitleItem(startTime: .zero, endTime: .from(seconds: 1), originalText: "A", translatedText: "甲")
+        let bad = SubtitleItem(startTime: .from(seconds: 1), endTime: .from(seconds: 2), originalText: "B")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".srt")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let exporter = SRTExporter()
+        XCTAssertThrowsError(try exporter.saveToFile(items: [good, bad], to: url, mode: .translatedOnly))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        try exporter.saveToFile(items: [good, bad], to: url, mode: .translatedOnly, allowSkippingIssues: true)
+        XCTAssertEqual(exporter.validate(items: [good, bad], mode: .translatedOnly).validCount, 1)
+        XCTAssertFalse(try String(contentsOf: url).contains("待翻译"))
+    }
+
 }

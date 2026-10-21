@@ -11,6 +11,8 @@ public struct ExportView: View {
     @State private var videoSubtitleMode: SubtitleExportMode = .bilingual
     @State private var isExporting: Bool = false
     @State private var exportMessage: String = ""
+    @State private var allowSkippingIssues = false
+    private var validation: ExportValidationReport { SRTExporter().validate(items: appState.project.subtitles, mode: subtitleFileMode) }
 
     private var hasTranslations: Bool {
         appState.project.subtitles.contains(where: { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
@@ -37,6 +39,18 @@ public struct ExportView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    if validation.hasIssues {
+                        VStack(alignment: .leading) {
+                            Text("导出检查：\(validation.validCount)/\(validation.totalCount) 句可交付").font(.headline)
+                            ForEach(validation.issues) { issue in
+                                Button("定位第\(issue.row)句：\(issue.reason)") {
+                                    appState.project.selectedSubtitleID = issue.itemID
+                                    dismiss()
+                                }.buttonStyle(.link)
+                            }
+                            Toggle("我明确选择跳过以上问题行", isOn: $allowSkippingIssues)
+                        }
+                    }
                     // 方案 1: 导出独立字幕文件
                     VStack(alignment: .leading, spacing: 12) {
                         Text("1. 导出独立字幕文件 (.srt / .vtt)")
@@ -56,12 +70,12 @@ public struct ExportView: View {
                             Button("导出 SRT") {
                                 saveSubtitleFile(extensionType: "srt")
                             }
-                            .disabled(appState.project.subtitles.isEmpty)
+                            .disabled(appState.project.subtitles.isEmpty || (validation.hasIssues && !allowSkippingIssues))
 
                             Button("导出 WebVTT") {
                                 saveSubtitleFile(extensionType: "vtt")
                             }
-                            .disabled(appState.project.subtitles.isEmpty)
+                            .disabled(appState.project.subtitles.isEmpty || (validation.hasIssues && !allowSkippingIssues))
                         }
                     }
                     .padding(14)
@@ -244,7 +258,7 @@ public struct ExportView: View {
             if response == .OK, let url = panel.url {
                 let exporter = SRTExporter()
                 do {
-                    try exporter.saveToFile(items: appState.project.subtitles, to: url, mode: subtitleFileMode)
+                    try exporter.saveToFile(items: appState.project.subtitles, to: url, mode: subtitleFileMode, allowSkippingIssues: allowSkippingIssues)
                     exportMessage = "字幕已成功保存至: \(url.lastPathComponent)"
                 } catch {
                     exportMessage = "保存字幕失败: \(error.localizedDescription)"
