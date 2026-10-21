@@ -576,20 +576,47 @@ public final class AppState: ObservableObject {
         statusMessage = "已重做操作"
     }
 
-    /// 校验是否满足合并条件：至少选中 2 行且必须在时间轴上相邻连续
+    /// 校验是否满足合并条件：多选需连续；单选或聚焦需存在下一行
     public func canMerge(ids: Set<UUID>) -> Bool {
-        guard ids.count >= 2 else { return false }
-        let indices = project.subtitles.enumerated()
-            .filter { ids.contains($1.id) }
-            .map { $0.offset }
-            .sorted()
-        guard indices.count == ids.count else { return false }
-        for i in 0..<(indices.count - 1) {
-            if indices[i+1] != indices[i] + 1 {
-                return false
+        if ids.count >= 2 {
+            let indices = project.subtitles.enumerated()
+                .filter { ids.contains($1.id) }
+                .map { $0.offset }
+                .sorted()
+            guard indices.count == ids.count else { return false }
+            for i in 0..<(indices.count - 1) {
+                if indices[i+1] != indices[i] + 1 {
+                    return false
+                }
+            }
+            return true
+        } else if let singleID = ids.first ?? project.selectedSubtitleID {
+            if let index = project.subtitles.firstIndex(where: { $0.id == singleID }),
+               index + 1 < project.subtitles.count {
+                return true
             }
         }
-        return true
+        return false
+    }
+
+    /// 删除指定字幕行
+    public func deleteSubtitle(id: UUID) {
+        guard let index = project.subtitles.firstIndex(where: { $0.id == id }) else { return }
+        recordUndoSnapshot()
+        project.subtitles.remove(at: index)
+        project.isDirty = true
+        statusMessage = "已删除该行字幕"
+    }
+
+    /// 将指定字幕与下一行字幕直接合并
+    public func mergeSubtitleWithNext(id: UUID) {
+        guard let index = project.subtitles.firstIndex(where: { $0.id == id }),
+              index + 1 < project.subtitles.count else {
+            statusMessage = "已经是最后一行，无法向下合并"
+            return
+        }
+        let nextID = project.subtitles[index + 1].id
+        mergeSubtitles(ids: [id, nextID])
     }
 
     /// 拆分指定字幕 (R14: 绑定确切行 ID，防止错位拆分)
@@ -679,17 +706,25 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 合并选中的字幕 (Cmd+J) (R15: 严格连续性校验)
+    /// 合并选中的字幕 (Cmd+J) (支持多选相邻合并，或单选/当前行向下合并)
     public func mergeSubtitles(ids: Set<UUID>) {
-        guard ids.count >= 2 else {
-            errorMessage = "请先选中至少两行相邻字幕进行合并"
-            statusMessage = "合并失败：需选中至少两行字幕"
-            return
+        var targetIDs = ids
+        if targetIDs.count < 2 {
+            let baseID = targetIDs.first ?? project.selectedSubtitleID
+            if let base = baseID,
+               let index = project.subtitles.firstIndex(where: { $0.id == base }),
+               index + 1 < project.subtitles.count {
+                targetIDs = [base, project.subtitles[index + 1].id]
+            } else {
+                errorMessage = "请先选中至少两行相邻字幕，或选中一行向下合并"
+                statusMessage = "合并提示：请选择需合并的字幕行"
+                return
+            }
         }
 
         // 获取被选中的索引并排序
         let indices = project.subtitles.enumerated()
-            .filter { ids.contains($1.id) }
+            .filter { targetIDs.contains($1.id) }
             .map { $0.offset }
             .sorted()
 
@@ -709,7 +744,7 @@ public final class AppState: ObservableObject {
         let selectedItems = indices.map { project.subtitles[$0] }
         if let merged = subtitleManager.merge(items: selectedItems) {
             let firstIndex = indices.first!
-            project.subtitles.removeAll(where: { ids.contains($0.id) })
+            project.subtitles.removeAll(where: { targetIDs.contains($0.id) })
             project.subtitles.insert(merged, at: firstIndex)
             project.selectedSubtitleID = merged.id
             project.isDirty = true
