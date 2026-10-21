@@ -11,9 +11,9 @@ public enum ASRError: LocalizedError {
         case .audioFileNotFound:
             return "待识别音频文件不存在"
         case .engineNotReady(let msg):
-            return "ASR 引擎未就绪: \(msg)"
+            return msg
         case .transcriptionFailed(let msg):
-            return "语音识别失败: \(msg)"
+            return msg
         }
     }
 }

@@ -10,17 +10,39 @@ public struct TranslationEntry: Codable {
 public final class SubtitleTranslator {
     public init() {}
 
-    /// 执行批量字幕翻译
+    /// 执行批量字幕翻译 (三阶段生命周期：1. 启动模型 -> 2. 翻译文本 -> 3. 终止模型)
     /// - Parameters:
     ///   - items: 待翻译的字幕行
     ///   - config: LLM 配置
-    ///   - onProgress: 进度回调 (0.0 ~ 1.0)
+    ///   - onProgress: 进度与状态提示回调 (0.0 ~ 1.0, 状态说明)
     public func translate(
         items: [SubtitleItem],
         config: LLMConfiguration,
-        onProgress: ((Double) -> Void)? = nil
+        onProgress: ((_ progress: Double, _ status: String) -> Void)? = nil
     ) async throws {
         guard !items.isEmpty else { return }
+
+        let modelName = config.effectiveModel
+
+        // 任务结束/取消/异常时，确保终止本地 Ollama 模型释放显存
+        defer {
+            if config.providerType == .localOllama {
+                Task {
+                    await OllamaProbe().unloadModel(baseURL: config.ollamaBaseURL, model: modelName)
+                }
+            }
+        }
+
+        // 阶段 1: 启动模型
+        await MainActor.run {
+            onProgress?(0.05, "正在启动模型 (\(modelName))...")
+        }
+
+        if config.providerType == .localOllama {
+            await OllamaProbe().preloadModel(baseURL: config.ollamaBaseURL, model: modelName)
+        }
+
+        try Task.checkCancellation()
 
         let client = OpenAICompatibleClient(
             baseURL: config.effectiveBaseURL,
@@ -35,21 +57,70 @@ public final class SubtitleTranslator {
 
         var completedCount = 0
         let totalCount = items.count
+        let totalBatches = chunks.count
 
-        for chunk in chunks {
+        // 阶段 2: 利用模型开始翻译文本
+        for (batchIdx, chunk) in chunks.enumerated() {
+            try Task.checkCancellation()
+
+            let currentBatch = batchIdx + 1
+            let progressBefore = 0.05 + 0.90 * (Double(completedCount) / Double(totalCount))
+            let promptText: String
+            if totalBatches > 1 {
+                promptText = "正在翻译文本 (第 \(currentBatch)/\(totalBatches) 批, \(completedCount)/\(totalCount) 行)..."
+            } else {
+                promptText = "正在翻译文本 (共 \(totalCount) 行)..."
+            }
+
+            await MainActor.run {
+                onProgress?(progressBefore, promptText)
+            }
+
             try await translateChunk(
                 chunk: chunk,
                 targetLanguage: config.targetLanguage,
-                model: config.effectiveModel,
+                model: modelName,
                 temperature: config.temperature,
                 client: client
             )
 
             completedCount += chunk.count
-            let currentProgress = Double(completedCount) / Double(totalCount)
-            await MainActor.run {
-                onProgress?(currentProgress)
+            let progressAfter = 0.05 + 0.90 * (Double(completedCount) / Double(totalCount))
+            let doneBatchText: String
+            if totalBatches > 1 {
+                doneBatchText = "正在翻译文本 (第 \(currentBatch)/\(totalBatches) 批完成, \(completedCount)/\(totalCount) 行)..."
+            } else {
+                doneBatchText = "正在翻译文本 (共 \(totalCount) 行完成)..."
             }
+
+            await MainActor.run {
+                onProgress?(progressAfter, doneBatchText)
+            }
+        }
+
+        try Task.checkCancellation()
+
+        // 阶段 3: 终止模型
+        await MainActor.run {
+            onProgress?(0.98, "正在终止模型...")
+        }
+
+        if config.providerType == .localOllama {
+            await OllamaProbe().unloadModel(baseURL: config.ollamaBaseURL, model: modelName)
+        }
+
+        // 适当微小延迟以便状态栏提示平滑过渡展示
+        try? await Task.sleep(nanoseconds: 200_000_000)
+    }
+
+    /// 兼容旧版仅传 Double 的进度回调
+    public func translate(
+        items: [SubtitleItem],
+        config: LLMConfiguration,
+        onProgress: @escaping (Double) -> Void
+    ) async throws {
+        try await translate(items: items, config: config) { progress, _ in
+            onProgress(progress)
         }
     }
 

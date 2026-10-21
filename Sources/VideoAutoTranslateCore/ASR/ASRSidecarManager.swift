@@ -63,9 +63,27 @@ public final class ASRSidecarManager: ObservableObject {
         return await startSidecar()
     }
 
-    /// 查找 Python 路径 (R13: 移除硬编码私人路径，支持环境变量、应用支持目录及系统环境)
+    /// 校验 Python 环境是否安装了必须依赖 (fastapi 与 uvicorn)
+    private func isPythonCandidateValid(path: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: path) else { return false }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = ["-c", "import fastapi, uvicorn"]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do {
+            try p.run()
+            p.waitUntilExit()
+            return p.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    /// 查找 Python 路径 (R13: 智能探测各环境候选并验证依赖有效性)
     public func resolvePythonPath() -> String {
         let fileManager = FileManager.default
+        let home = fileManager.homeDirectoryForCurrentUser
 
         // 1. 优先读取环境变量 VAT_PYTHON_PATH
         if let envPath = ProcessInfo.processInfo.environment["VAT_PYTHON_PATH"],
@@ -73,21 +91,33 @@ public final class ASRSidecarManager: ObservableObject {
             return envPath
         }
 
-        // 2. 检查本地工作区或 Application Support 下的标准独立 venv
+        // 2. 检查应用专属目录、工作区虚拟环境及 Conda 等候选路径
         var candidates: [String] = []
         if let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             candidates.append(appSupport.appendingPathComponent("VideoAutoTranslate/venv/bin/python").path)
             candidates.append(appSupport.appendingPathComponent("VideoAutoTranslate/venv/bin/python3").path)
         }
 
-        // 3. 当前目录下的 .venv
+        // 工作区与常用虚拟环境路径
         candidates.append(URL(fileURLWithPath: fileManager.currentDirectoryPath).appendingPathComponent(".venv/bin/python").path)
+        candidates.append(home.appendingPathComponent("workspaces/video-auto-translate/.venv/bin/python").path)
+        candidates.append(home.appendingPathComponent("workspaces/VideoLingo/.venv/bin/python").path)
+        candidates.append(home.appendingPathComponent("miniconda3/bin/python").path)
+        candidates.append(home.appendingPathComponent("miniconda3/bin/python3").path)
 
-        // 4. 标准系统与 Homebrew 路径
+        // 标准系统与 Homebrew 路径
         candidates.append("/opt/homebrew/bin/python3")
         candidates.append("/usr/local/bin/python3")
         candidates.append("/usr/bin/python3")
 
+        // 优先筛选已安装 fastapi 依赖的 Python
+        for path in candidates {
+            if isPythonCandidateValid(path: path) {
+                return path
+            }
+        }
+
+        // 回退选择任意存在的文件路径
         for path in candidates {
             if fileManager.fileExists(atPath: path) {
                 return path
@@ -99,6 +129,7 @@ public final class ASRSidecarManager: ObservableObject {
     /// 查找 asr_server.py 脚本路径
     public func resolveServerScriptPath() -> String? {
         let fileManager = FileManager.default
+        let home = fileManager.homeDirectoryForCurrentUser
 
         // 1. App Bundle Resources
         if let resourcePath = Bundle.main.resourcePath {
@@ -115,10 +146,10 @@ public final class ASRSidecarManager: ObservableObject {
             return candidate
         }
 
-        // 3. 开发工作区路径
-        let hardcoded = "/Users/zfdang/workspaces/video-auto-translate/scripts/asr_server.py"
-        if fileManager.fileExists(atPath: hardcoded) {
-            return hardcoded
+        // 3. 开发工作区路径回退
+        let workspaceCandidate = home.appendingPathComponent("workspaces/video-auto-translate/scripts/asr_server.py").path
+        if fileManager.fileExists(atPath: workspaceCandidate) {
+            return workspaceCandidate
         }
 
         return nil
@@ -143,9 +174,13 @@ public final class ASRSidecarManager: ObservableObject {
         p.executableURL = URL(fileURLWithPath: pythonPath)
         p.arguments = [scriptPath, "--port", "\(defaultPort)"]
 
-        let devNull = FileHandle.nullDevice
-        p.standardOutput = devNull
-        p.standardError = devNull
+        var env = ProcessInfo.processInfo.environment
+        env["HF_HUB_DISABLE_XET"] = "1"
+        p.environment = env
+
+        let errPipe = Pipe()
+        p.standardError = errPipe
+        p.standardOutput = FileHandle.nullDevice
 
         do {
             try p.run()
@@ -156,8 +191,11 @@ public final class ASRSidecarManager: ObservableObject {
             for _ in 0..<16 {
                 try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
                 if !p.isRunning {
+                    let errData = errPipe.fileHandleForReading.availableData
+                    let errMsg = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let fullDesc = errMsg.isEmpty ? "ASR 子进程异常退出 (PID: \(pid))" : "ASR 引擎启动错误: \(errMsg.prefix(200))"
                     await MainActor.run {
-                        self.status = .error("ASR 子进程异常退出 (PID: \(pid))")
+                        self.status = .error(fullDesc)
                     }
                     return false
                 }

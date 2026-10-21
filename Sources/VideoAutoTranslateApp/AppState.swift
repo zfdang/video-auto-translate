@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import AVFoundation
 import AppKit
+import Combine
 import VideoAutoTranslateCore
 
 @MainActor
@@ -30,6 +31,7 @@ public final class AppState: ObservableObject {
 
     // 设置与探测
     @Published public var availableOllamaModels: [String] = []
+    @Published public var ollamaPullStates: [String: ModelState] = [:]
     @Published public var isASRServerOnline: Bool = false
     @Published public var showSettings: Bool = false
     @Published public var showHelp: Bool = false
@@ -58,6 +60,8 @@ public final class AppState: ObservableObject {
     private var lastTextEditSnapshotTime: Date = .distantPast
 
     private var timeObserverToken: Any?
+    private var cancellables = Set<AnyCancellable>()
+    private var downloadTasks: [String: Task<Void, Never>] = [:]
 
     private func bindProjectSubtitles() {
         for item in project.subtitles {
@@ -77,6 +81,20 @@ public final class AppState: ObservableObject {
     public init() {
         setupTimeObserver()
         bindProjectSubtitles()
+
+        // 桥接嵌套 ObservableObject 的变更通知至 AppState，保证 SwiftUI 界面第 0 毫秒即时刷新
+        modelStorageManager.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
+        sidecarManager.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
         Task {
             await sidecarManager.probeExistingStatus()
             await probeLocalOllama()
@@ -153,14 +171,54 @@ public final class AppState: ObservableObject {
         }
     }
 
+    /// 详细探测本地 Ollama 并更新模型列表与即时连通反馈
+    @discardableResult
+    public func probeLocalOllamaDetailed() async -> (success: Bool, message: String) {
+        let res = await ollamaProbe.probeDetailed(baseURL: project.llmConfig.ollamaBaseURL)
+        await MainActor.run {
+            self.availableOllamaModels = res.models
+            if !res.models.isEmpty {
+                if !res.models.contains(self.project.llmConfig.ollamaModel) {
+                    if let preferred = self.ollamaProbe.findPreferredQwenModel(in: res.models) {
+                        self.project.llmConfig.ollamaModel = preferred
+                    } else if let first = res.models.first {
+                        self.project.llmConfig.ollamaModel = first
+                    }
+                }
+                self.project.llmConfig.providerType = .localOllama
+            }
+        }
+        return (res.success, res.message)
+    }
+
     /// 探测本地 Ollama
     public func probeLocalOllama() async {
-        let models = await ollamaProbe.fetchLocalModels(baseURL: project.llmConfig.ollamaBaseURL)
-        await MainActor.run {
-            self.availableOllamaModels = models
-            if let preferred = self.ollamaProbe.findPreferredQwenModel(in: models) {
-                self.project.llmConfig.ollamaModel = preferred
-                self.project.llmConfig.providerType = .localOllama
+        _ = await probeLocalOllamaDetailed()
+    }
+
+    /// 一键从 Ollama 官方源拉取推荐大语言模型并实时报告下载进度
+    public func pullOllamaModel(name: String) {
+        Task {
+            await MainActor.run {
+                self.ollamaPullStates[name] = .downloading(progress: 0.05, speed: "连接 Ollama 服务...")
+            }
+            do {
+                try await ollamaProbe.pullModel(name: name, baseURL: project.llmConfig.ollamaBaseURL) { [weak self] progress, speed in
+                    Task { @MainActor in
+                        self?.ollamaPullStates[name] = .downloading(progress: progress, speed: speed)
+                    }
+                }
+                await probeLocalOllama()
+                await MainActor.run {
+                    self.ollamaPullStates[name] = .ready(localPath: "Ollama: \(name)", sizeDescription: "")
+                    self.project.llmConfig.ollamaModel = name
+                    self.statusMessage = "模型 \(name) 已成功下载至 Ollama 并设为当前模型"
+                }
+            } catch {
+                await MainActor.run {
+                    self.ollamaPullStates[name] = .failed(error.localizedDescription)
+                    self.errorMessage = "Ollama 拉取模型失败: \(error.localizedDescription)"
+                }
             }
         }
     }
@@ -296,8 +354,8 @@ public final class AppState: ObservableObject {
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
-            statusMessage = "识别失败: \(error.localizedDescription)"
-            errorMessage = "转录识别失败: \(error.localizedDescription)"
+            statusMessage = "识别未完成: \(error.localizedDescription)"
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -310,17 +368,18 @@ public final class AppState: ObservableObject {
         let currentGen = projectGeneration
 
         project.isProcessing = true
-        project.currentStepName = "正在使用 \(project.llmConfig.effectiveModel) 翻译字幕..."
-        project.progress = 0.0
+        project.currentStepName = "正在启动模型 (\(project.llmConfig.effectiveModel))..."
+        project.progress = 0.05
 
         let worker = Task { () -> Void in
             try await translator.translate(
                 items: project.subtitles,
                 config: project.llmConfig
-            ) { [weak self] progress in
+            ) { [weak self] progress, status in
                 Task { @MainActor [weak self] in
                     guard let self = self, self.projectGeneration == currentGen, !Task.isCancelled else { return }
                     self.project.progress = progress
+                    self.project.currentStepName = status
                 }
             }
         }
@@ -341,8 +400,12 @@ public final class AppState: ObservableObject {
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
-            statusMessage = "翻译失败: \(error.localizedDescription)"
-            errorMessage = "翻译失败: \(error.localizedDescription)"
+            if Task.isCancelled {
+                statusMessage = "翻译已取消"
+            } else {
+                statusMessage = "翻译失败: \(error.localizedDescription)"
+                errorMessage = "翻译失败: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -513,20 +576,47 @@ public final class AppState: ObservableObject {
         statusMessage = "已重做操作"
     }
 
-    /// 校验是否满足合并条件：至少选中 2 行且必须在时间轴上相邻连续
+    /// 校验是否满足合并条件：多选需连续；单选或聚焦需存在下一行
     public func canMerge(ids: Set<UUID>) -> Bool {
-        guard ids.count >= 2 else { return false }
-        let indices = project.subtitles.enumerated()
-            .filter { ids.contains($1.id) }
-            .map { $0.offset }
-            .sorted()
-        guard indices.count == ids.count else { return false }
-        for i in 0..<(indices.count - 1) {
-            if indices[i+1] != indices[i] + 1 {
-                return false
+        if ids.count >= 2 {
+            let indices = project.subtitles.enumerated()
+                .filter { ids.contains($1.id) }
+                .map { $0.offset }
+                .sorted()
+            guard indices.count == ids.count else { return false }
+            for i in 0..<(indices.count - 1) {
+                if indices[i+1] != indices[i] + 1 {
+                    return false
+                }
+            }
+            return true
+        } else if let singleID = ids.first ?? project.selectedSubtitleID {
+            if let index = project.subtitles.firstIndex(where: { $0.id == singleID }),
+               index + 1 < project.subtitles.count {
+                return true
             }
         }
-        return true
+        return false
+    }
+
+    /// 删除指定字幕行
+    public func deleteSubtitle(id: UUID) {
+        guard let index = project.subtitles.firstIndex(where: { $0.id == id }) else { return }
+        recordUndoSnapshot()
+        project.subtitles.remove(at: index)
+        project.isDirty = true
+        statusMessage = "已删除该行字幕"
+    }
+
+    /// 将指定字幕与下一行字幕直接合并
+    public func mergeSubtitleWithNext(id: UUID) {
+        guard let index = project.subtitles.firstIndex(where: { $0.id == id }),
+              index + 1 < project.subtitles.count else {
+            statusMessage = "已经是最后一行，无法向下合并"
+            return
+        }
+        let nextID = project.subtitles[index + 1].id
+        mergeSubtitles(ids: [id, nextID])
     }
 
     /// 拆分指定字幕 (R14: 绑定确切行 ID，防止错位拆分)
@@ -616,17 +706,25 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 合并选中的字幕 (Cmd+J) (R15: 严格连续性校验)
+    /// 合并选中的字幕 (Cmd+J) (支持多选相邻合并，或单选/当前行向下合并)
     public func mergeSubtitles(ids: Set<UUID>) {
-        guard ids.count >= 2 else {
-            errorMessage = "请先选中至少两行相邻字幕进行合并"
-            statusMessage = "合并失败：需选中至少两行字幕"
-            return
+        var targetIDs = ids
+        if targetIDs.count < 2 {
+            let baseID = targetIDs.first ?? project.selectedSubtitleID
+            if let base = baseID,
+               let index = project.subtitles.firstIndex(where: { $0.id == base }),
+               index + 1 < project.subtitles.count {
+                targetIDs = [base, project.subtitles[index + 1].id]
+            } else {
+                errorMessage = "请先选中至少两行相邻字幕，或选中一行向下合并"
+                statusMessage = "合并提示：请选择需合并的字幕行"
+                return
+            }
         }
 
         // 获取被选中的索引并排序
         let indices = project.subtitles.enumerated()
-            .filter { ids.contains($1.id) }
+            .filter { targetIDs.contains($1.id) }
             .map { $0.offset }
             .sorted()
 
@@ -646,7 +744,7 @@ public final class AppState: ObservableObject {
         let selectedItems = indices.map { project.subtitles[$0] }
         if let merged = subtitleManager.merge(items: selectedItems) {
             let firstIndex = indices.first!
-            project.subtitles.removeAll(where: { ids.contains($0.id) })
+            project.subtitles.removeAll(where: { targetIDs.contains($0.id) })
             project.subtitles.insert(merged, at: firstIndex)
             project.selectedSubtitleID = merged.id
             project.isDirty = true
@@ -721,20 +819,64 @@ public final class AppState: ObservableObject {
 
     /// 触发指定模型的下载 (R23: 首次下载先准备 sidecar 服务，避免连接失败或遗留下载中状态)
     public func downloadModel(preset: ASRModelPreset) {
-        Task {
+        // 先中止先前的下载准备任务（若有）
+        downloadTasks[preset.id]?.cancel()
+
+        // 第一时间在主线程将状态置为 0% downloading，界面上的“立即下载”按钮在点击瞬间立即切换为“取消”和 0% 进度条
+        modelStorageManager.modelStates[preset.id] = .downloading(progress: 0.0, speed: "正在准备下载环境...")
+
+        downloadTasks[preset.id] = Task {
+            if Task.isCancelled { return }
+
             if preset.isRepo {
-                _ = await sidecarManager.ensureRunning()
+                // 确保 ASR 服务在线就绪（若未启动或已断开，自动唤醒并等待健康就绪）
+                let isReady = await sidecarManager.ensureRunning()
+                if Task.isCancelled { return }
+
+                guard isReady else {
+                    await MainActor.run {
+                        if Task.isCancelled { return }
+                        let reason: String
+                        if case .error(let msg) = self.sidecarManager.status {
+                            reason = msg
+                        } else {
+                            reason = "本地 ASR 引擎未能成功启动，请检查 Python 依赖"
+                        }
+                        self.modelStorageManager.modelStates[preset.id] = .failed(reason)
+                        self.errorMessage = reason
+                        self.statusMessage = "ASR 引擎启动失败"
+                    }
+                    return
+                }
+
+                await MainActor.run {
+                    if Task.isCancelled { return }
+                    self.modelStorageManager.modelStates[preset.id] = .downloading(progress: 0.0, speed: "正在连接下载镜像源...")
+                }
+
+                if Task.isCancelled { return }
+
                 do {
                     try await modelStorageManager.triggerServerRepoDownload(preset: preset)
                 } catch {
                     await MainActor.run {
+                        if Task.isCancelled { return }
+                        self.modelStorageManager.modelStates[preset.id] = .failed("连接服务失败: \(error.localizedDescription)")
                         self.errorMessage = "启动模型下载失败: \(error.localizedDescription)"
                         self.statusMessage = "模型下载启动失败"
                     }
                 }
             } else {
+                if Task.isCancelled { return }
                 modelStorageManager.startDirectDownload(for: preset)
             }
         }
+    }
+
+    /// 取消指定模型的下载任务，立即切回“立即下载”
+    public func cancelDownload(preset: ASRModelPreset) {
+        downloadTasks[preset.id]?.cancel()
+        downloadTasks.removeValue(forKey: preset.id)
+        modelStorageManager.cancelDownload(for: preset.id)
     }
 }

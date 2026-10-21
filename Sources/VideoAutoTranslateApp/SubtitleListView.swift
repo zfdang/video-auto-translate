@@ -4,6 +4,7 @@ import VideoAutoTranslateCore
 public struct SubtitleListView: View {
     @ObservedObject var appState: AppState
     @State private var selectedIDs: Set<UUID> = []
+    @State private var lastClickedIndex: Int? = nil
     @State private var searchText: String = ""
 
     public var body: some View {
@@ -61,15 +62,25 @@ public struct SubtitleListView: View {
                 .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
                 .help("调用大模型结合每个词的精确时间戳进行语义智能断句规整")
 
-                // 4. 合并按钮 (需选中 2 行或多行相邻字幕，支持 Cmd+J)
+                // 4. 合并按钮 (支持选中多行合并，或单行向下合并，快捷键 Cmd+J)
                 let canMergeNow = appState.canMerge(ids: selectedIDs)
+                let mergeButtonTitle: String = {
+                    if selectedIDs.count >= 2 {
+                        return "合并 (\(selectedIDs.count)行)"
+                    } else if selectedIDs.count == 1 || appState.project.selectedSubtitleID != nil {
+                        return "向下合并"
+                    } else {
+                        return "合并"
+                    }
+                }()
+
                 Button(action: {
                     appState.mergeSubtitles(ids: selectedIDs)
                     selectedIDs.removeAll()
                 }) {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.triangle.merge")
-                        Text(selectedIDs.count >= 2 ? "合并 (\(selectedIDs.count))" : "合并")
+                        Text(mergeButtonTitle)
                     }
                 }
                 .buttonStyle(.bordered)
@@ -77,7 +88,7 @@ public struct SubtitleListView: View {
                 .controlSize(.small)
                 .disabled(!canMergeNow)
                 .keyboardShortcut("j", modifiers: .command)
-                .help(canMergeNow ? "合并当前选中的 \(selectedIDs.count) 行相邻字幕 (Cmd+J)" : "请先按住 Shift 键选中相邻的多行字幕，再点击合并 (Cmd+J)")
+                .help(canMergeNow ? (selectedIDs.count >= 2 ? "合并当前选中的 \(selectedIDs.count) 行字幕 (Cmd+J)" : "将当前选中的字幕与下一行合并 (Cmd+J)") : "请先选中字幕行进行合并 (Cmd+J)")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -128,14 +139,21 @@ public struct SubtitleListView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 6) {
-                            ForEach(filteredSubtitles) { item in
+                            ForEach(Array(filteredSubtitles.enumerated()), id: \.element.id) { index, item in
+                                let canMergeNext = (index + 1 < filteredSubtitles.count)
+                                let isRowSelected = (appState.project.selectedSubtitleID == item.id) || selectedIDs.contains(item.id)
+
                                 SubtitleRowView(
                                     item: item,
-                                    isSelected: appState.project.selectedSubtitleID == item.id || selectedIDs.contains(item.id),
+                                    isSelected: isRowSelected,
                                     isPlaying: appState.project.playingSubtitleID == item.id,
+                                    rowIndex: index,
+                                    isMultiSelected: selectedIDs.contains(item.id),
+                                    canMergeWithNext: canMergeNext,
                                     onSeek: {
                                         appState.seek(to: item.startTime)
                                         appState.project.selectedSubtitleID = item.id
+                                        lastClickedIndex = index
                                     },
                                     onAudition: { target in
                                         Task {
@@ -144,24 +162,51 @@ public struct SubtitleListView: View {
                                     },
                                     onSplit: { cursorIndex in
                                         appState.splitSubtitle(id: item.id, atCharIndex: cursorIndex)
-                                    }
-                                )
-                                .id(item.id)
-                                .onTapGesture {
-                                    appState.project.selectedSubtitleID = item.id
-                                    if NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command) {
+                                    },
+                                    onToggleSelect: {
                                         if selectedIDs.contains(item.id) {
                                             selectedIDs.remove(item.id)
                                         } else {
                                             selectedIDs.insert(item.id)
                                         }
-                                    } else {
-                                        // 普通单击选中单行；若已有多选状态则重置为当前单行
-                                        if selectedIDs.count > 1 {
-                                            selectedIDs = [item.id]
-                                        } else {
-                                            selectedIDs = [item.id]
+                                        appState.project.selectedSubtitleID = item.id
+                                        lastClickedIndex = index
+                                    },
+                                    onMergeNext: {
+                                        appState.mergeSubtitleWithNext(id: item.id)
+                                        selectedIDs.removeAll()
+                                    },
+                                    onDelete: {
+                                        appState.deleteSubtitle(id: item.id)
+                                        selectedIDs.remove(item.id)
+                                    },
+                                    onFocus: {
+                                        appState.project.selectedSubtitleID = item.id
+                                        lastClickedIndex = index
+                                    }
+                                )
+                                .id(item.id)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    appState.project.selectedSubtitleID = item.id
+                                    if NSEvent.modifierFlags.contains(.shift), let lastIdx = lastClickedIndex {
+                                        let lower = min(lastIdx, index)
+                                        let upper = max(lastIdx, index)
+                                        for i in lower...upper {
+                                            if i < filteredSubtitles.count {
+                                                selectedIDs.insert(filteredSubtitles[i].id)
+                                            }
                                         }
+                                    } else if NSEvent.modifierFlags.contains(.command) {
+                                        if selectedIDs.contains(item.id) {
+                                            selectedIDs.remove(item.id)
+                                        } else {
+                                            selectedIDs.insert(item.id)
+                                        }
+                                        lastClickedIndex = index
+                                    } else {
+                                        selectedIDs = [item.id]
+                                        lastClickedIndex = index
                                     }
                                 }
                             }

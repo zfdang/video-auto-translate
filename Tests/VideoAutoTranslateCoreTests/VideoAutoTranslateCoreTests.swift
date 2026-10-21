@@ -94,6 +94,16 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertEqual(noneSRT, "")
     }
 
+    func testVideoExportModesDefinitions() {
+        XCTAssertEqual(SubtitleExportMode.bilingual.displayName, "双语对照")
+        XCTAssertEqual(SubtitleExportMode.translatedOnly.displayName, "仅目标语")
+        XCTAssertEqual(SubtitleExportMode.originalOnly.displayName, "仅原始语")
+        XCTAssertEqual(SubtitleExportMode.none.displayName, "没有字幕")
+
+        XCTAssertEqual(VideoAudioExportMode.translated.displayName, "自动翻译的语言")
+        XCTAssertEqual(VideoAudioExportMode.original.displayName, "原始语言")
+    }
+
     func testVideoComposerWithSubtitleEmbedding() async throws {
         let testVideoPath = "/Users/zfdang/workspaces/video-auto-translate/Tests/Fme9C5ShSr2fuWQ8_Translated.mp4"
         guard FileManager.default.fileExists(atPath: testVideoPath) else { return }
@@ -177,9 +187,22 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
             originalText: "Artificial intelligence is changing the world."
         )
 
-        try await translator.translate(items: [item], config: config)
+        var statusStages: [String] = []
+        var progressValues: [Double] = []
+
+        try await translator.translate(items: [item], config: config) { progress, status in
+            progressValues.append(progress)
+            statusStages.append(status)
+        }
+
         print("Live Qwen translation result: \(item.translatedText)")
         XCTAssertFalse(item.translatedText.isEmpty, "翻译结果不应为空")
+
+        // 验证生命周期三阶段提示：启动模型 -> 翻译文本 -> 终止模型
+        XCTAssertTrue(statusStages.contains(where: { $0.contains("启动模型") }), "应包含启动模型阶段提示: \(statusStages)")
+        XCTAssertTrue(statusStages.contains(where: { $0.contains("翻译文本") }), "应包含翻译文本阶段提示: \(statusStages)")
+        XCTAssertTrue(statusStages.contains(where: { $0.contains("终止模型") }), "应包含终止模型阶段提示: \(statusStages)")
+        XCTAssertTrue((progressValues.last ?? 0.0) >= 0.95, "最终进度应接近完成")
     }
 
     func testASRVerboseJSONParsing() throws {
@@ -423,5 +446,57 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         let res7 = try translator.parseTranslationEntries(from: brokenQuotesJSON, chunk: chunk)
         XCTAssertFalse(res7.isEmpty)
         XCTAssertEqual(res7[0].translation, "Bonjour")
+    }
+
+    func testModelStorageManagerSymlinkDetection() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("test_hf_cache_\(UUID().uuidString)")
+        let blobsDir = tempDir.appendingPathComponent("blobs")
+        let snapshotDir = tempDir.appendingPathComponent("snapshots/testhash123")
+        try FileManager.default.createDirectory(at: blobsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: snapshotDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Create blob files
+        let configBlob = blobsDir.appendingPathComponent("config_blob")
+        let weightsBlob = blobsDir.appendingPathComponent("weights_blob")
+        try Data("{\"architectures\": [\"Qwen3ForCausalLM\"]}".utf8).write(to: configBlob)
+        // Write 1.5MB of dummy data
+        let dummyWeights = Data(repeating: 0x42, count: 1_500_000)
+        try dummyWeights.write(to: weightsBlob)
+
+        // Create symlinks in snapshotDir
+        let configLink = snapshotDir.appendingPathComponent("config.json")
+        let weightsLink = snapshotDir.appendingPathComponent("model.safetensors")
+        try FileManager.default.createSymbolicLink(at: configLink, withDestinationURL: configBlob)
+        try FileManager.default.createSymbolicLink(at: weightsLink, withDestinationURL: weightsBlob)
+
+        let config = ModelStorageConfig(locationType: .custom, customDirectoryPath: tempDir.deletingLastPathComponent().path)
+        let manager = ModelStorageManager(config: config)
+
+        let preset = ASRModelPreset(
+            id: "test-model",
+            displayName: "Test Model",
+            repoOrFileName: tempDir.lastPathComponent,
+            sizeDescription: "~1.5 MB",
+            approxSizeBytes: 1_500_000,
+            isRepo: true,
+            note: "Test"
+        )
+
+        let state = manager.detectModel(preset)
+        switch state {
+        case .ready(let localPath, let sizeDescription):
+            XCTAssertTrue(localPath.contains(tempDir.lastPathComponent))
+            XCTAssertTrue(sizeDescription.contains("MB"))
+        default:
+            XCTFail("Symlinked HuggingFace cache must be detected as .ready, got \(state)")
+        }
+    }
+
+    func testOllamaModelPresetDefinitions() {
+        let presets = OllamaModelPreset.recommended
+        XCTAssertFalse(presets.isEmpty)
+        XCTAssertTrue(presets.contains(where: { $0.name == "qwen2.5:latest" }))
+        XCTAssertEqual(presets.first?.name, "qwen2.5:latest")
     }
 }

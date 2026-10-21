@@ -11,12 +11,17 @@
 
 import os
 import sys
+
+# 必须在最顶层设置环境变量，彻底禁用 hf_xet 模块，防止国内镜像下载时出现 File reconstruction error: CAS Client Error
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+
 import time
 import shutil
 import asyncio
 import tempfile
 import argparse
 import threading
+import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -61,6 +66,8 @@ CURRENT_STORAGE_DIR = DEFAULT_SHARED_DIR
 
 # 下载进度字典: model_id -> dict(status, progress, speed, error, local_path)
 DOWNLOAD_TASKS: Dict[str, Dict[str, Any]] = {}
+ACTIVE_DOWNLOAD_PROCS: Dict[str, Any] = {}
+ACTIVE_DOWNLOAD_EVENTS: Dict[str, threading.Event] = {}
 
 PRESET_MODELS = [
     {
@@ -251,37 +258,161 @@ class DownloadRequest(BaseModel):
     mirror: Optional[str] = "https://hf-mirror.com"
 
 
+MODEL_APPROX_SIZES = {
+    "qwen3-asr-1.7b": 2_460_000_000,
+    "mlx-community/Qwen3-ASR-1.7B-8bit": 2_460_000_000,
+    "qwen3-aligner-0.6b": 1_220_000_000,
+    "mlx-community/Qwen3-ForcedAligner-0.6B-8bit": 1_220_000_000,
+    "qwen3-asr-0.6b": 1_000_000_000,
+    "mlx-community/Qwen3-ASR-0.6B-8bit": 1_000_000_000,
+}
+
+
+def get_dir_size(path: Path) -> int:
+    total = 0
+    try:
+        if not path.exists():
+            return 0
+        if path.is_file():
+            return path.stat().st_size
+        for p in path.rglob("*"):
+            try:
+                if p.is_file():
+                    total += p.stat().st_size
+            except (OSError, PermissionError):
+                pass
+    except (OSError, PermissionError):
+        pass
+    return total
+
+
 def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror: str):
-    """后台执行模型下载任务"""
+    """后台执行模型下载任务，严格从 0% 开始平滑推进，支持速率统计与即时取消"""
     DOWNLOAD_TASKS[model_id] = {
         "status": "downloading",
-        "progress": 0.1,
-        "speed": "正在连接下载源...",
+        "progress": 0.0,
+        "speed": "正在连接下载镜像源...",
         "error": None,
         "local_path": None
     }
     
-    # 注入环境变量镜像
-    if mirror:
-        os.environ["HF_ENDPOINT"] = mirror
+    stop_event = threading.Event()
+    ACTIVE_DOWNLOAD_EVENTS[model_id] = stop_event
 
     try:
+        # 注入环境变量镜像并彻底禁用 Xet
+        os.environ["HF_HUB_DISABLE_XET"] = "1"
+        if mirror:
+            os.environ["HF_ENDPOINT"] = mirror
+
+        folder_safe_name = "models--" + repo_id.replace("/", "--")
+        repo_folder = dest_dir / folder_safe_name
+        expected_size = MODEL_APPROX_SIZES.get(model_id) or MODEL_APPROX_SIZES.get(repo_id, 2_467_859_030)
+
+        # 若本地已存在完整有效模型，直接就绪
+        if repo_folder.exists() and has_valid_model_files(repo_folder):
+            DOWNLOAD_TASKS[model_id] = {
+                "status": "ready",
+                "progress": 1.0,
+                "speed": "下载完成",
+                "error": None,
+                "local_path": str(find_model_path(repo_id, True) or repo_folder)
+            }
+            return
+
+        max_progress = 0.0
+
+        def monitor(proc: subprocess.Popen):
+            nonlocal max_progress
+            prev_size = get_dir_size(repo_folder)
+            prev_time = time.time()
+            last_speed_mb_s = 0.0
+
+            while not stop_event.is_set() and proc.poll() is None:
+                time.sleep(0.5)
+                if stop_event.is_set():
+                    break
+                now = time.time()
+                dt = max(0.1, now - prev_time)
+                cur_size = get_dir_size(repo_folder)
+                delta = max(0, cur_size - prev_size)
+
+                if delta > 0:
+                    instant_speed = (delta / dt) / (1024 * 1024)
+                    if last_speed_mb_s > 0:
+                        last_speed_mb_s = 0.7 * instant_speed + 0.3 * last_speed_mb_s
+                    else:
+                        last_speed_mb_s = instant_speed
+                elif cur_size == 0:
+                    last_speed_mb_s = 0.0
+                else:
+                    # 磁盘写入间隙平滑衰减，持续显示速率，不跳变为“正在写入”
+                    last_speed_mb_s = max(0.1, last_speed_mb_s * 0.9)
+
+                cur_mb = cur_size / (1024 * 1024)
+                tot_mb = expected_size / (1024 * 1024)
+                raw_prog = cur_size / expected_size
+                max_progress = max(max_progress, min(0.99, max(0.0, raw_prog)))
+
+                if last_speed_mb_s > 0 or cur_size > 0:
+                    speed_text = f"{last_speed_mb_s:.1f} MB/s ({cur_mb:.1f} MB / {tot_mb:.1f} MB)"
+                else:
+                    speed_text = "正在连接并拉取元数据..."
+
+                if DOWNLOAD_TASKS.get(model_id, {}).get("status") == "downloading":
+                    DOWNLOAD_TASKS[model_id]["progress"] = round(max_progress, 3)
+                    DOWNLOAD_TASKS[model_id]["speed"] = speed_text
+
+                prev_size = cur_size
+                prev_time = now
+
         dest_dir.mkdir(parents=True, exist_ok=True)
-        DOWNLOAD_TASKS[model_id]["speed"] = "拉取模型权重结构..."
-        DOWNLOAD_TASKS[model_id]["progress"] = 0.25
 
-        # 尝试使用 huggingface_hub snapshot_download
-        try:
-            from huggingface_hub import snapshot_download
-            DOWNLOAD_TASKS[model_id]["progress"] = 0.4
-            DOWNLOAD_TASKS[model_id]["speed"] = "正在传输数据 (跑满带宽)..."
+        worker_code = f"""
+import os, sys
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+os.environ["TQDM_DISABLE"] = "1"
+if {repr(mirror)}:
+    os.environ["HF_ENDPOINT"] = {repr(mirror)}
+from huggingface_hub import snapshot_download
+try:
+    p = snapshot_download(
+        repo_id={repr(repo_id)},
+        cache_dir={repr(str(dest_dir))},
+        endpoint={repr(mirror)} if {repr(mirror)} else None,
+        resume_download=True
+    )
+    print("DOWNLOAD_SUCCESS:" + str(p), flush=True)
+except Exception as e:
+    print("DOWNLOAD_ERROR:" + str(e), file=sys.stderr, flush=True)
+    sys.exit(1)
+"""
+        proc = subprocess.Popen(
+            [sys.executable, "-c", worker_code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        ACTIVE_DOWNLOAD_PROCS[model_id] = proc
 
-            downloaded_path = snapshot_download(
-                repo_id=repo_id,
-                cache_dir=dest_dir,
-                endpoint=mirror if mirror else None,
-                resume_download=True
-            )
+        mon_thread = threading.Thread(target=monitor, args=(proc,), daemon=True)
+        mon_thread.start()
+
+        stdout, stderr = proc.communicate()
+        stop_event.set()
+        mon_thread.join(timeout=1.0)
+        ACTIVE_DOWNLOAD_PROCS.pop(model_id, None)
+
+        if stop_event.is_set() and DOWNLOAD_TASKS.get(model_id, {}).get("status") == "canceled":
+            return
+
+        if proc.returncode == 0:
+            downloaded_path = None
+            for line in stdout.splitlines():
+                if line.startswith("DOWNLOAD_SUCCESS:"):
+                    downloaded_path = line.split(":", 1)[1].strip()
+            if not downloaded_path:
+                downloaded_path = str(find_model_path(repo_id, True) or repo_folder)
             DOWNLOAD_TASKS[model_id] = {
                 "status": "ready",
                 "progress": 1.0,
@@ -289,41 +420,41 @@ def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror
                 "error": None,
                 "local_path": str(downloaded_path)
             }
-            return
-        except ImportError:
-            pass
-
-        # 若未安装 huggingface_hub，使用 git 或 curl 备用下载
-        DOWNLOAD_TASKS[model_id]["speed"] = "调用 git clone 拉取权重..."
-        clone_url = f"{mirror.rstrip('/')}/{repo_id}.git"
-        folder_safe_name = "models--" + repo_id.replace("/", "--")
-        target_path = dest_dir / folder_safe_name
-        import subprocess
-        res = subprocess.run(["git", "clone", "--depth", "1", clone_url, str(target_path)], capture_output=True, text=True)
-        if res.returncode == 0:
-            DOWNLOAD_TASKS[model_id] = {
-                "status": "ready",
-                "progress": 1.0,
-                "speed": "下载完成",
-                "error": None,
-                "local_path": str(target_path)
-            }
         else:
-            raise RuntimeError(f"Git clone 失败: {res.stderr}")
+            if DOWNLOAD_TASKS.get(model_id, {}).get("status") == "canceled":
+                return
+            err_msg = stderr.strip() or stdout.strip() or f"下载进程异常退出，代码: {proc.returncode}"
+            DOWNLOAD_TASKS[model_id] = {
+                "status": "failed",
+                "progress": 0.0,
+                "speed": "下载出错",
+                "error": err_msg,
+                "local_path": None
+            }
 
     except Exception as exc:
-        DOWNLOAD_TASKS[model_id] = {
-            "status": "failed",
-            "progress": 0.0,
-            "speed": "下载出错",
-            "error": str(exc),
-            "local_path": None
-        }
+        stop_event.set()
+        ACTIVE_DOWNLOAD_PROCS.pop(model_id, None)
+        if DOWNLOAD_TASKS.get(model_id, {}).get("status") != "canceled":
+            DOWNLOAD_TASKS[model_id] = {
+                "status": "failed",
+                "progress": 0.0,
+                "speed": "下载出错",
+                "error": str(exc),
+                "local_path": None
+            }
 
 
 @app.post("/v1/models/download")
 def start_model_download(req: DownloadRequest, background_tasks: BackgroundTasks):
     dest = Path(req.storage_dir).expanduser().resolve() if req.storage_dir else CURRENT_STORAGE_DIR
+    DOWNLOAD_TASKS[req.model_id] = {
+        "status": "downloading",
+        "progress": 0.0,
+        "speed": "正在准备下载环境...",
+        "error": None,
+        "local_path": None
+    }
     background_tasks.add_task(
         background_repo_download,
         model_id=req.model_id,
@@ -346,6 +477,28 @@ def get_download_status(model_id: str):
         return {"status": "not_downloaded", "progress": 0.0, "speed": ""}
 
     return DOWNLOAD_TASKS[model_id]
+
+
+@app.post("/v1/models/download/cancel")
+def cancel_model_download(model_id: str):
+    DOWNLOAD_TASKS[model_id] = {
+        "status": "canceled",
+        "progress": 0.0,
+        "speed": "已取消",
+        "error": None,
+        "local_path": None
+    }
+    if model_id in ACTIVE_DOWNLOAD_EVENTS:
+        ACTIVE_DOWNLOAD_EVENTS[model_id].set()
+    if model_id in ACTIVE_DOWNLOAD_PROCS:
+        proc = ACTIVE_DOWNLOAD_PROCS.pop(model_id, None)
+        if proc:
+            try:
+                proc.terminate()
+                proc.kill()
+            except Exception:
+                pass
+    return {"status": "ok", "model_id": model_id}
 
 
 @app.post("/v1/audio/transcriptions")
@@ -445,7 +598,7 @@ def run_local_transcription(audio_path: str, model: str = "qwen3-asr", language:
     if not qwen_asr_path:
         if ENABLE_MOCK_FALLBACK:
             return generate_mock_transcription(audio_path)
-        raise RuntimeError("未在本地模型目录中找到 Qwen3-ASR-1.7B 识别模型，请先下载模型")
+        raise RuntimeError("未在本地模型目录中找到 Qwen3-ASR 语音识别模型，请先前往【设置 - ASR 模型】完成下载")
 
     try:
         asr_model = get_loaded_model(str(qwen_asr_path))

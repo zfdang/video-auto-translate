@@ -143,17 +143,30 @@ public final class LocalASRService: ASREngineProtocol {
             (responseData, response) = try await session.data(for: request)
         } catch {
             throw ASRError.engineNotReady(
-                "无法连接到本地 ASR 服务 (\(config.serviceURL))。\n请确保在终端启动了本地 ASR 服务，例如:\npython3 scripts/asr_server.py\n错误详情: \(error.localizedDescription)"
+                "无法连接到本地语音识别服务，请前往【设置 - ASR 服务】检查引擎运行状态。"
             )
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw ASRError.transcriptionFailed("未收到有效 HTTP 响应")
+            throw ASRError.transcriptionFailed("未收到有效网络响应")
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorMsg = String(data: responseData, encoding: .utf8) ?? "状态码 \(httpResponse.statusCode)"
-            throw ASRError.transcriptionFailed("ASR 服务报错: \(errorMsg)")
+            let errorMsg: String
+            if let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+               let detail = json["detail"] as? String {
+                errorMsg = detail
+            } else if let raw = String(data: responseData, encoding: .utf8), !raw.isEmpty {
+                errorMsg = raw
+            } else {
+                errorMsg = "识别服务响应异常 (HTTP \(httpResponse.statusCode))"
+            }
+
+            // 人性化提示映射
+            if errorMsg.contains("未在本地模型目录中找到") || errorMsg.contains("Qwen3-ASR") || errorMsg.contains("请先下载模型") {
+                throw ASRError.transcriptionFailed("未检测到本地 Qwen3-ASR 语音识别模型，请先前往【设置 - ASR 模型】完成下载。")
+            }
+            throw ASRError.transcriptionFailed(errorMsg)
         }
 
         onProgress?(0.75)

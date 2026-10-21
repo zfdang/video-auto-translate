@@ -50,7 +50,17 @@ public struct MainView: View {
             get: { appState.errorMessage != nil },
             set: { if !$0 { appState.errorMessage = nil } }
         )) {
-            Button("确定", role: .cancel) { appState.errorMessage = nil }
+            if let msg = appState.errorMessage, msg.contains("设置") || msg.contains("下载") {
+                Button("打开设置") {
+                    appState.errorMessage = nil
+                    appState.showSettings = true
+                }
+                Button("我知道了", role: .cancel) {
+                    appState.errorMessage = nil
+                }
+            } else {
+                Button("确定", role: .cancel) { appState.errorMessage = nil }
+            }
         } message: {
             Text(appState.errorMessage ?? "")
         }
@@ -417,6 +427,16 @@ public struct MainView: View {
                 Text(appState.project.currentStepName)
                     .font(.caption)
                     .foregroundColor(.accentColor)
+
+                Button(action: {
+                    appState.cancelAllTasks()
+                }) {
+                    Text("取消")
+                        .font(.caption2)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .help("取消当前任务并释放模型资源")
             } else {
                 Circle()
                     .fill(Color.green)

@@ -6,9 +6,16 @@ public struct SubtitleRowView: View {
     @ObservedObject var item: SubtitleItem
     let isSelected: Bool
     var isPlaying: Bool = false
+    let rowIndex: Int
+    let isMultiSelected: Bool
+    let canMergeWithNext: Bool
     let onSeek: () -> Void
     let onAudition: (AppState.AuditionTarget) -> Void
     let onSplit: (Int) -> Void
+    let onToggleSelect: () -> Void
+    let onMergeNext: () -> Void
+    let onDelete: () -> Void
+    let onFocus: () -> Void
 
     enum FieldType {
         case original
@@ -64,7 +71,21 @@ public struct SubtitleRowView: View {
         let currentTarget = determineAuditionTarget()
 
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(spacing: 6) {
+                // 1. 多选勾选圈 (可直观勾选多行进行批量合并)
+                Button(action: onToggleSelect) {
+                    Image(systemName: isMultiSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 13))
+                        .foregroundColor(isMultiSelected ? .accentColor : .secondary.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+                .help(isMultiSelected ? "取消勾选此行" : "勾选此行以多选合并 (支持 Shift 连续多选)")
+
+                // 行号
+                Text("#\(rowIndex + 1)")
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundColor(.secondary)
+
                 // 时间轴范围胶囊标签
                 Button(action: onSeek) {
                     HStack(spacing: 4) {
@@ -98,6 +119,19 @@ public struct SubtitleRowView: View {
                 .disabled(item.isGeneratingAudio)
                 .help(currentTarget == .translated ? "试听当前行翻译后的新配音 (光标聚焦于下方译文)" : "试听当前行原视频原声音频片段 (光标聚焦于原文或未选)")
 
+                // 向下合并按钮 (直接与下一行合并)
+                if canMergeWithNext {
+                    Button(action: onMergeNext) {
+                        HStack(spacing: 2) {
+                            Image(systemName: "arrow.triangle.merge")
+                            Text("向下合并")
+                                .font(.caption2)
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .help("直接将当前字幕与下一行 (#\(rowIndex + 2)) 合并为一行")
+                }
+
                 // 拆分按钮 (在光标所在位置拆分)
                 Button(action: performSplitAtCursor) {
                     Image(systemName: "scissors")
@@ -126,6 +160,7 @@ public struct SubtitleRowView: View {
                 .onChange(of: focusedField) { _, newFocus in
                     if let f = newFocus {
                         self.lastActiveField = f
+                        onFocus()
                     }
                 }
                 .onChange(of: item.originalText) { _, _ in
@@ -146,6 +181,7 @@ public struct SubtitleRowView: View {
                 .onChange(of: focusedField) { _, newFocus in
                     if let f = newFocus {
                         self.lastActiveField = f
+                        onFocus()
                     }
                 }
                 .onChange(of: item.translatedText) { _, _ in
@@ -167,5 +203,19 @@ public struct SubtitleRowView: View {
                     lineWidth: 1
                 )
         )
+        .contextMenu {
+            if canMergeWithNext {
+                Button(action: onMergeNext) {
+                    Label("与下一行合并", systemImage: "arrow.triangle.merge")
+                }
+            }
+            Button(action: performSplitAtCursor) {
+                Label("在光标处拆分字幕 (Cmd+B)", systemImage: "scissors")
+            }
+            Divider()
+            Button(action: onDelete) {
+                Label("删除此行字幕", systemImage: "trash")
+            }
+        }
     }
 }

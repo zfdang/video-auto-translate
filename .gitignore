@@ -7,5 +7,9 @@ DerivedData/
 *.xcuserstate
 __pycache__/
 *.pyc
+.venv
+.venv/
+venv
+venv/
 Tests/*.mp4
 

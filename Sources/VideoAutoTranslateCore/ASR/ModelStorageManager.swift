@@ -17,6 +17,7 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
     private var downloadSessions: [String: URLSessionDownloadTask] = [:]
     private var downloadProgressHandlers: [String: (Double, String) -> Void] = [:]
     private var downloadStartTimes: [String: Date] = [:]
+    private var pollTasks: [String: Task<Void, Never>] = [:]
 
     public init(config: ModelStorageConfig = ModelStorageConfig()) {
         self.config = config
@@ -178,52 +179,89 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
+        if Task.isCancelled { return }
         await MainActor.run {
-            self.modelStates[preset.id] = .downloading(progress: 0.05, speed: "服务端启动下载...")
+            guard !Task.isCancelled else { return }
+            self.modelStates[preset.id] = .downloading(progress: 0.0, speed: "正在连接下载镜像源...")
         }
 
         let (data, response) = try await URLSession.shared.data(for: request)
+        if Task.isCancelled { return }
         guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
             let err = String(data: data, encoding: .utf8) ?? "HTTP 错误"
             await MainActor.run {
-                self.modelStates[preset.id] = .failed(err)
+                if !Task.isCancelled {
+                    self.modelStates[preset.id] = .failed(err)
+                }
             }
             return
         }
 
-        // 启动轮询检查服务端进度
-        Task {
+        // 启动轮询检查服务端进度并留存引用，以便取消时即刻中断
+        pollTasks[preset.id]?.cancel()
+        pollTasks[preset.id] = Task {
             await self.pollServerDownloadProgress(preset: preset, asrBaseURL: asrBaseURL)
         }
     }
 
-    /// 轮询服务端下载进度
+    /// 轮询服务端下载进度 (0.5s 高频轮询，保证 0%~100% 平滑单调递增，无突变跳跃)
     private func pollServerDownloadProgress(preset: ASRModelPreset, asrBaseURL: String) async {
         guard let pollURL = URL(string: "\(asrBaseURL)/v1/models/download/status?model_id=\(preset.id)") else { return }
 
-        while true {
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s
+        var lastProgress: Double = 0.0
+
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+            if Task.isCancelled { break }
+
+            // 用户若已取消，主动终止轮询
+            let isCurrentDownloading = await MainActor.run {
+                if case .downloading = self.modelStates[preset.id] {
+                    return true
+                }
+                return false
+            }
+            if !isCurrentDownloading {
+                break
+            }
+
             do {
                 let (data, _) = try await URLSession.shared.data(from: pollURL)
+                if Task.isCancelled { break }
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let status = json["status"] as? String {
                     if status == "downloading" {
-                        let prog = (json["progress"] as? Double) ?? 0.1
+                        let prog = (json["progress"] as? Double) ?? 0.0
                         let speed = (json["speed"] as? String) ?? "下载中..."
+                        let smoothProg = max(lastProgress, min(1.0, max(0.0, prog)))
+                        lastProgress = smoothProg
                         await MainActor.run {
-                            self.modelStates[preset.id] = .downloading(progress: prog, speed: speed)
+                            if case .downloading = self.modelStates[preset.id], !Task.isCancelled {
+                                self.modelStates[preset.id] = .downloading(progress: smoothProg, speed: speed)
+                            }
                         }
                     } else if status == "ready" {
                         let path = (json["local_path"] as? String) ?? self.resolvedStorageDirectory().path
                         await MainActor.run {
-                            self.modelStates[preset.id] = .ready(localPath: path, sizeDescription: preset.sizeDescription)
-                            self.refreshAll()
+                            if !Task.isCancelled {
+                                self.modelStates[preset.id] = .ready(localPath: path, sizeDescription: preset.sizeDescription)
+                                self.refreshAll()
+                            }
                         }
                         break
                     } else if status == "failed" {
                         let err = (json["error"] as? String) ?? "下载失败"
                         await MainActor.run {
-                            self.modelStates[preset.id] = .failed(err)
+                            if !Task.isCancelled {
+                                self.modelStates[preset.id] = .failed(err)
+                            }
+                        }
+                        break
+                    } else if status == "canceled" || status == "not_downloaded" {
+                        await MainActor.run {
+                            if case .downloading = self.modelStates[preset.id] {
+                                self.modelStates[preset.id] = .notDownloaded
+                            }
                         }
                         break
                     }
@@ -234,11 +272,24 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
         }
     }
 
-    /// 取消下载
-    public func cancelDownload(for presetId: String) {
+    /// 取消下载 (支持取消本地单文件下载与服务端大模型下载，并将状态重置为 notDownloaded)
+    public func cancelDownload(for presetId: String, asrBaseURL: String = "http://127.0.0.1:8765") {
         downloadSessions[presetId]?.cancel()
         downloadSessions.removeValue(forKey: presetId)
+
+        pollTasks[presetId]?.cancel()
+        pollTasks.removeValue(forKey: presetId)
+
+        // 立即在主线程将状态重置为 notDownloaded，确保界面第 0 毫秒切回“立即下载”
         modelStates[presetId] = .notDownloaded
+
+        if let cancelURL = URL(string: "\(asrBaseURL)/v1/models/download/cancel?model_id=\(presetId)") {
+            var request = URLRequest(url: cancelURL)
+            request.httpMethod = "POST"
+            Task {
+                _ = try? await URLSession.shared.data(for: request)
+            }
+        }
     }
 
     // MARK: - URLSessionDownloadDelegate
@@ -307,21 +358,28 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
     // MARK: - 工具方法
 
     /// R26 / FU09: 严格校验目录是否包含真实有效的模型文件（非空 config.json 与大于 1MB 的实体权重文件）
+    /// 支持 HuggingFace Hub 软链接（symlink）智能解析与大小计算
     private func isDirectoryValidModel(at folderURL: URL) -> Bool {
         let fileManager = FileManager.default
-        guard let enumerator = fileManager.enumerator(at: folderURL, includingPropertiesForKeys: [.fileSizeKey]) else { return false }
+        guard let enumerator = fileManager.enumerator(at: folderURL, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) else { return false }
         var hasConfig = false
         var hasWeights = false
         for case let fileURL as URL in enumerator {
-            let res = try? fileURL.resourceValues(forKeys: [.fileSizeKey])
+            let resolved = fileURL.resolvingSymlinksInPath()
+            let res = try? resolved.resourceValues(forKeys: [.fileSizeKey])
             let size = res?.fileSize ?? 0
 
-            if fileURL.lastPathComponent == "config.json" && size > 10 {
+            let name = fileURL.lastPathComponent.lowercased()
+            let ext = fileURL.pathExtension.lowercased()
+
+            if name == "config.json" && size > 10 {
                 hasConfig = true
             }
-            let ext = fileURL.pathExtension.lowercased()
             if ["safetensors", "bin", "npz"].contains(ext) && size > 1024 * 1024 {
                 hasWeights = true
+            }
+            if hasConfig && hasWeights {
+                return true
             }
         }
         return hasConfig && hasWeights
@@ -329,14 +387,25 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
 
     private func calculateDirectorySize(at url: URL) -> String {
         let fileManager = FileManager.default
-        guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles]) else {
+        guard let enumerator = fileManager.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
             return "~1.8 GB"
         }
+        var countedPaths = Set<String>()
         var total: Int64 = 0
         for case let fileURL as URL in enumerator {
-            if let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
-               let size = resourceValues.fileSize {
-                total += Int64(size)
+            let resolved = fileURL.resolvingSymlinksInPath()
+            let canonical = resolved.path
+            if !countedPaths.contains(canonical) {
+                countedPaths.insert(canonical)
+                if let isRegular = (try? resolved.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile, isRegular {
+                    if let size = (try? resolved.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+                        total += Int64(size)
+                    }
+                }
             }
         }
         let gb = Double(total) / (1024 * 1024 * 1024)

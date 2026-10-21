@@ -21,6 +21,14 @@ public final class LLMSegmenter {
         let fullRawText = tokens.map { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !fullRawText.isEmpty else { return [] }
 
+        defer {
+            if config.providerType == .localOllama {
+                Task {
+                    await OllamaProbe().unloadModel(baseURL: config.ollamaBaseURL, model: config.effectiveModel)
+                }
+            }
+        }
+
         let client = OpenAICompatibleClient(
             baseURL: config.effectiveBaseURL,
             apiKey: config.effectiveAPIKey,
