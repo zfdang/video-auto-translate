@@ -1,0 +1,132 @@
+name: macOS Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  changelog:
+    name: Generate Release Changelog
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate release notes
+        run: |
+          gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100" > "$RUNNER_TEMP/published-releases.json"
+          git fetch origin --tags
+          python3 scripts/generate-release-notes.py \
+            --commit "$GITHUB_SHA" \
+            --repository "$GH_REPO" \
+            --releases-file "$RUNNER_TEMP/published-releases.json" \
+            --output release-notes.md \
+            --summary-output release-changes.txt
+
+      - name: Upload changelog artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-changelog
+          path: |
+            release-notes.md
+            release-changes.txt
+          if-no-files-found: error
+
+  build-and-package:
+    name: Build & Package (macOS arm64)
+    needs: changelog
+    runs-on: macos-14
+    timeout-minutes: 30
+    outputs:
+      tag: ${{ steps.version.outputs.RELEASE_TAG }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute deterministic release version
+        id: version
+        run: |
+          scripts/release-metadata.sh | tee "$RUNNER_TEMP/release-version"
+          cat "$RUNNER_TEMP/release-version" >> "$GITHUB_ENV"
+          cat "$RUNNER_TEMP/release-version" >> "$GITHUB_OUTPUT"
+
+      - name: Test release scripts
+        run: |
+          python3 scripts/test-release-metadata.py
+          python3 scripts/test-release-notes.py
+
+      - name: Swift Test
+        run: swift test
+
+      - name: Build macOS App
+        run: ./build_app.sh
+
+      - name: Package Release
+        run: ./scripts/package-release.sh
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macOS-release-arm64
+          path: dist/release/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build-and-package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.build-and-package.outputs.tag }}
+      RELEASE_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Download release packages
+        uses: actions/download-artifact@v4
+        with:
+          name: macOS-release-arm64
+          path: release
+
+      - name: Download changelog
+        uses: actions/download-artifact@v4
+        with:
+          name: release-changelog
+          path: .
+
+      - name: Check and publish release
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists."
+          else
+            gh release create "$RELEASE_TAG" \
+              release/VideoAutoTranslate_*.dmg \
+              release/VideoAutoTranslate_*.zip \
+              release/SHA256SUMS.txt \
+              --target "$RELEASE_COMMIT" \
+              --title "$RELEASE_TAG" \
+              --notes-file release-notes.md \
+              --latest
+          fi
