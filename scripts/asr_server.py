@@ -21,6 +21,7 @@ import asyncio
 import tempfile
 import argparse
 import threading
+import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -295,70 +296,71 @@ def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror
         "local_path": None
     }
     
-    # 注入环境变量镜像并彻底禁用 Xet
-    os.environ["HF_HUB_DISABLE_XET"] = "1"
-    if mirror:
-        os.environ["HF_ENDPOINT"] = mirror
-
     stop_event = threading.Event()
     ACTIVE_DOWNLOAD_EVENTS[model_id] = stop_event
 
-    folder_safe_name = "models--" + repo_id.replace("/", "--")
-    repo_folder = dest_dir / folder_safe_name
-    expected_size = MODEL_APPROX_SIZES.get(model_id) or MODEL_APPROX_SIZES.get(repo_id, 2_467_859_030)
-
-    # 若本地已存在完整有效模型，直接就绪
-    if repo_folder.exists() and has_valid_model_files(repo_folder):
-        DOWNLOAD_TASKS[model_id] = {
-            "status": "ready",
-            "progress": 1.0,
-            "speed": "下载完成",
-            "error": None,
-            "local_path": str(find_model_path(repo_id, True) or repo_folder)
-        }
-        return
-
-    max_progress = 0.0
-
-    def monitor(proc: subprocess.Popen):
-        nonlocal max_progress
-        prev_size = get_dir_size(repo_folder)
-        prev_time = time.time()
-        while not stop_event.is_set() and proc.poll() is None:
-            time.sleep(0.5)
-            if stop_event.is_set():
-                break
-            now = time.time()
-            dt = max(0.1, now - prev_time)
-            cur_size = get_dir_size(repo_folder)
-            delta = max(0, cur_size - prev_size)
-            speed_mb_s = (delta / dt) / (1024 * 1024)
-            
-            cur_mb = cur_size / (1024 * 1024)
-            tot_mb = expected_size / (1024 * 1024)
-            raw_prog = cur_size / expected_size
-            max_progress = max(max_progress, min(0.99, max(0.0, raw_prog)))
-            
-            if delta > 0:
-                speed_text = f"{speed_mb_s:.1f} MB/s ({cur_mb:.1f} MB / {tot_mb:.1f} MB)"
-            elif cur_size > 0:
-                speed_text = f"正在写入 ({cur_mb:.1f} MB / {tot_mb:.1f} MB)"
-            else:
-                speed_text = "正在连接并拉取元数据..."
-                
-            if DOWNLOAD_TASKS.get(model_id, {}).get("status") == "downloading":
-                DOWNLOAD_TASKS[model_id]["progress"] = round(max_progress, 3)
-                DOWNLOAD_TASKS[model_id]["speed"] = speed_text
-            
-            prev_size = cur_size
-            prev_time = now
-
     try:
+        # 注入环境变量镜像并彻底禁用 Xet
+        os.environ["HF_HUB_DISABLE_XET"] = "1"
+        if mirror:
+            os.environ["HF_ENDPOINT"] = mirror
+
+        folder_safe_name = "models--" + repo_id.replace("/", "--")
+        repo_folder = dest_dir / folder_safe_name
+        expected_size = MODEL_APPROX_SIZES.get(model_id) or MODEL_APPROX_SIZES.get(repo_id, 2_467_859_030)
+
+        # 若本地已存在完整有效模型，直接就绪
+        if repo_folder.exists() and has_valid_model_files(repo_folder):
+            DOWNLOAD_TASKS[model_id] = {
+                "status": "ready",
+                "progress": 1.0,
+                "speed": "下载完成",
+                "error": None,
+                "local_path": str(find_model_path(repo_id, True) or repo_folder)
+            }
+            return
+
+        max_progress = 0.0
+
+        def monitor(proc: subprocess.Popen):
+            nonlocal max_progress
+            prev_size = get_dir_size(repo_folder)
+            prev_time = time.time()
+            while not stop_event.is_set() and proc.poll() is None:
+                time.sleep(0.5)
+                if stop_event.is_set():
+                    break
+                now = time.time()
+                dt = max(0.1, now - prev_time)
+                cur_size = get_dir_size(repo_folder)
+                delta = max(0, cur_size - prev_size)
+                speed_mb_s = (delta / dt) / (1024 * 1024)
+                
+                cur_mb = cur_size / (1024 * 1024)
+                tot_mb = expected_size / (1024 * 1024)
+                raw_prog = cur_size / expected_size
+                max_progress = max(max_progress, min(0.99, max(0.0, raw_prog)))
+                
+                if delta > 0:
+                    speed_text = f"{speed_mb_s:.1f} MB/s ({cur_mb:.1f} MB / {tot_mb:.1f} MB)"
+                elif cur_size > 0:
+                    speed_text = f"正在写入 ({cur_mb:.1f} MB / {tot_mb:.1f} MB)"
+                else:
+                    speed_text = "正在连接并拉取元数据..."
+                    
+                if DOWNLOAD_TASKS.get(model_id, {}).get("status") == "downloading":
+                    DOWNLOAD_TASKS[model_id]["progress"] = round(max_progress, 3)
+                    DOWNLOAD_TASKS[model_id]["speed"] = speed_text
+                
+                prev_size = cur_size
+                prev_time = now
+
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         worker_code = f"""
 import os, sys
 os.environ["HF_HUB_DISABLE_XET"] = "1"
+os.environ["TQDM_DISABLE"] = "1"
 if {repr(mirror)}:
     os.environ["HF_ENDPOINT"] = {repr(mirror)}
 from huggingface_hub import snapshot_download
@@ -369,9 +371,9 @@ try:
         endpoint={repr(mirror)} if {repr(mirror)} else None,
         resume_download=True
     )
-    print("DOWNLOAD_SUCCESS:" + str(p))
+    print("DOWNLOAD_SUCCESS:" + str(p), flush=True)
 except Exception as e:
-    print("DOWNLOAD_ERROR:" + str(e), file=sys.stderr)
+    print("DOWNLOAD_ERROR:" + str(e), file=sys.stderr, flush=True)
     sys.exit(1)
 """
         proc = subprocess.Popen(
