@@ -1,6 +1,7 @@
 import Foundation
 import CoreMedia
 import Combine
+import CryptoKit
 
 /// 单行字幕项
 public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equatable, Codable {
@@ -10,21 +11,29 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
 
     @Published public var startTime: CMTime {
         willSet { if startTime != newValue { onModified?() } }
+        didSet { if startTime != oldValue { dubbedAudioURL = nil; dubbedAudioSignature = nil } }
     }
     @Published public var endTime: CMTime {
         willSet { if endTime != newValue { onModified?() } }
+        didSet { if endTime != oldValue { dubbedAudioURL = nil; dubbedAudioSignature = nil } }
     }
     @Published public var originalText: String {
         willSet { if originalText != newValue { onModified?() } }
+        didSet { if originalText != oldValue { words = []; dubbedAudioURL = nil; dubbedAudioSignature = nil; translationNeedsReview = !translatedText.isEmpty } }
     }
     @Published public var translatedText: String {
         willSet { if translatedText != newValue { onModified?() } }
+        didSet { if translatedText != oldValue { dubbedAudioURL = nil; dubbedAudioSignature = nil } }
     }
     @Published public var words: [WordToken] {
         willSet { if words != newValue { onModified?() } }
     }
 
     // 配音缓存状态
+    public var dubbedAudioSignature: String?
+    @Published public var translationNeedsReview = false {
+        willSet { if newValue != translationNeedsReview { onModified?() } }
+    }
     @Published public var dubbedAudioURL: URL?
     @Published public var isGeneratingAudio: Bool = false
 
@@ -35,7 +44,9 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         originalText: String,
         translatedText: String = "",
         words: [WordToken] = [],
-        dubbedAudioURL: URL? = nil
+        dubbedAudioURL: URL? = nil,
+        dubbedAudioSignature: String? = nil,
+        translationNeedsReview: Bool = false
     ) {
         self.id = id
         self.startTime = startTime
@@ -44,6 +55,21 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         self.translatedText = translatedText
         self.words = words
         self.dubbedAudioURL = dubbedAudioURL
+        self.dubbedAudioSignature = dubbedAudioSignature
+        self.translationNeedsReview = translationNeedsReview
+    }
+
+    public func audioSignature(voice: String) -> String {
+        let input = "\(translatedText)|\(voice)|\(startTime.value)/\(startTime.timescale)|\(endTime.value)/\(endTime.timescale)"
+        return SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    public func hasCurrentAudio(voice: String) -> Bool {
+        !translationNeedsReview && dubbedAudioSignature == audioSignature(voice: voice) && dubbedAudioURL.map { FileManager.default.fileExists(atPath: $0.path) } == true
+    }
+
+    public func snapshot() -> SubtitleItem {
+        SubtitleItem(id: id, startTime: startTime, endTime: endTime, originalText: originalText, translatedText: translatedText, words: words, dubbedAudioURL: dubbedAudioURL, dubbedAudioSignature: dubbedAudioSignature, translationNeedsReview: translationNeedsReview)
     }
 
     public var duration: CMTime {
@@ -69,7 +95,7 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
 
     // MARK: - Codable
     enum CodingKeys: String, CodingKey {
-        case id, startTime, endTime, originalText, translatedText, words, dubbedAudioURL
+        case id, startTime, endTime, originalText, translatedText, words, dubbedAudioURL, dubbedAudioSignature, translationNeedsReview
     }
 
     public init(from decoder: Decoder) throws {
@@ -83,6 +109,8 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         self.translatedText = try container.decode(String.self, forKey: .translatedText)
         self.words = try container.decode([WordToken].self, forKey: .words)
         self.dubbedAudioURL = try container.decodeIfPresent(URL.self, forKey: .dubbedAudioURL)
+        self.dubbedAudioSignature = try container.decodeIfPresent(String.self, forKey: .dubbedAudioSignature)
+        self.translationNeedsReview = try container.decodeIfPresent(Bool.self, forKey: .translationNeedsReview) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -94,5 +122,7 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         try container.encode(translatedText, forKey: .translatedText)
         try container.encode(words, forKey: .words)
         try container.encodeIfPresent(dubbedAudioURL, forKey: .dubbedAudioURL)
+        try container.encodeIfPresent(dubbedAudioSignature, forKey: .dubbedAudioSignature)
+        try container.encode(translationNeedsReview, forKey: .translationNeedsReview)
     }
 }

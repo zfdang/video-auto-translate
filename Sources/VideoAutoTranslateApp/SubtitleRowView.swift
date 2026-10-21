@@ -154,11 +154,7 @@ public struct SubtitleRowView: View {
                         onFocus()
                     }
                 }
-                .onChange(of: item.originalText) { _, _ in
-                    // R16: 修改原文后使词级映射及旧配音缓存失效
-                    item.words = []
-                    item.dubbedAudioURL = nil
-                }
+
 
             // 译文字幕编辑框 (中文/目标语种)
             TextField("译文内容 (未翻译，可直接编辑或点击上方「字幕翻译」)", text: $item.translatedText)
@@ -175,10 +171,13 @@ public struct SubtitleRowView: View {
                         onFocus()
                     }
                 }
-                .onChange(of: item.translatedText) { _, _ in
-                    // R16: 修改译文后使旧配音缓存失效
-                    item.dubbedAudioURL = nil
-                }
+
+            if item.translationNeedsReview {
+                Label("译文待复核：原文或目标语言已改变", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundColor(.orange)
+                Button("已确认译文属于当前目标语言") { item.translationNeedsReview = false }
+            }
+
         }
         .padding(8)
         .background(

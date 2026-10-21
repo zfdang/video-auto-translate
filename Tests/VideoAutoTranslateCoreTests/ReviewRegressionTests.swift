@@ -74,4 +74,17 @@ final class ReviewRegressionTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: XCTUnwrap(restored.subtitles.first?.dubbedAudioURL)), Data("saved audio".utf8))
     }
 
+    func testDubbingSignatureExpiresWhenContentOrTimingChanges() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data([1]).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let row = SubtitleItem(startTime: .zero, endTime: .from(seconds: 1), originalText: "hello", translatedText: "你好", dubbedAudioURL: url)
+        row.dubbedAudioSignature = row.audioSignature(voice: "zh-CN")
+        XCTAssertTrue(row.hasCurrentAudio(voice: "zh-CN"))
+        XCTAssertFalse(row.hasCurrentAudio(voice: "ja-JP"))
+        row.endTime = .from(seconds: 2)
+        XCTAssertFalse(row.hasCurrentAudio(voice: "zh-CN"))
+        XCTAssertNil(row.dubbedAudioURL)
+    }
+
 }

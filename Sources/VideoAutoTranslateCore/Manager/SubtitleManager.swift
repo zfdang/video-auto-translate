@@ -194,8 +194,10 @@ public final class SubtitleManager {
         }
 
         let tempDir = FileManager.default.temporaryDirectory
-        let rawTTSURL = tempDir.appendingPathComponent("raw_tts_\(item.id.uuidString).wav")
-        let finalStretchedURL = tempDir.appendingPathComponent("dubbed_\(item.id.uuidString).wav")
+        let signature = item.audioSignature(voice: voice)
+        let requestID = UUID().uuidString
+        let rawTTSURL = tempDir.appendingPathComponent("raw_tts_\(requestID).wav")
+        let finalStretchedURL = tempDir.appendingPathComponent("dubbed_\(requestID).wav")
 
         // 1. 合成原始语速语音
         _ = try await ttsService.synthesize(text: textToSpeak, voice: voice, outputURL: rawTTSURL)
@@ -212,12 +214,16 @@ public final class SubtitleManager {
         do {
             try timePitchEngine.changeSpeed(inputURL: rawTTSURL, outputURL: finalStretchedURL, rate: rate)
             await MainActor.run {
+                guard !Task.isCancelled, item.audioSignature(voice: voice) == signature else { return }
                 item.dubbedAudioURL = finalStretchedURL
+                item.dubbedAudioSignature = signature
             }
         } catch {
             // 伸缩引擎异常时优雅降级：直接采用高质量原生合成音频，杜绝单句异常中断全篇配音
             await MainActor.run {
+                guard !Task.isCancelled, item.audioSignature(voice: voice) == signature else { return }
                 item.dubbedAudioURL = rawTTSURL
+                item.dubbedAudioSignature = signature
             }
         }
     }

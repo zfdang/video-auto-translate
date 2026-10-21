@@ -13,12 +13,22 @@ public final class AppState: ObservableObject {
     @Published public var recoveryAvailable = false
     private var recoveryTask: Task<Void, Never>?
     private var recoveryWrite: Task<Void, Error>?
+    private var isRestoringProject = false
     private let persistsRecovery: Bool
     private let recoveryURL: URL
 
     @Published public var project: ProjectState = ProjectState() {
         didSet {
             bindProjectSubtitles()
+            if !isRestoringProject && oldValue.llmConfig.targetLanguage != project.llmConfig.targetLanguage {
+                for item in project.subtitles {
+                    item.dubbedAudioURL = nil
+                    item.dubbedAudioSignature = nil
+                    item.translationNeedsReview = !item.translatedText.isEmpty
+                }
+                project.isDirty = true
+                scheduleRecovery()
+            }
             if project.isDirty && (!oldValue.isDirty || oldValue.subtitles.map(\.id) != project.subtitles.map(\.id)) { scheduleRecovery() }
         }
     }
@@ -522,7 +532,7 @@ public final class AppState: ObservableObject {
                 : item.translatedText
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
 
-            let needsAudio = (item.dubbedAudioURL == nil) || !FileManager.default.fileExists(atPath: item.dubbedAudioURL!.path)
+            let needsAudio = !item.hasCurrentAudio(voice: targetVoice)
             if needsAudio {
                 onProgress?(idx + 1, total)
                 do {
@@ -557,7 +567,7 @@ public final class AppState: ObservableObject {
                 item.isGeneratingAudio = true
                 defer { item.isGeneratingAudio = false }
                 let voice = project.llmConfig.targetLanguageVoiceCode
-                if item.dubbedAudioURL == nil || !FileManager.default.fileExists(atPath: item.dubbedAudioURL!.path) {
+                if !item.hasCurrentAudio(voice: voice) {
                     try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
                 }
                 if let audioURL = item.dubbedAudioURL {
@@ -590,17 +600,7 @@ public final class AppState: ObservableObject {
 
     /// 创建当前字幕列表的独立深拷贝快照
     public func createSubtitlesSnapshot() -> [SubtitleItem] {
-        return project.subtitles.map { item in
-            SubtitleItem(
-                id: item.id,
-                startTime: item.startTime,
-                endTime: item.endTime,
-                originalText: item.originalText,
-                translatedText: item.translatedText,
-                words: item.words,
-                dubbedAudioURL: item.dubbedAudioURL
-            )
-        }
+        project.subtitles.map { $0.snapshot() }
     }
 
     /// 记录当前状态至撤销历史堆栈
@@ -942,8 +942,10 @@ public final class AppState: ObservableObject {
         canUndo = false
         canRedo = false
         lastTextEditID = nil
+        isRestoringProject = true
         project.reset()
         project.restore(from: doc)
+        isRestoringProject = false
         project.audioURL = project.videoURL // Original-quality audio remains available after reopening.
         documentURL = url
         saveStatus = "已保存"

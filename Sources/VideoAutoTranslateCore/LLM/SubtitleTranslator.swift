@@ -193,6 +193,7 @@ public final class SubtitleTranslator {
                 let cleanTranslation = translated.trimmingCharacters(in: .whitespacesAndNewlines)
                 if item.originalText == snap.orig && item.translatedText == snap.trans {
                     item.translatedText = cleanTranslation
+                    item.translationNeedsReview = false
                 }
             }
         }
