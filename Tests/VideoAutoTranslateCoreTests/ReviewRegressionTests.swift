@@ -49,4 +49,15 @@ final class ReviewRegressionTests: XCTestCase {
         XCTAssertEqual(result.first?.endTime.secondsValue, 2)
     }
 
+    func testTranslationSequenceBaseAndCompleteCoverage() throws {
+        let rows = ["First", "Second"].map { SubtitleItem(startTime: .zero, endTime: .from(seconds: 1), originalText: $0) }
+        let translator = SubtitleTranslator()
+        let entries = try translator.parseTranslationEntries(from: "[{\"id\":0,\"translation\":\"A\"},{\"id\":1,\"translation\":\"B\"}]", chunk: rows)
+        let valid = try translator.validatedTranslations(entries, for: rows)
+        XCTAssertEqual(valid[rows[0].id.uuidString], "A")
+        XCTAssertEqual(valid[rows[1].id.uuidString], "B")
+        XCTAssertThrowsError(try translator.validatedTranslations(Array(entries.prefix(1)), for: rows))
+        XCTAssertThrowsError(try translator.validatedTranslations([entries[0], entries[0]], for: rows))
+    }
+
 }

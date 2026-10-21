@@ -182,25 +182,7 @@ public final class SubtitleTranslator {
         let entries = try parseTranslationEntries(from: responseText, chunk: chunk)
 
         // 回填至各 SubtitleItem (R07 / FU06: 严格快照校验保护人工在途修改; R08: 安全合并去重; R17: 校验批次有效性)
-        var entryDict = Dictionary(
-            entries.map { ($0.id, $0.translation) },
-            uniquingKeysWith: { first, _ in first }
-        )
-
-        var matchedCount = chunk.filter { entryDict[$0.id.uuidString] != nil }.count
-        // 兜底：若按 UUID 无法匹配（例如模型重排或改写了 ID），但返回项数与批次项数一致，按序对应匹配
-        if matchedCount == 0 && entries.count == chunk.count {
-            for (idx, item) in chunk.enumerated() {
-                entryDict[item.id.uuidString] = entries[idx].translation
-            }
-            matchedCount = chunk.count
-        }
-
-        guard matchedCount > 0 else {
-            throw LLMError.parsingFailed("模型返回内容中未包含当前批次的任何字幕 ID (请求 \(chunk.count) 条，匹配 0 条)")
-        }
-
-        let finalDict = entryDict
+        let finalDict = try validatedTranslations(entries, for: chunk)
         await MainActor.run {
             for snap in snapshot {
                 guard let item = chunk.first(where: { $0.id == snap.id }),
@@ -214,6 +196,15 @@ public final class SubtitleTranslator {
                 }
             }
         }
+    }
+
+    internal func validatedTranslations(_ entries: [TranslationEntry], for chunk: [SubtitleItem]) throws -> [String: String] {
+        let expected = Set(chunk.map { $0.id.uuidString })
+        guard entries.count == chunk.count, Set(entries.map(\.id)) == expected,
+              entries.allSatisfy({ !$0.translation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            throw LLMError.parsingFailed("本批译文缺失、重复或 ID 不匹配，未覆盖任何已有译文；请重试本批")
+        }
+        return Dictionary(entries.map { ($0.id, $0.translation) }, uniquingKeysWith: { first, _ in first })
     }
 
     /// 提取并解析模型返回内容中的 JSON (多层级容错解析器)
@@ -242,6 +233,7 @@ public final class SubtitleTranslator {
             sanitized = commaRegex.stringByReplacingMatches(in: sanitized, options: [], range: range, withTemplate: "$1")
         }
 
+        let numericBase = sanitized.range(of: #""(?:id|ID|index)"\s*:\s*0\b"#, options: .regularExpression) != nil ? 0 : 1
         // 辅助闭包：对提取出的单项进行标准化匹配与校验
         func normalizeEntry(id: String, translation: String, index: Int) -> TranslationEntry? {
             let cleanTrans = translation.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -253,19 +245,15 @@ public final class SubtitleTranslator {
                 return TranslationEntry(id: matched.id.uuidString, translation: cleanTrans)
             }
 
-            // 2. 若 ID 是数字序号 (例如 1, 2... 或 0, 1...)
-            if let num = Int(cleanId) {
-                if num >= 1 && num <= chunk.count {
-                    return TranslationEntry(id: chunk[num - 1].id.uuidString, translation: cleanTrans)
-                } else if num == 0 && !chunk.isEmpty {
-                    return TranslationEntry(id: chunk[0].id.uuidString, translation: cleanTrans)
-                }
+            var number = Int(cleanId)
+            if number == nil, cleanId.range(of: #"^(?:item|line)_[0-9]+$"#, options: .regularExpression) != nil {
+                number = Int(cleanId.split(separator: "_").last ?? "")
             }
-
-            // 3. 若 ID 形如 "item_1", "line_1"
-            let digitsOnly = cleanId.filter { $0.isNumber }
-            if !digitsOnly.isEmpty, let num = Int(digitsOnly), num >= 1 && num <= chunk.count {
-                return TranslationEntry(id: chunk[num - 1].id.uuidString, translation: cleanTrans)
+            if let number = number {
+                let position = number - numericBase
+                if chunk.indices.contains(position) {
+                    return TranslationEntry(id: chunk[position].id.uuidString, translation: cleanTrans)
+                }
             }
 
             // 4. 若 ID 为空但有 index 序号
