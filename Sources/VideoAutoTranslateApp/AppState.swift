@@ -61,6 +61,7 @@ public final class AppState: ObservableObject {
 
     private var timeObserverToken: Any?
     private var cancellables = Set<AnyCancellable>()
+    private var downloadTasks: [String: Task<Void, Never>] = [:]
 
     private func bindProjectSubtitles() {
         for item in project.subtitles {
@@ -765,15 +766,23 @@ public final class AppState: ObservableObject {
 
     /// 触发指定模型的下载 (R23: 首次下载先准备 sidecar 服务，避免连接失败或遗留下载中状态)
     public func downloadModel(preset: ASRModelPreset) {
+        // 先中止先前的下载准备任务（若有）
+        downloadTasks[preset.id]?.cancel()
+
         // 第一时间在主线程将状态置为 0% downloading，界面上的“立即下载”按钮在点击瞬间立即切换为“取消”和 0% 进度条
         modelStorageManager.modelStates[preset.id] = .downloading(progress: 0.0, speed: "正在准备下载环境...")
 
-        Task {
+        downloadTasks[preset.id] = Task {
+            if Task.isCancelled { return }
+
             if preset.isRepo {
                 // 确保 ASR 服务在线就绪（若未启动或已断开，自动唤醒并等待健康就绪）
                 let isReady = await sidecarManager.ensureRunning()
+                if Task.isCancelled { return }
+
                 guard isReady else {
                     await MainActor.run {
+                        if Task.isCancelled { return }
                         let reason: String
                         if case .error(let msg) = self.sidecarManager.status {
                             reason = msg
@@ -788,21 +797,33 @@ public final class AppState: ObservableObject {
                 }
 
                 await MainActor.run {
+                    if Task.isCancelled { return }
                     self.modelStorageManager.modelStates[preset.id] = .downloading(progress: 0.0, speed: "正在连接下载镜像源...")
                 }
+
+                if Task.isCancelled { return }
 
                 do {
                     try await modelStorageManager.triggerServerRepoDownload(preset: preset)
                 } catch {
                     await MainActor.run {
+                        if Task.isCancelled { return }
                         self.modelStorageManager.modelStates[preset.id] = .failed("连接服务失败: \(error.localizedDescription)")
                         self.errorMessage = "启动模型下载失败: \(error.localizedDescription)"
                         self.statusMessage = "模型下载启动失败"
                     }
                 }
             } else {
+                if Task.isCancelled { return }
                 modelStorageManager.startDirectDownload(for: preset)
             }
         }
+    }
+
+    /// 取消指定模型的下载任务，立即切回“立即下载”
+    public func cancelDownload(preset: ASRModelPreset) {
+        downloadTasks[preset.id]?.cancel()
+        downloadTasks.removeValue(forKey: preset.id)
+        modelStorageManager.cancelDownload(for: preset.id)
     }
 }

@@ -154,7 +154,7 @@ public struct SettingsView: View {
                             appState.downloadModel(preset: preset)
                         },
                         onCancel: {
-                            modelStorageManager.cancelDownload(for: preset.id)
+                            appState.cancelDownload(preset: preset)
                         }
                     )
                 }

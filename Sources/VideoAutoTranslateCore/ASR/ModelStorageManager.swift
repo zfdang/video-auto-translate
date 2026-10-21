@@ -17,6 +17,7 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
     private var downloadSessions: [String: URLSessionDownloadTask] = [:]
     private var downloadProgressHandlers: [String: (Double, String) -> Void] = [:]
     private var downloadStartTimes: [String: Date] = [:]
+    private var pollTasks: [String: Task<Void, Never>] = [:]
 
     public init(config: ModelStorageConfig = ModelStorageConfig()) {
         self.config = config
@@ -178,21 +179,27 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
+        if Task.isCancelled { return }
         await MainActor.run {
+            guard !Task.isCancelled else { return }
             self.modelStates[preset.id] = .downloading(progress: 0.0, speed: "正在连接下载镜像源...")
         }
 
         let (data, response) = try await URLSession.shared.data(for: request)
+        if Task.isCancelled { return }
         guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
             let err = String(data: data, encoding: .utf8) ?? "HTTP 错误"
             await MainActor.run {
-                self.modelStates[preset.id] = .failed(err)
+                if !Task.isCancelled {
+                    self.modelStates[preset.id] = .failed(err)
+                }
             }
             return
         }
 
-        // 启动轮询检查服务端进度
-        Task {
+        // 启动轮询检查服务端进度并留存引用，以便取消时即刻中断
+        pollTasks[preset.id]?.cancel()
+        pollTasks[preset.id] = Task {
             await self.pollServerDownloadProgress(preset: preset, asrBaseURL: asrBaseURL)
         }
     }
@@ -203,8 +210,9 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
 
         var lastProgress: Double = 0.0
 
-        while true {
+        while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+            if Task.isCancelled { break }
 
             // 用户若已取消，主动终止轮询
             let isCurrentDownloading = await MainActor.run {
@@ -219,6 +227,7 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
 
             do {
                 let (data, _) = try await URLSession.shared.data(from: pollURL)
+                if Task.isCancelled { break }
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let status = json["status"] as? String {
                     if status == "downloading" {
@@ -227,26 +236,32 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
                         let smoothProg = max(lastProgress, min(1.0, max(0.0, prog)))
                         lastProgress = smoothProg
                         await MainActor.run {
-                            if case .downloading = self.modelStates[preset.id] {
+                            if case .downloading = self.modelStates[preset.id], !Task.isCancelled {
                                 self.modelStates[preset.id] = .downloading(progress: smoothProg, speed: speed)
                             }
                         }
                     } else if status == "ready" {
                         let path = (json["local_path"] as? String) ?? self.resolvedStorageDirectory().path
                         await MainActor.run {
-                            self.modelStates[preset.id] = .ready(localPath: path, sizeDescription: preset.sizeDescription)
-                            self.refreshAll()
+                            if !Task.isCancelled {
+                                self.modelStates[preset.id] = .ready(localPath: path, sizeDescription: preset.sizeDescription)
+                                self.refreshAll()
+                            }
                         }
                         break
                     } else if status == "failed" {
                         let err = (json["error"] as? String) ?? "下载失败"
                         await MainActor.run {
-                            self.modelStates[preset.id] = .failed(err)
+                            if !Task.isCancelled {
+                                self.modelStates[preset.id] = .failed(err)
+                            }
                         }
                         break
-                    } else if status == "canceled" {
+                    } else if status == "canceled" || status == "not_downloaded" {
                         await MainActor.run {
-                            self.modelStates[preset.id] = .notDownloaded
+                            if case .downloading = self.modelStates[preset.id] {
+                                self.modelStates[preset.id] = .notDownloaded
+                            }
                         }
                         break
                     }
@@ -261,6 +276,11 @@ public final class ModelStorageManager: NSObject, ObservableObject, URLSessionDo
     public func cancelDownload(for presetId: String, asrBaseURL: String = "http://127.0.0.1:8765") {
         downloadSessions[presetId]?.cancel()
         downloadSessions.removeValue(forKey: presetId)
+
+        pollTasks[presetId]?.cancel()
+        pollTasks.removeValue(forKey: presetId)
+
+        // 立即在主线程将状态重置为 notDownloaded，确保界面第 0 毫秒切回“立即下载”
         modelStates[presetId] = .notDownloaded
 
         if let cancelURL = URL(string: "\(asrBaseURL)/v1/models/download/cancel?model_id=\(presetId)") {

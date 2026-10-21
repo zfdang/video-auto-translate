@@ -65,6 +65,8 @@ CURRENT_STORAGE_DIR = DEFAULT_SHARED_DIR
 
 # 下载进度字典: model_id -> dict(status, progress, speed, error, local_path)
 DOWNLOAD_TASKS: Dict[str, Dict[str, Any]] = {}
+ACTIVE_DOWNLOAD_PROCS: Dict[str, Any] = {}
+ACTIVE_DOWNLOAD_EVENTS: Dict[str, threading.Event] = {}
 
 PRESET_MODELS = [
     {
@@ -284,7 +286,7 @@ def get_dir_size(path: Path) -> int:
 
 
 def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror: str):
-    """后台执行模型下载任务，严格从 0% 开始平滑推进，支持速率统计与取消"""
+    """后台执行模型下载任务，严格从 0% 开始平滑推进，支持速率统计与即时取消"""
     DOWNLOAD_TASKS[model_id] = {
         "status": "downloading",
         "progress": 0.0,
@@ -299,6 +301,8 @@ def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror
         os.environ["HF_ENDPOINT"] = mirror
 
     stop_event = threading.Event()
+    ACTIVE_DOWNLOAD_EVENTS[model_id] = stop_event
+
     folder_safe_name = "models--" + repo_id.replace("/", "--")
     repo_folder = dest_dir / folder_safe_name
     expected_size = MODEL_APPROX_SIZES.get(model_id) or MODEL_APPROX_SIZES.get(repo_id, 2_467_859_030)
@@ -316,11 +320,11 @@ def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror
 
     max_progress = 0.0
 
-    def monitor():
+    def monitor(proc: subprocess.Popen):
         nonlocal max_progress
         prev_size = get_dir_size(repo_folder)
         prev_time = time.time()
-        while not stop_event.is_set():
+        while not stop_event.is_set() and proc.poll() is None:
             time.sleep(0.5)
             if stop_event.is_set():
                 break
@@ -342,29 +346,60 @@ def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror
             else:
                 speed_text = "正在连接并拉取元数据..."
                 
-            DOWNLOAD_TASKS[model_id]["progress"] = round(max_progress, 3)
-            DOWNLOAD_TASKS[model_id]["speed"] = speed_text
+            if DOWNLOAD_TASKS.get(model_id, {}).get("status") == "downloading":
+                DOWNLOAD_TASKS[model_id]["progress"] = round(max_progress, 3)
+                DOWNLOAD_TASKS[model_id]["speed"] = speed_text
             
             prev_size = cur_size
             prev_time = now
 
-    mon_thread = threading.Thread(target=monitor, daemon=True)
-
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
+
+        worker_code = f"""
+import os, sys
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+if {repr(mirror)}:
+    os.environ["HF_ENDPOINT"] = {repr(mirror)}
+from huggingface_hub import snapshot_download
+try:
+    p = snapshot_download(
+        repo_id={repr(repo_id)},
+        cache_dir={repr(str(dest_dir))},
+        endpoint={repr(mirror)} if {repr(mirror)} else None,
+        resume_download=True
+    )
+    print("DOWNLOAD_SUCCESS:" + str(p))
+except Exception as e:
+    print("DOWNLOAD_ERROR:" + str(e), file=sys.stderr)
+    sys.exit(1)
+"""
+        proc = subprocess.Popen(
+            [sys.executable, "-c", worker_code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        ACTIVE_DOWNLOAD_PROCS[model_id] = proc
+
+        mon_thread = threading.Thread(target=monitor, args=(proc,), daemon=True)
         mon_thread.start()
 
-        # 尝试使用 huggingface_hub snapshot_download
-        try:
-            from huggingface_hub import snapshot_download
-            downloaded_path = snapshot_download(
-                repo_id=repo_id,
-                cache_dir=dest_dir,
-                endpoint=mirror if mirror else None,
-                resume_download=True
-            )
-            stop_event.set()
-            mon_thread.join(timeout=1.0)
+        stdout, stderr = proc.communicate()
+        stop_event.set()
+        mon_thread.join(timeout=1.0)
+        ACTIVE_DOWNLOAD_PROCS.pop(model_id, None)
+
+        if stop_event.is_set() and DOWNLOAD_TASKS.get(model_id, {}).get("status") == "canceled":
+            return
+
+        if proc.returncode == 0:
+            downloaded_path = None
+            for line in stdout.splitlines():
+                if line.startswith("DOWNLOAD_SUCCESS:"):
+                    downloaded_path = line.split(":", 1)[1].strip()
+            if not downloaded_path:
+                downloaded_path = str(find_model_path(repo_id, True) or repo_folder)
             DOWNLOAD_TASKS[model_id] = {
                 "status": "ready",
                 "progress": 1.0,
@@ -372,42 +407,41 @@ def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror
                 "error": None,
                 "local_path": str(downloaded_path)
             }
-            return
-        except ImportError:
-            pass
-
-        # 若未安装 huggingface_hub，使用 git 或 curl 备用下载
-        DOWNLOAD_TASKS[model_id]["speed"] = "调用 git clone 拉取权重..."
-        clone_url = f"{mirror.rstrip('/')}/{repo_id}.git"
-        import subprocess
-        res = subprocess.run(["git", "clone", "--depth", "1", clone_url, str(repo_folder)], capture_output=True, text=True)
-        stop_event.set()
-        mon_thread.join(timeout=1.0)
-        if res.returncode == 0:
-            DOWNLOAD_TASKS[model_id] = {
-                "status": "ready",
-                "progress": 1.0,
-                "speed": "下载完成",
-                "error": None,
-                "local_path": str(repo_folder)
-            }
         else:
-            raise RuntimeError(f"Git clone 失败: {res.stderr}")
+            if DOWNLOAD_TASKS.get(model_id, {}).get("status") == "canceled":
+                return
+            err_msg = stderr.strip() or stdout.strip() or f"下载进程异常退出，代码: {proc.returncode}"
+            DOWNLOAD_TASKS[model_id] = {
+                "status": "failed",
+                "progress": 0.0,
+                "speed": "下载出错",
+                "error": err_msg,
+                "local_path": None
+            }
 
     except Exception as exc:
         stop_event.set()
-        DOWNLOAD_TASKS[model_id] = {
-            "status": "failed",
-            "progress": 0.0,
-            "speed": "下载出错",
-            "error": str(exc),
-            "local_path": None
-        }
+        ACTIVE_DOWNLOAD_PROCS.pop(model_id, None)
+        if DOWNLOAD_TASKS.get(model_id, {}).get("status") != "canceled":
+            DOWNLOAD_TASKS[model_id] = {
+                "status": "failed",
+                "progress": 0.0,
+                "speed": "下载出错",
+                "error": str(exc),
+                "local_path": None
+            }
 
 
 @app.post("/v1/models/download")
 def start_model_download(req: DownloadRequest, background_tasks: BackgroundTasks):
     dest = Path(req.storage_dir).expanduser().resolve() if req.storage_dir else CURRENT_STORAGE_DIR
+    DOWNLOAD_TASKS[req.model_id] = {
+        "status": "downloading",
+        "progress": 0.0,
+        "speed": "正在准备下载环境...",
+        "error": None,
+        "local_path": None
+    }
     background_tasks.add_task(
         background_repo_download,
         model_id=req.model_id,
@@ -434,14 +468,23 @@ def get_download_status(model_id: str):
 
 @app.post("/v1/models/download/cancel")
 def cancel_model_download(model_id: str):
-    if model_id in DOWNLOAD_TASKS:
-        DOWNLOAD_TASKS[model_id] = {
-            "status": "canceled",
-            "progress": 0.0,
-            "speed": "已取消",
-            "error": None,
-            "local_path": None
-        }
+    DOWNLOAD_TASKS[model_id] = {
+        "status": "canceled",
+        "progress": 0.0,
+        "speed": "已取消",
+        "error": None,
+        "local_path": None
+    }
+    if model_id in ACTIVE_DOWNLOAD_EVENTS:
+        ACTIVE_DOWNLOAD_EVENTS[model_id].set()
+    if model_id in ACTIVE_DOWNLOAD_PROCS:
+        proc = ACTIVE_DOWNLOAD_PROCS.pop(model_id, None)
+        if proc:
+            try:
+                proc.terminate()
+                proc.kill()
+            except Exception:
+                pass
     return {"status": "ok", "model_id": model_id}
 
 
