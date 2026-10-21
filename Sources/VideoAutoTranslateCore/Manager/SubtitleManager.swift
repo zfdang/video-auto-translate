@@ -177,71 +177,87 @@ public final class SubtitleManager {
         )
     }
 
-    /// 单句增量快速重配音与语速自动缩放（0.5秒内快速试听）
-    /// - Parameters:
-    ///   - item: 需更新配音的单条字幕
-    ///   - ttsService: 语音合成服务
-    ///   - voice: 配音音色标识
-    public func reDub(
-        item: SubtitleItem,
-        ttsService: TTSServiceProtocol,
-        voice: String = "zh-CN"
-    ) async throws {
-        let textToSpeak = item.translatedText
+    /// Cache the measured, edge-trimmed normal-speed speech independently of timing.
+    public func prepareNaturalSpeech(
+        item: SubtitleItem, ttsService: TTSServiceProtocol, voice: String = "zh-CN"
+    ) async throws -> NaturalSpeechAudio {
+        try Task.checkCancellation()
         guard !item.translationNeedsReview else { throw TTSError.synthesisFailed("译文待复核，请先确认目标语言与内容") }
-        guard !textToSpeak.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw TTSError.emptyText
-        }
-
-        await MainActor.run {
-            item.isGeneratingAudio = true
-        }
-
+        let text = item.translatedText
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TTSError.emptyText }
+        if let cached = item.currentNaturalSpeech, cached.voice == voice { return cached }
+        let temp = FileManager.default.temporaryDirectory
+        let raw = temp.appendingPathComponent("tts-raw-\(UUID()).wav")
+        let trimmed = temp.appendingPathComponent("tts-natural-\(UUID()).wav")
+        var retained = false
         defer {
-            Task { @MainActor in
-                item.isGeneratingAudio = false
-            }
+            try? FileManager.default.removeItem(at: raw)
+            if !retained { try? FileManager.default.removeItem(at: trimmed) }
         }
+        _ = try await ttsService.synthesize(text: text, voice: voice, outputURL: raw)
+        try Task.checkCancellation()
+        // Check before decoding as well as before installation; stale or failed TTS
+        // output must never replace the cache of an edited utterance.
+        guard item.translatedText == text, !item.translationNeedsReview else { throw CancellationError() }
+        let duration = try NaturalSpeechAudio.trimEdges(inputURL: raw, outputURL: trimmed)
+        let audio = NaturalSpeechAudio(url: trimmed, duration: duration, text: text, voice: voice)
+        try Task.checkCancellation()
+        try await MainActor.run {
+            guard item.translatedText == text, !item.translationNeedsReview, !Task.isCancelled else { throw CancellationError() }
+            item.naturalSpeech = audio
+        }
+        retained = true
+        return audio
+    }
 
-        let tempDir = FileManager.default.temporaryDirectory
+    /// Generation only consumes confirmed audio, or publishes unchanged natural
+    /// speech when it already fits. All rate/timeline decisions belong to matching.
+    public func reDub(
+        item: SubtitleItem, ttsService: TTSServiceProtocol, voice: String = "zh-CN"
+    ) async throws {
+        try Task.checkCancellation()
+        if item.hasCurrentAudio(voice: voice) { return }
+        await MainActor.run { item.isGeneratingAudio = true }
+        defer { Task { @MainActor in item.isGeneratingAudio = false } }
         let signature = item.audioSignature(voice: voice)
-        let requestID = UUID().uuidString
-        let rawTTSURL = tempDir.appendingPathComponent("raw_tts_\(requestID).wav")
-        let finalStretchedURL = tempDir.appendingPathComponent("dubbed_\(requestID).wav")
-
-        defer {
-            if item.dubbedAudioURL != rawTTSURL { try? FileManager.default.removeItem(at: rawTTSURL) }
-            if item.dubbedAudioURL != finalStretchedURL { try? FileManager.default.removeItem(at: finalStretchedURL) }
+        let natural = try await prepareNaturalSpeech(item: item, ttsService: ttsService, voice: voice)
+        guard natural.duration <= item.durationSeconds + DubbingPacing.timeTolerance else {
+            throw DubbingTimingError.requiresTimelineMatch(natural: natural.duration, available: item.durationSeconds)
         }
-        // 1. 合成原始语速语音
-        _ = try await ttsService.synthesize(text: textToSpeak, voice: voice, outputURL: rawTTSURL)
+        try await publishSpeech(item: item, natural: natural, voice: voice, signature: signature, rate: 1)
+    }
 
+    /// Called only while constructing an explicit timeline proposal, never by
+    /// generation, audition or export. It renders exactly what the user reviews.
+    internal func renderMatchedSpeech(item: SubtitleItem, voice: String) async throws {
+        if item.hasCurrentAudio(voice: voice) { return }
+        guard let natural = item.currentNaturalSpeech, natural.voice == voice else {
+            throw TTSError.synthesisFailed("缺少所选音色的实测配音，请重新匹配译文时间轴。")
+        }
+        let rate = try DubbingPacing.rate(naturalDuration: natural.duration, availableDuration: item.durationSeconds)
+        try await publishSpeech(item: item, natural: natural, voice: voice, signature: item.audioSignature(voice: voice), rate: rate)
+    }
+
+    private func publishSpeech(item: SubtitleItem, natural: NaturalSpeechAudio, voice: String, signature: String, rate: Double) async throws {
         try Task.checkCancellation()
         guard item.audioSignature(voice: voice) == signature else { throw CancellationError() }
-        // 2. 检测语音实际发音时长
-        let rawAsset = AVURLAsset(url: rawTTSURL)
-        let rawDuration = try await rawAsset.load(.duration)
-        let targetDuration = item.duration
-
-        // 3. 计算语速伸缩比率 R = rawDuration / targetDuration
-        let rate = Float(rawDuration.secondsValue / max(0.2, targetDuration.secondsValue))
-
-        // Fall back only to complete audio which still fits the confirmed display interval.
-        var resultURL = finalStretchedURL
-        do { try timePitchEngine.changeSpeed(inputURL: rawTTSURL, outputURL: finalStretchedURL, rate: rate) }
-        catch { resultURL = rawTTSURL }
-        try Task.checkCancellation()
-        let actual = try await AVURLAsset(url: resultURL).load(.duration).secondsValue
-        guard actual > 0 else {
-            throw TTSError.synthesisFailed("配音音频生成异常，未获取到有效音频数据")
+        let result = FileManager.default.temporaryDirectory.appendingPathComponent("dubbed-\(UUID()).wav")
+        defer { if item.dubbedAudioURL != result { try? FileManager.default.removeItem(at: result) } }
+        if rate == 1 {
+            try FileManager.default.copyItem(at: natural.url, to: result)
+        } else {
+            // Rendering failures propagate; no overlong unprocessed fallback.
+            try timePitchEngine.changeSpeed(inputURL: natural.url, outputURL: result, rate: Float(rate))
         }
-        guard item.audioSignature(voice: voice) == signature else { throw CancellationError() }
-        let completedURL = resultURL
-        await MainActor.run {
-            guard !Task.isCancelled, item.audioSignature(voice: voice) == signature else { return }
-            item.dubbedAudioURL = completedURL
+        try Task.checkCancellation()
+        let actual = try await AVURLAsset(url: result).load(.duration).secondsValue
+        guard actual.isFinite, actual > 0, actual <= item.durationSeconds + DubbingPacing.timeTolerance else {
+            throw TTSError.synthesisFailed("配音渲染时长超出字幕范围，请重新匹配时间轴后试听。")
+        }
+        try await MainActor.run {
+            guard !Task.isCancelled, item.audioSignature(voice: voice) == signature else { throw CancellationError() }
+            item.dubbedAudioURL = result
             item.dubbedAudioSignature = signature
         }
-        guard item.hasCurrentAudio(voice: voice) else { throw CancellationError() }
     }
 }

@@ -595,7 +595,7 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertGreaterThan(enDur, 1.5)
     }
 
-    func testTimelineAlignerPacingSmoothing() {
+    func testTimelineAlignerReportsCrowdedSpeechWithoutMovingFollowingRows() {
         let aligner = TimelineAligner()
 
         // 构造三句发音语速严重不均衡的字幕：
@@ -632,23 +632,12 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertEqual(smoothed[2].originalText, item3.originalText)
         XCTAssertEqual(smoothed[2].translatedText, item3.translatedText)
 
-        // 2. 验证第 1 句时长显著扩增以匹配长译文 (14字/4.1 ≈ 3.4s)
-        let dur1 = smoothed[0].durationSeconds
-        XCTAssertGreaterThan(dur1, 2.5, "长译文行应当匹配充足的发音时长以避免语速过急")
-
-        // 3. 验证各行顺序严格递增、不产生交叉重叠
-        for i in 1..<smoothed.count {
-            XCTAssertGreaterThanOrEqual(
-                smoothed[i].startTime.secondsValue,
-                smoothed[i - 1].endTime.secondsValue,
-                "第 \(i) 行与前一行必须无交叠"
-            )
-        }
-
-        // 4. 验证重调后第 1 句的语速回归自然区间 (每秒汉字数 <= 4.5)
-        let rate1 = Double(smoothed[0].translatedText.count) / dur1
-        XCTAssertLessThanOrEqual(rate1, 4.5, "语速应当符合自然朗读舒适标准 (<=4.5字/s)")
-        XCTAssertLessThan(rate1, 9.0, "语速应当平滑至正常范围")
+        // A 0.5s slot cannot hold this translation naturally without stealing
+        // the next utterance's visual anchor. Report the conflict instead.
+        XCTAssertEqual(smoothed[0].endTime.secondsValue, 0.5, accuracy: 0.001)
+        XCTAssertEqual(smoothed[1].startTime.secondsValue, 0.5, accuracy: 0.001)
+        XCTAssertEqual(smoothed[2].startTime.secondsValue, 4, accuracy: 0.001)
+        XCTAssertTrue(TimelineAligner.pacingIssues(items: smoothed, language: "zh").contains(item1.id))
     }
 
     func testTimelineAlignerLocalClusterAntiDrift() {

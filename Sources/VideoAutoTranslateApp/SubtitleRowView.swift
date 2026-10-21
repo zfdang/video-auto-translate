@@ -54,6 +54,12 @@ public struct SubtitleRowView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if let issue = item.dubbingTimingIssue {
+                Label(issue, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 6) {
                 // 1. 多选勾选圈 (可直观勾选多行进行批量合并)
                 Button(action: onToggleSelect) {
