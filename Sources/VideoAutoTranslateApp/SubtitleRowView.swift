@@ -32,7 +32,7 @@ public struct SubtitleRowView: View {
            textView.string == item.originalText {
             let loc = textView.selectedRange().location
             if loc != NSNotFound {
-                charIndex = loc
+                charIndex = SubtitleManager.characterOffset(in: item.originalText, utf16Offset: loc)
             }
         }
         if charIndex == nil, let cached = lastCursorIndex {
@@ -141,10 +141,10 @@ public struct SubtitleRowView: View {
                 .background(Color(nsColor: .textBackgroundColor).opacity(0.6))
                 .cornerRadius(4)
                 .onReceive(NotificationCenter.default.publisher(for: NSTextView.didChangeSelectionNotification)) { notif in
-                    if let textView = notif.object as? NSTextView, textView.string == item.originalText {
+                    if focusedField == .original, let textView = notif.object as? NSTextView, textView.string == item.originalText {
                         let loc = textView.selectedRange().location
                         if loc != NSNotFound {
-                            self.lastCursorIndex = loc
+                            self.lastCursorIndex = SubtitleManager.characterOffset(in: item.originalText, utf16Offset: loc)
                         }
                     }
                 }

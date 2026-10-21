@@ -694,8 +694,8 @@ public final class AppState: ObservableObject {
                 let itemStr = item.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if textStr == itemStr || textView.string == item.originalText {
                     let loc = textView.selectedRange().location
-                    if loc != NSNotFound && loc > 0 && loc < item.originalText.count {
-                        charIndex = loc
+                    if loc != NSNotFound, let offset = SubtitleManager.characterOffset(in: item.originalText, utf16Offset: loc), offset > 0 && offset < item.originalText.count {
+                        charIndex = offset
                     }
                 }
             }

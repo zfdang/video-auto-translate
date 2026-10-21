@@ -8,6 +8,13 @@ public final class SubtitleManager {
 
     public init() {}
 
+    public static func characterOffset(in text: String, utf16Offset: Int) -> Int? {
+        guard utf16Offset >= 0, utf16Offset <= text.utf16.count,
+              let index = String.Index(text.utf16.index(text.utf16.startIndex, offsetBy: utf16Offset), within: text),
+              index == text.endIndex || text.indices.contains(index) else { return nil }
+        return text.distance(from: text.startIndex, to: index)
+    }
+
     /// 依据用户光标位置精准执行词级时间戳拆分 (Cmd+B)
     /// - Parameters:
     ///   - item: 待切分的字幕项
@@ -49,41 +56,15 @@ public final class SubtitleManager {
 
             if wordRanges.count >= 2 {
                 // 寻找最符合用户光标意图的切分词边界 (0 <= bestSplitIdx < wordRanges.count - 1)
-                var bestSplitIdx = 0
-                var foundBoundary = false
-
-                for k in 1..<wordRanges.count {
-                    let prevEnd = wordRanges[k - 1].endOffset
-                    let currStart = wordRanges[k].startOffset
-                    let currEnd = wordRanges[k].endOffset
-
-                    // 1. 光标位于上一词末尾到当前词开头之间（包括当前词首字符），用户意图在当前词前断句
-                    if prevEnd <= charIndex && charIndex <= currStart {
-                        bestSplitIdx = k - 1
-                        foundBoundary = true
-                        break
+                // Select one boundary from the complete set, including the first word.
+                let bestSplitIdx = (0..<(wordRanges.count - 1)).min { lhs, rhs in
+                    func distance(_ boundary: Int) -> Int {
+                        let lower = wordRanges[boundary].endOffset
+                        let upper = wordRanges[boundary + 1].startOffset
+                        return charIndex < lower ? lower - charIndex : max(0, charIndex - upper)
                     }
-
-                    // 2. 光标位于当前词内部：依据距词首词尾的距离智能判定归属
-                    if currStart < charIndex && charIndex < currEnd {
-                        let midpoint = Double(currStart + currEnd) / 2.0
-                        if Double(charIndex) < midpoint {
-                            bestSplitIdx = k - 1
-                        } else {
-                            bestSplitIdx = min(k, wordRanges.count - 2)
-                        }
-                        foundBoundary = true
-                        break
-                    }
-                }
-
-                if !foundBoundary {
-                    if charIndex <= wordRanges[0].startOffset {
-                        bestSplitIdx = 0
-                    } else {
-                        bestSplitIdx = wordRanges.count - 2
-                    }
-                }
+                    return distance(lhs) < distance(rhs)
+                }!
 
                 firstWords = Array(wordRanges[0...bestSplitIdx].map { $0.word })
                 secondWords = Array(wordRanges[(bestSplitIdx + 1)...].map { $0.word })
@@ -120,6 +101,9 @@ public final class SubtitleManager {
         let earliestValid = CMTimeAdd(item.startTime, minDuration)
         let latestValid = CMTimeSubtract(item.endTime, minDuration)
 
+        if !item.words.isEmpty && (splitTime < earliestValid || splitTime > latestValid) {
+            return nil // Never move a physical word boundary independently of its text.
+        }
         if splitTime < earliestValid {
             splitTime = earliestValid
         } else if splitTime > latestValid {
