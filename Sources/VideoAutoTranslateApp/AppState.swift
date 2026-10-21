@@ -700,6 +700,7 @@ public final class AppState: ObservableObject {
         canUndo = !undoStack.isEmpty
         canRedo = true
         project.isDirty = true
+        feedbackKind = .success
         statusMessage = "已撤销上一步操作"
     }
 
@@ -712,6 +713,7 @@ public final class AppState: ObservableObject {
         canUndo = true
         canRedo = !redoStack.isEmpty
         project.isDirty = true
+        feedbackKind = .success
         statusMessage = "已重做操作"
     }
 
@@ -760,6 +762,7 @@ public final class AppState: ObservableObject {
         recordUndoSnapshot()
         project.subtitles.remove(at: index)
         project.isDirty = true
+        feedbackKind = .success
         statusMessage = "已删除该行字幕"
     }
 
@@ -817,7 +820,8 @@ public final class AppState: ObservableObject {
             project.subtitles.insert(part1, at: index)
             project.selectedSubtitleID = part2.id
             project.isDirty = true
-            statusMessage = "已成功拆分字幕"
+            feedbackKind = .success
+        statusMessage = "已成功拆分字幕"
         }
     }
 
@@ -989,7 +993,8 @@ public final class AppState: ObservableObject {
             project.subtitles.insert(merged, at: firstIndex)
             project.selectedSubtitleID = merged.id
             project.isDirty = true
-            statusMessage = "已合并 \(selectedItems.count) 条字幕"
+            feedbackKind = .success
+        statusMessage = "已合并 \(selectedItems.count) 条字幕"
         }
     }
 
