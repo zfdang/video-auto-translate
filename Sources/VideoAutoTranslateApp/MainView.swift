@@ -65,6 +65,7 @@ public struct MainView: View {
         }
         .focusedSceneObject(appState)
         .background(WindowCloseGuard(appState: appState).frame(width: 0, height: 0))
+        .sheet(item: $appState.editProposal) { proposal in EditProposalView(appState: appState, proposal: proposal) }
         .sheet(item: $appState.splitDraft) { draft in SplitReviewView(appState: appState, draft: draft) }
         .sheet(isPresented: $appState.showSettings) {
             SettingsView(appState: appState)

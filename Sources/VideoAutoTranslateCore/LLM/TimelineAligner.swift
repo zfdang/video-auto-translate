@@ -10,6 +10,10 @@ import AVFoundation
 public final class TimelineAligner {
     public init() {}
 
+    public static func pacingIssues(items: [SubtitleItem], language: String) -> Set<UUID> {
+        Set(items.filter { estimateNaturalDuration(text: $0.translatedText.isEmpty ? $0.originalText : $0.translatedText, language: language) > $0.durationSeconds * 1.25 }.map(\.id))
+    }
+
     /// 估算特定语言文本的自然舒适发音时长 (秒)
     /// - Parameters:
     ///   - text: 文本内容

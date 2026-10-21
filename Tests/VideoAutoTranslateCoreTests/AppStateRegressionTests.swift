@@ -90,4 +90,19 @@ import CoreMedia
         XCTAssertEqual(try Data(contentsOf: url), Data("Previous output".utf8))
     }
 
+    func testAutomaticEditsRequireConfirmationAndCanUndo() async {
+        let app = AppState(probeServices: false)
+        let old = SubtitleItem(startTime: .zero, endTime: .from(seconds: 1), originalText: "hello")
+        app.project.subtitles = [old]
+        await app.runEditingJob(name: "test", snapshot: app.createSubtitlesSnapshot()) {
+            [SubtitleItem(startTime: .zero, endTime: .from(seconds: 2), originalText: "hello")]
+        }
+        XCTAssertEqual(app.project.subtitles[0].endTime.secondsValue, 1)
+        XCTAssertNotNil(app.editProposal)
+        app.applyEditProposal()
+        XCTAssertEqual(app.project.subtitles[0].endTime.secondsValue, 2)
+        app.undo()
+        XCTAssertEqual(app.project.subtitles[0].endTime.secondsValue, 1)
+    }
+
 }
