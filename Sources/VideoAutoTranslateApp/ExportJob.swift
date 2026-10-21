@@ -46,7 +46,7 @@ import VideoAutoTranslateCore
                 try Task.checkCancellation()
                 outputURL = destination
                 progress = 1
-                message = "已导出 \(destination.lastPathComponent)；字幕 \(snapshot.count) 句，明确跳过 \(skipped) 句"
+                message = "已导出 \(destination.lastPathComponent)；字幕 \(subtitleMode == .none ? 0 : snapshot.count) 句，明确跳过 \(skipped) 句"
             } catch is CancellationError { message = "导出已取消" }
             catch { self.error = error.localizedDescription; message = "导出失败：\(error.localizedDescription)" }
             isRunning = false
