@@ -10,24 +10,11 @@ public struct MainView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            if appState.recoveryAvailable {
-                HStack {
-                    Text("发现上次编辑的恢复副本")
-                    Button("恢复") { appState.restoreRecovery() }
-                    Button("暂不恢复") { appState.recoveryAvailable = false }
-                }.padding(8)
-            }
             // 顶部一体化工作流工具栏
             topWorkflowBar
 
             Divider()
 
-            if let text = appState.project.unalignedTranscript {
-                DisclosureGroup("已识别文字，尚无时间对齐；请准备对齐模型后重试") {
-                    ScrollView { Text(text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 100)
-                    Button("打开模型设置") { appState.showSettings = true }
-                }.padding(8)
-            }
             // 主工作区（左侧播放器 + 右侧字幕时间轴）
             HSplitView {
                 // 左侧视频区
@@ -50,11 +37,6 @@ public struct MainView: View {
             // 底部状态栏与进度
             bottomStatusBar
         }
-        .navigationTitle(windowTitle)
-        .focusedSceneObject(appState)
-        .background(WindowCloseGuard(appState: appState).frame(width: 0, height: 0))
-        .sheet(item: $appState.editProposal) { proposal in EditProposalView(appState: appState, proposal: proposal) }
-        .sheet(item: $appState.splitDraft) { draft in SplitReviewView(appState: appState, draft: draft) }
         .sheet(isPresented: $appState.showSettings) {
             SettingsView(appState: appState)
         }
@@ -64,6 +46,8 @@ public struct MainView: View {
         .sheet(isPresented: $appState.showExportSheet) {
             ExportView(appState: appState)
         }
+        .focusedSceneObject(appState)
+        .focusedSceneObject(appState)
         .alert("提示", isPresented: Binding(
             get: { appState.errorMessage != nil },
             set: { if !$0 { appState.errorMessage = nil } }
@@ -95,28 +79,8 @@ public struct MainView: View {
         }
     }
 
-    private var windowTitle: String {
-        let name = appState.documentURL?.lastPathComponent ?? appState.project.videoURL?.lastPathComponent ?? "VideoAutoTranslate"
-        return appState.project.isDirty ? "\(name) — 未保存" : name
-    }
-
     // MARK: - 顶部一体化工作流工具栏
     private var topWorkflowBar: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ScrollView(.horizontal) {
-                workflowControls
-            }
-            .scrollIndicators(.visible)
-            .frame(height: 40)
-            Text("字幕 \(appState.project.subtitles.count) · 翻译 \(translatedCount)/\(appState.project.subtitles.count) · 配音 \(dubbedCount)/\(appState.project.subtitles.count) · 待复核 \(appState.project.subtitles.filter { $0.translationNeedsReview }.count)")
-                .font(.caption).foregroundColor(.secondary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private var workflowControls: some View {
         HStack(spacing: 6) {
             // 步骤 1: 导入视频
             HStack(spacing: 6) {
@@ -182,7 +146,6 @@ public struct MainView: View {
                             .lineLimit(1)
                     }
                 }
-                .disabled(appState.project.isProcessing)
                 .menuStyle(.borderedButton)
                 .fixedSize()
                 .help("指定待识别音视频的原语言 (默认自动检测)")
@@ -199,7 +162,7 @@ public struct MainView: View {
                     .buttonStyle(.borderedProminent)
                     .fixedSize()
                     .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
-                    .help("识别语音；已有字幕时会先确认替换")
+                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳，并自动调用大模型进行智能语义断句规整")
                 } else {
                     Button(action: {
                         Task {
@@ -212,7 +175,7 @@ public struct MainView: View {
                     .buttonStyle(.bordered)
                     .fixedSize()
                     .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
-                    .help("识别语音；已有字幕时会先确认替换")
+                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳，并自动调用大模型进行智能语义断句规整")
                 }
             }
             .padding(.horizontal, 6)
@@ -253,7 +216,6 @@ public struct MainView: View {
                             .lineLimit(1)
                     }
                 }
-                .disabled(appState.project.isProcessing)
                 .menuStyle(.borderedButton)
                 .fixedSize()
                 .help("选择字幕翻译的目标语言")
@@ -318,7 +280,7 @@ public struct MainView: View {
                 .buttonStyle(.bordered)
                 .fixedSize()
                 .disabled(!hasTranslations || appState.project.isProcessing)
-                .help("可选步骤：按当前译文生成配音；也可直接进入第5步，在导出时选择音轨模式")
+                .help("可选步骤：合成新语言配音，并执行自适应语速对齐与背景音自动闪避混音（可跳过直接进入第5步导出成片）")
 
                 Text(")")
                     .font(.system(size: 13, weight: .bold))
@@ -348,7 +310,7 @@ public struct MainView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .fixedSize()
-                .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
+                .disabled(appState.project.subtitles.isEmpty)
                 .help("导出双语字幕文件 (SRT/VTT) 或全新压制音画同步视频")
             }
             .padding(.horizontal, 6)
@@ -379,14 +341,12 @@ public struct MainView: View {
                     .font(.body)
             }
             .buttonStyle(.bordered)
-            .accessibilityLabel("偏好设置")
-            .disabled(appState.project.isProcessing)
             .help("偏好设置 (模型下载与存储、Ollama 与 ASR 引擎托管)")
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
-
-    private var translatedCount: Int { appState.project.subtitles.filter { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !$0.translationNeedsReview }.count }
-    private var dubbedCount: Int { appState.project.subtitles.filter { $0.hasCurrentAudio(voice: appState.project.llmConfig.targetLanguageVoiceCode) }.count }
 
     private var workflowArrow: some View {
         Image(systemName: "arrow.right")
@@ -405,12 +365,12 @@ public struct MainView: View {
 
     private var hasTranslations: Bool {
         !appState.project.subtitles.isEmpty &&
-        appState.project.subtitles.allSatisfy { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !$0.translationNeedsReview }
+        appState.project.subtitles.contains(where: { !$0.translatedText.isEmpty })
     }
 
     private var hasDubbing: Bool {
         !appState.project.subtitles.isEmpty &&
-        appState.project.subtitles.allSatisfy { $0.hasCurrentAudio(voice: appState.project.llmConfig.targetLanguageVoiceCode) }
+        appState.project.subtitles.contains(where: { $0.dubbedAudioURL != nil })
     }
 
     private var currentASRLanguageName: String {
@@ -461,11 +421,7 @@ public struct MainView: View {
     // MARK: - 底部状态栏
     private var bottomStatusBar: some View {
         HStack(spacing: 12) {
-            if appState.exportJob.isRunning {
-                ProgressView(value: appState.exportJob.progress).frame(width: 120)
-                Text(appState.exportJob.message).font(.caption)
-                Button("取消导出") { appState.exportJob.cancel() }
-            } else if appState.project.isProcessing {
+            if appState.project.isProcessing {
                 ProgressView(value: appState.project.progress)
                     .progressViewStyle(.linear)
                     .frame(width: 140)
@@ -484,8 +440,9 @@ public struct MainView: View {
                 .controlSize(.mini)
                 .help("取消当前任务并释放模型资源")
             } else {
-                Image(systemName: appState.feedbackKind == .failure ? "exclamationmark.triangle.fill" : appState.feedbackKind == .success ? "checkmark.circle.fill" : "info.circle")
-                    .foregroundColor(appState.feedbackKind == .failure ? .red : appState.feedbackKind == .success ? .green : .secondary)
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 8, height: 8)
                 Text(appState.statusMessage)
                     .font(.caption)
                     .foregroundColor(.secondary)
