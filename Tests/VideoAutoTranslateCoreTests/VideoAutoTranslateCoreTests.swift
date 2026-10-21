@@ -602,14 +602,22 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
             translatedText: "非常好"
         )
 
-        let smoothed = aligner.alignTimelineDeterministically(items: [item1, item2, item3], language: "zh")
+        let smoothed = aligner.matchTimelineToTranslation(items: [item1, item2, item3], language: "zh")
         XCTAssertEqual(smoothed.count, 3)
 
-        // 1. 验证第 1 句时长显著扩增以容纳长译文
-        let dur1 = smoothed[0].durationSeconds
-        XCTAssertGreaterThan(dur1, 1.5, "长译文行应当借调充足时间以避免语速过急")
+        // 1. 验证原文与译文 1:1 严格保留
+        XCTAssertEqual(smoothed[0].originalText, item1.originalText)
+        XCTAssertEqual(smoothed[0].translatedText, item1.translatedText)
+        XCTAssertEqual(smoothed[1].originalText, item2.originalText)
+        XCTAssertEqual(smoothed[1].translatedText, item2.translatedText)
+        XCTAssertEqual(smoothed[2].originalText, item3.originalText)
+        XCTAssertEqual(smoothed[2].translatedText, item3.translatedText)
 
-        // 2. 验证各行顺序严格递增、不产生交叉重叠
+        // 2. 验证第 1 句时长显著扩增以匹配长译文 (14字/4.1 ≈ 3.4s)
+        let dur1 = smoothed[0].durationSeconds
+        XCTAssertGreaterThan(dur1, 2.5, "长译文行应当匹配充足的发音时长以避免语速过急")
+
+        // 3. 验证各行顺序严格递增、不产生交叉重叠
         for i in 1..<smoothed.count {
             XCTAssertGreaterThanOrEqual(
                 smoothed[i].startTime.secondsValue,
@@ -618,11 +626,9 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
             )
         }
 
-        // 3. 验证总时长保持在合理范围内
-        XCTAssertLessThanOrEqual(smoothed.last!.endTime.secondsValue, 5.05)
-
-        // 4. 验证重调后第 1 句的语速显著下降并回归自然区间 (每秒汉字数 <= 9)
+        // 4. 验证重调后第 1 句的语速回归自然区间 (每秒汉字数 <= 4.5)
         let rate1 = Double(smoothed[0].translatedText.count) / dur1
+        XCTAssertLessThanOrEqual(rate1, 4.5, "语速应当符合自然朗读舒适标准 (<=4.5字/s)")
         XCTAssertLessThan(rate1, 9.0, "语速应当平滑至正常范围")
     }
 }
