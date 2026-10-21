@@ -19,6 +19,8 @@ public enum DubbingTimingError: LocalizedError {
 public enum DubbingPacing {
     /// A quality target, not a gate that can remove a sentence from the output.
     public static let maximumRate = 1.25
+    /// Ordinary context balancing is not an error. Flag only clearly fast speech.
+    public static let warningRate = 1.6
     public static let timeTolerance = 0.005
 
     /// Never slow a short utterance to fill its subtitle interval.

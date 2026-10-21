@@ -950,10 +950,17 @@ public final class AppState: ObservableObject {
             return
         }
         let voice = config.targetLanguageVoiceCode
+        let client = OpenAICompatibleClient(baseURL: config.effectiveBaseURL, apiKey: config.effectiveAPIKey, timeout: 25)
         await runEditingJob(name: "匹配译文时间轴", snapshot: snapshot, reviewUnchangedResult: true) {
             try await self.timelineAligner.matchTimelineUsingSpeech(
                 items: snapshot, language: config.targetLanguage, voice: voice,
-                ttsService: self.ttsService, manager: self.subtitleManager, videoDuration: seconds
+                ttsService: self.ttsService, manager: self.subtitleManager, videoDuration: seconds,
+                planContexts: { entries in
+                    try await SpeechClusterPlanner().plan(entries, config: config, client: client)
+                }, status: { message in
+                    guard media == self.project.videoURL, !Task.isCancelled else { return }
+                    self.project.currentStepName = message
+                }
             ) { current, total in
                 guard media == self.project.videoURL, !Task.isCancelled else { return }
                 self.project.currentStepName = "测量正常语速配音 \(current)/\(total)"

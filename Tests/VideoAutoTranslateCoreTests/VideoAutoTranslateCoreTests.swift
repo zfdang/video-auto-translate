@@ -595,7 +595,7 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertGreaterThan(enDur, 1.5)
     }
 
-    func testTimelineAlignerReportsCrowdedSpeechWithoutMovingFollowingRows() {
+    func testTimelineAlignerBalancesCrowdedSpeechWithinContext() {
         let aligner = TimelineAligner()
 
         // 构造三句发音语速严重不均衡的字幕：
@@ -632,12 +632,13 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertEqual(smoothed[2].originalText, item3.originalText)
         XCTAssertEqual(smoothed[2].translatedText, item3.translatedText)
 
-        // A 0.5s slot cannot hold this translation naturally without stealing
-        // the next utterance's visual anchor. Report the conflict instead.
-        XCTAssertEqual(smoothed[0].endTime.secondsValue, 0.5, accuracy: 0.001)
-        XCTAssertEqual(smoothed[1].startTime.secondsValue, 0.5, accuracy: 0.001)
-        XCTAssertEqual(smoothed[2].startTime.secondsValue, 4, accuracy: 0.001)
-        XCTAssertTrue(TimelineAligner.pacingIssues(items: smoothed, language: "zh").contains(item1.id))
+        XCTAssertEqual(smoothed[0].startTime, item1.sourceStartTime)
+        XCTAssertEqual(smoothed[2].endTime, item3.sourceEndTime)
+        XCTAssertGreaterThan(smoothed[0].durationSeconds, 2.5, "The long first utterance uses spare time from its context")
+        XCTAssertGreaterThan(smoothed[1].startTime, item2.sourceStartTime)
+        for index in 1..<smoothed.count {
+            XCTAssertGreaterThanOrEqual(smoothed[index].startTime, smoothed[index - 1].endTime)
+        }
     }
 
     func testTimelineAlignerLocalClusterAntiDrift() {
@@ -681,7 +682,7 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertEqual(smoothed[2].startTime.secondsValue, 25.0, accuracy: 0.05, "场景3起点必须严格对齐第25秒，杜绝全视频范围的连带漂移")
     }
 
-    func testTimelineAlignerShortTranslationNoDragging() {
+    func testTimelineAlignerShortTranslationNoDragging() throws {
         let aligner = TimelineAligner()
 
         // 原声持续 6 秒（原说话人语速很慢或有笑声），但译文只有短短 2 个字
@@ -695,10 +696,10 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         let smoothed = aligner.matchTimelineToTranslation(items: [item], language: "zh")
         XCTAssertEqual(smoothed.count, 1)
 
-        let dur = smoothed[0].durationSeconds
-        // 验证：短译文绝不被强制拉长填满 6 秒（避免 0.33 字/秒的特别拖沓慢放），而是按自然舒适时长结束（约 0.6s ~ 1.5s）
-        XCTAssertLessThan(dur, 2.0, "短译文应当按自然语速舒适发音，绝不强行拉满到原句全长导致极度拖拉")
-        XCTAssertGreaterThanOrEqual(dur, 0.5, "短译文仍应保留起码的基础发音时长")
+        // The context keeps its display boundary. Audio fitting never slows a
+        // short utterance, so the remaining interval is silence rather than drag.
+        XCTAssertEqual(smoothed[0].endTime, item.sourceEndTime)
+        XCTAssertLessThan(try DubbingPacing.rate(naturalDuration: 0.8, availableDuration: smoothed[0].durationSeconds), 1.01)
         XCTAssertEqual(smoothed[0].startTime.secondsValue, 1.0, accuracy: 0.01, "起始时间保持原位锚定")
     }
 
