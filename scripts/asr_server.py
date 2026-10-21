@@ -598,7 +598,7 @@ def run_local_transcription(audio_path: str, model: str = "qwen3-asr", language:
     if not qwen_asr_path:
         if ENABLE_MOCK_FALLBACK:
             return generate_mock_transcription(audio_path)
-        raise RuntimeError("未在本地模型目录中找到 Qwen3-ASR-1.7B 识别模型，请先下载模型")
+        raise RuntimeError("未在本地模型目录中找到 Qwen3-ASR 语音识别模型，请先前往【设置 - ASR 模型】完成下载")
 
     try:
         asr_model = get_loaded_model(str(qwen_asr_path))

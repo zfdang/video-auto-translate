@@ -341,8 +341,8 @@ public final class AppState: ObservableObject {
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
-            statusMessage = "识别失败: \(error.localizedDescription)"
-            errorMessage = "转录识别失败: \(error.localizedDescription)"
+            statusMessage = "识别未完成: \(error.localizedDescription)"
+            errorMessage = error.localizedDescription
         }
     }
 
