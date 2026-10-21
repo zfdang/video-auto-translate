@@ -222,4 +222,141 @@ public final class AudioMixer {
             throw AudioMixerError.exportFailed("替换混音目标文件失败: \(error.localizedDescription)")
         }
     }
+
+    /// 为播放器构建实时多轨合成的 AVPlayerItem (无需导出磁盘文件，毫秒级快速组装)
+    @MainActor
+    public func buildPreviewItem(
+        videoURL: URL,
+        subtitles: [SubtitleItem],
+        mode: PreviewAudioTrack
+    ) async throws -> AVPlayerItem {
+        let videoAsset = AVURLAsset(url: videoURL)
+        if mode == .original {
+            return AVPlayerItem(asset: videoAsset)
+        }
+
+        let composition = AVMutableComposition()
+        let duration = (try? await videoAsset.load(.duration)) ?? .zero
+        let timeRange = CMTimeRange(start: .zero, duration: duration)
+
+        // 1. 视频轨
+        if let videoTrack = try? await videoAsset.loadTracks(withMediaType: .video).first {
+            if let compVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                try? compVideoTrack.insertTimeRange(timeRange, of: videoTrack, at: .zero)
+                if let transform = try? await videoTrack.load(.preferredTransform) {
+                    compVideoTrack.preferredTransform = transform
+                }
+            }
+        }
+
+        // 2. 配音音轨池
+        var voiceTracks: [AVMutableCompositionTrack] = []
+        var trackEndTimes: [CMTime] = []
+        var speechIntervals: [CMTimeRange] = []
+
+        func getTrack(for startTime: CMTime) -> AVMutableCompositionTrack? {
+            for (idx, endTime) in trackEndTimes.enumerated() {
+                if startTime >= endTime {
+                    return voiceTracks[idx]
+                }
+            }
+            guard let newTrack = composition.addMutableTrack(
+                withMediaType: .audio,
+                preferredTrackID: kCMPersistentTrackID_Invalid
+            ) else {
+                return nil
+            }
+            voiceTracks.append(newTrack)
+            trackEndTimes.append(.zero)
+            return newTrack
+        }
+
+        let sortedSubtitles = subtitles.sorted { $0.startTime < $1.startTime }
+        for item in sortedSubtitles {
+            guard let snippetURL = item.dubbedAudioURL,
+                  FileManager.default.fileExists(atPath: snippetURL.path) else { continue }
+            let snippetAsset = AVURLAsset(url: snippetURL)
+            guard let snippetAudioTrack = try? await snippetAsset.loadTracks(withMediaType: .audio).first else { continue }
+            let snippetDuration = (try? await snippetAsset.load(.duration)) ?? .zero
+            guard snippetDuration > .zero else { continue }
+
+            guard let targetTrack = getTrack(for: item.startTime) else { continue }
+            let snippetRange = CMTimeRange(start: .zero, duration: snippetDuration)
+            try? targetTrack.insertTimeRange(snippetRange, of: snippetAudioTrack, at: item.startTime)
+            if let trackIdx = voiceTracks.firstIndex(where: { $0 === targetTrack }) {
+                trackEndTimes[trackIdx] = CMTimeAdd(item.startTime, snippetDuration)
+            }
+            speechIntervals.append(CMTimeRange(start: item.startTime, duration: snippetDuration))
+        }
+
+        // 3. 原声背景叠加模式：插入原声音轨并施加闪避（ducking）音量包络
+        var audioMix: AVMutableAudioMix? = nil
+        if mode == .overlay {
+            if let originalAudioTrack = try? await videoAsset.loadTracks(withMediaType: .audio).first {
+                if let bgCompositionTrack = composition.addMutableTrack(
+                    withMediaType: .audio,
+                    preferredTrackID: kCMPersistentTrackID_Invalid
+                ) {
+                    try? bgCompositionTrack.insertTimeRange(timeRange, of: originalAudioTrack, at: .zero)
+
+                    let bgMixParams = AVMutableAudioMixInputParameters(track: bgCompositionTrack)
+                    bgMixParams.setVolume(1.0, at: .zero)
+                    let rampDuration = CMTime(value: 150, timescale: 1000)
+
+                    var mergedIntervals: [CMTimeRange] = []
+                    let sortedIntervals = speechIntervals.sorted { $0.start < $1.start }
+                    for interval in sortedIntervals {
+                        if let last = mergedIntervals.last {
+                            let lastEnd = CMTimeAdd(last.start, last.duration)
+                            let gap = CMTimeSubtract(interval.start, lastEnd)
+                            if interval.start <= lastEnd || gap.secondsValue <= 0.3 {
+                                let newEnd = max(lastEnd, CMTimeAdd(interval.start, interval.duration))
+                                mergedIntervals[mergedIntervals.count - 1] = CMTimeRange(
+                                    start: last.start,
+                                    duration: CMTimeSubtract(newEnd, last.start)
+                                )
+                                continue
+                            }
+                        }
+                        mergedIntervals.append(interval)
+                    }
+
+                    for interval in mergedIntervals {
+                        let duckStart = interval.start
+                        let duckEnd = CMTimeAdd(interval.start, interval.duration)
+                        let rampDownStart = max(.zero, CMTimeSubtract(duckStart, rampDuration))
+                        bgMixParams.setVolumeRamp(
+                            fromStartVolume: 1.0,
+                            toEndVolume: 0.35,
+                            timeRange: CMTimeRange(start: rampDownStart, duration: rampDuration)
+                        )
+                        bgMixParams.setVolumeRamp(
+                            fromStartVolume: 0.35,
+                            toEndVolume: 1.0,
+                            timeRange: CMTimeRange(start: duckEnd, duration: rampDuration)
+                        )
+                    }
+
+                    let mix = AVMutableAudioMix()
+                    mix.inputParameters = [bgMixParams]
+                    audioMix = mix
+                }
+            }
+        }
+
+        let playerItem = AVPlayerItem(asset: composition)
+        if let audioMix = audioMix {
+            playerItem.audioMix = audioMix
+        }
+        return playerItem
+    }
+}
+
+/// 播放器预览音轨模式
+public enum PreviewAudioTrack: String, CaseIterable, Identifiable, Sendable {
+    case original = "原始语音"
+    case translated = "译文配音"
+    case overlay = "原声叠加"
+
+    public var id: String { rawValue }
 }
