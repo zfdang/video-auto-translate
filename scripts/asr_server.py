@@ -251,11 +251,39 @@ class DownloadRequest(BaseModel):
     mirror: Optional[str] = "https://hf-mirror.com"
 
 
+MODEL_APPROX_SIZES = {
+    "qwen3-asr-1.7b": 2_460_000_000,
+    "mlx-community/Qwen3-ASR-1.7B-8bit": 2_460_000_000,
+    "qwen3-aligner-0.6b": 1_220_000_000,
+    "mlx-community/Qwen3-ForcedAligner-0.6B-8bit": 1_220_000_000,
+    "qwen3-asr-0.6b": 1_000_000_000,
+    "mlx-community/Qwen3-ASR-0.6B-8bit": 1_000_000_000,
+}
+
+
+def get_dir_size(path: Path) -> int:
+    total = 0
+    try:
+        if not path.exists():
+            return 0
+        if path.is_file():
+            return path.stat().st_size
+        for p in path.rglob("*"):
+            try:
+                if p.is_file():
+                    total += p.stat().st_size
+            except (OSError, PermissionError):
+                pass
+    except (OSError, PermissionError):
+        pass
+    return total
+
+
 def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror: str):
-    """后台执行模型下载任务"""
+    """后台执行模型下载任务，并动态监控下载进度与速率"""
     DOWNLOAD_TASKS[model_id] = {
         "status": "downloading",
-        "progress": 0.1,
+        "progress": 0.05,
         "speed": "正在连接下载源...",
         "error": None,
         "local_path": None
@@ -265,23 +293,52 @@ def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror
     if mirror:
         os.environ["HF_ENDPOINT"] = mirror
 
+    stop_event = threading.Event()
+    folder_safe_name = "models--" + repo_id.replace("/", "--")
+    repo_folder = dest_dir / folder_safe_name
+    expected_size = MODEL_APPROX_SIZES.get(model_id) or MODEL_APPROX_SIZES.get(repo_id, 2_000_000_000)
+
+    def monitor():
+        prev_size = get_dir_size(repo_folder)
+        prev_time = time.time()
+        while not stop_event.is_set():
+            time.sleep(0.8)
+            if stop_event.is_set():
+                break
+            now = time.time()
+            dt = max(0.1, now - prev_time)
+            cur_size = get_dir_size(repo_folder)
+            delta = max(0, cur_size - prev_size)
+            speed_mb_s = (delta / dt) / (1024 * 1024)
+            
+            cur_mb = cur_size / (1024 * 1024)
+            tot_mb = expected_size / (1024 * 1024)
+            prog = min(0.98, max(0.05, cur_size / expected_size))
+            
+            speed_text = f"{speed_mb_s:.1f} MB/s ({cur_mb:.1f} MB / {tot_mb:.1f} MB)" if delta > 0 else f"下载传输中 ({cur_mb:.1f} MB)"
+            DOWNLOAD_TASKS[model_id]["progress"] = prog
+            DOWNLOAD_TASKS[model_id]["speed"] = speed_text
+            
+            prev_size = cur_size
+            prev_time = now
+
+    mon_thread = threading.Thread(target=monitor, daemon=True)
+
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
-        DOWNLOAD_TASKS[model_id]["speed"] = "拉取模型权重结构..."
-        DOWNLOAD_TASKS[model_id]["progress"] = 0.25
+        mon_thread.start()
 
         # 尝试使用 huggingface_hub snapshot_download
         try:
             from huggingface_hub import snapshot_download
-            DOWNLOAD_TASKS[model_id]["progress"] = 0.4
-            DOWNLOAD_TASKS[model_id]["speed"] = "正在传输数据 (跑满带宽)..."
-
             downloaded_path = snapshot_download(
                 repo_id=repo_id,
                 cache_dir=dest_dir,
                 endpoint=mirror if mirror else None,
                 resume_download=True
             )
+            stop_event.set()
+            mon_thread.join(timeout=1.0)
             DOWNLOAD_TASKS[model_id] = {
                 "status": "ready",
                 "progress": 1.0,
@@ -296,22 +353,23 @@ def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror
         # 若未安装 huggingface_hub，使用 git 或 curl 备用下载
         DOWNLOAD_TASKS[model_id]["speed"] = "调用 git clone 拉取权重..."
         clone_url = f"{mirror.rstrip('/')}/{repo_id}.git"
-        folder_safe_name = "models--" + repo_id.replace("/", "--")
-        target_path = dest_dir / folder_safe_name
         import subprocess
-        res = subprocess.run(["git", "clone", "--depth", "1", clone_url, str(target_path)], capture_output=True, text=True)
+        res = subprocess.run(["git", "clone", "--depth", "1", clone_url, str(repo_folder)], capture_output=True, text=True)
+        stop_event.set()
+        mon_thread.join(timeout=1.0)
         if res.returncode == 0:
             DOWNLOAD_TASKS[model_id] = {
                 "status": "ready",
                 "progress": 1.0,
                 "speed": "下载完成",
                 "error": None,
-                "local_path": str(target_path)
+                "local_path": str(repo_folder)
             }
         else:
             raise RuntimeError(f"Git clone 失败: {res.stderr}")
 
     except Exception as exc:
+        stop_event.set()
         DOWNLOAD_TASKS[model_id] = {
             "status": "failed",
             "progress": 0.0,
