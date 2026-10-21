@@ -20,7 +20,7 @@ public final class SubtitleManager {
     ///   - item: 待切分的字幕项
     ///   - charIndex: 光标在 originalText 中的字符下标 (0 ~ count)
     /// - Returns: 切分后的前后两个字幕项
-    public func split(item: SubtitleItem, atCharIndex charIndex: Int) -> (SubtitleItem, SubtitleItem)? {
+    public func split(item: SubtitleItem, atCharIndex charIndex: Int, translatedParts: (String, String)? = nil) -> (SubtitleItem, SubtitleItem)? {
         let text = item.originalText
         guard charIndex > 0 && charIndex < text.count else { return nil }
 
@@ -110,16 +110,10 @@ public final class SubtitleManager {
             splitTime = latestValid
         }
 
-        // R05: 保存人工译文成果，将原译文保留在前半句，防止拆分直接清空丢失劳动成果
         let existingTrans = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let (part1Trans, part2Trans): (String, String)
-        if !existingTrans.isEmpty {
-            part1Trans = existingTrans
-            part2Trans = ""
-        } else {
-            part1Trans = ""
-            part2Trans = ""
-        }
+        guard existingTrans.isEmpty || translatedParts != nil else { return nil }
+        let part1Trans = translatedParts?.0 ?? ""
+        let part2Trans = translatedParts?.1 ?? ""
 
         let part1 = SubtitleItem(
             startTime: item.startTime,

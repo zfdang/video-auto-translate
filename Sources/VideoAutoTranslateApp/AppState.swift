@@ -256,6 +256,7 @@ public final class AppState: ObservableObject {
     /// 取消所有正在执行的后台任务 (R03 & FU05)
     public func cancelAllTasks() {
         projectGeneration += 1
+        splitDraft = nil
         editingTask?.cancel()
         editingTask = nil
         activeTranscriptionTask?.cancel()
@@ -699,16 +700,47 @@ public final class AppState: ObservableObject {
         mergeSubtitles(ids: [id, nextID])
     }
 
+    public struct SplitDraft: Identifiable {
+        public let id = UUID()
+        public let source: SubtitleItem
+        public let index: Int
+        public let left: SubtitleItem
+        public let right: SubtitleItem
+    }
+    @Published public var splitDraft: SplitDraft?
+
+    public func requestSplit(id: UUID, atCharIndex index: Int) {
+        guard !project.isProcessing, let item = project.subtitles.first(where: { $0.id == id }) else { return }
+        let copy = item.snapshot()
+        copy.translatedText = ""
+        guard let parts = subtitleManager.split(item: copy, atCharIndex: index) else {
+            errorMessage = "无法在此处安全拆分；请检查词对齐和两侧 100ms 最小时长。可先用时间检查器修正。"
+            return
+        }
+        if item.translatedText.isEmpty { splitSubtitle(id: id, atCharIndex: index) }
+        else { splitDraft = SplitDraft(source: item.snapshot(), index: index, left: parts.0, right: parts.1) }
+    }
+
+    public func applySplitDraft(left: String, right: String) {
+        guard let draft = splitDraft, let current = project.subtitles.first(where: { $0.id == draft.source.id }), current == draft.source else {
+            splitDraft = nil
+            errorMessage = "字幕已改变，请重新选择拆分位置"
+            return
+        }
+        splitSubtitle(id: current.id, atCharIndex: draft.index, translatedParts: (left, right))
+        splitDraft = nil
+    }
+
     /// 拆分指定字幕 (R14: 绑定确切行 ID，防止错位拆分)
-    public func splitSubtitle(id: UUID, atCharIndex: Int) {
+    public func splitSubtitle(id: UUID, atCharIndex: Int, translatedParts: (String, String)? = nil) {
         guard let index = project.subtitles.firstIndex(where: { $0.id == id }) else { return }
         let target = project.subtitles[index]
-        if let (part1, part2) = subtitleManager.split(item: target, atCharIndex: atCharIndex) {
+        if let (part1, part2) = subtitleManager.split(item: target, atCharIndex: atCharIndex, translatedParts: translatedParts) {
             recordUndoSnapshot()
             project.subtitles.remove(at: index)
             project.subtitles.insert(part2, at: index)
             project.subtitles.insert(part1, at: index)
-            project.selectedSubtitleID = part1.id
+            project.selectedSubtitleID = part2.id
             project.isDirty = true
             statusMessage = "已成功拆分字幕"
         }
@@ -763,7 +795,7 @@ public final class AppState: ObservableObject {
             return
         }
 
-        splitSubtitle(id: selectedID, atCharIndex: finalIndex)
+        requestSplit(id: selectedID, atCharIndex: finalIndex)
     }
 
     /// 执行大模型语义智能分句规整 (将每个词的精确定位发给大模型重构断句时间轴)

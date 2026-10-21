@@ -182,7 +182,7 @@ public struct SubtitleListView: View {
                                         }
                                     },
                                     onSplit: { cursorIndex in
-                                        appState.splitSubtitle(id: item.id, atCharIndex: cursorIndex)
+                                        appState.requestSplit(id: item.id, atCharIndex: cursorIndex)
                                     },
                                     onToggleSelect: {
                                         if selectedIDs.contains(item.id) {

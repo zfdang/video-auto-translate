@@ -53,4 +53,17 @@ import CoreMedia
         XCTAssertFalse(app.project.isDirty)
     }
 
+    func testTranslatedSplitWaitsForUserDistribution() async {
+        let app = AppState(probeServices: false)
+        let row = SubtitleItem(startTime: .zero, endTime: .from(seconds: 2), originalText: "Hello world", translatedText: "你好世界")
+        app.project.subtitles = [row]
+        app.requestSplit(id: row.id, atCharIndex: 5)
+        XCTAssertEqual(app.project.subtitles.count, 1)
+        XCTAssertNotNil(app.splitDraft)
+        app.applySplitDraft(left: "你好", right: "世界")
+        XCTAssertEqual(app.project.subtitles.map(\.translatedText), ["你好", "世界"])
+        app.undo()
+        XCTAssertEqual(app.project.subtitles[0].translatedText, "你好世界")
+    }
+
 }

@@ -323,13 +323,15 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         )
 
         // 拆分
-        let res = manager.split(item: item, atCharIndex: 11) // "Hello world"
+        XCTAssertNil(manager.split(item: item, atCharIndex: 11))
+        let res = manager.split(item: item, atCharIndex: 11, translatedParts: ("你好世界", "这是一个测试")) // "Hello world"
         XCTAssertNotNil(res)
         guard let (part1, part2) = res else { return }
 
         // R05: 译文不应被粗暴清空
         XCTAssertFalse(part1.translatedText.isEmpty, "拆分后第一部分应保留已有译文劳动成果")
-        XCTAssertEqual(part1.translatedText, "你好世界这是一个测试")
+        XCTAssertEqual(part1.translatedText, "你好世界")
+        XCTAssertEqual(part2.translatedText, "这是一个测试")
 
         // R06: 最小时长校验，两段时长均应大于 0
         XCTAssertGreaterThan(part1.durationSeconds, 0.05)
