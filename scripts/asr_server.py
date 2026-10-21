@@ -326,6 +326,8 @@ def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror
             nonlocal max_progress
             prev_size = get_dir_size(repo_folder)
             prev_time = time.time()
+            last_speed_mb_s = 0.0
+
             while not stop_event.is_set() and proc.poll() is None:
                 time.sleep(0.5)
                 if stop_event.is_set():
@@ -334,24 +336,33 @@ def background_repo_download(model_id: str, repo_id: str, dest_dir: Path, mirror
                 dt = max(0.1, now - prev_time)
                 cur_size = get_dir_size(repo_folder)
                 delta = max(0, cur_size - prev_size)
-                speed_mb_s = (delta / dt) / (1024 * 1024)
-                
+
+                if delta > 0:
+                    instant_speed = (delta / dt) / (1024 * 1024)
+                    if last_speed_mb_s > 0:
+                        last_speed_mb_s = 0.7 * instant_speed + 0.3 * last_speed_mb_s
+                    else:
+                        last_speed_mb_s = instant_speed
+                elif cur_size == 0:
+                    last_speed_mb_s = 0.0
+                else:
+                    # 磁盘写入间隙平滑衰减，持续显示速率，不跳变为“正在写入”
+                    last_speed_mb_s = max(0.1, last_speed_mb_s * 0.9)
+
                 cur_mb = cur_size / (1024 * 1024)
                 tot_mb = expected_size / (1024 * 1024)
                 raw_prog = cur_size / expected_size
                 max_progress = max(max_progress, min(0.99, max(0.0, raw_prog)))
-                
-                if delta > 0:
-                    speed_text = f"{speed_mb_s:.1f} MB/s ({cur_mb:.1f} MB / {tot_mb:.1f} MB)"
-                elif cur_size > 0:
-                    speed_text = f"正在写入 ({cur_mb:.1f} MB / {tot_mb:.1f} MB)"
+
+                if last_speed_mb_s > 0 or cur_size > 0:
+                    speed_text = f"{last_speed_mb_s:.1f} MB/s ({cur_mb:.1f} MB / {tot_mb:.1f} MB)"
                 else:
                     speed_text = "正在连接并拉取元数据..."
-                    
+
                 if DOWNLOAD_TASKS.get(model_id, {}).get("status") == "downloading":
                     DOWNLOAD_TASKS[model_id]["progress"] = round(max_progress, 3)
                     DOWNLOAD_TASKS[model_id]["speed"] = speed_text
-                
+
                 prev_size = cur_size
                 prev_time = now
 
