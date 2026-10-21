@@ -668,9 +668,15 @@ public final class AppState: ObservableObject {
                 let audio: AVPlayer
                 if target == .translated {
                     guard !item.translationNeedsReview else { throw TTSError.synthesisFailed("请先复核译文语言") }
-                    if !item.hasCurrentAudio(voice: voice) { try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice) }
-                    guard item.hasCurrentAudio(voice: voice), let url = item.dubbedAudioURL else { throw CancellationError() }
-                    audio = AVPlayer(url: url)
+                    if item.hasCurrentAudio(voice: voice), let url = item.dubbedAudioURL {
+                        audio = AVPlayer(url: url)
+                    } else {
+                        // Audition is a content check, not a prerequisite timing task.
+                        // Use natural speech without changing timestamps or publishing
+                        // an overlong clip as timeline-ready export audio.
+                        let natural = try await subtitleManager.prepareNaturalSpeech(item: item, ttsService: ttsService, voice: voice)
+                        audio = AVPlayer(url: natural.url)
+                    }
                 } else {
                     guard let media = media else { return }
                     let playerItem = AVPlayerItem(url: media)

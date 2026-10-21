@@ -304,6 +304,25 @@ final class AnchoredDubbingTests: XCTestCase {
         XCTAssertGreaterThan(second.max() ?? 0, 0.01)
     }
 
+    @MainActor func testLongTranslationAuditionWorksBeforeMatchingWithoutChangingTimeline() async throws {
+        let app = AppState(probeServices: false)
+        let fixture = TimingFixtureTTS(duration: 3)
+        app.ttsService = fixture
+        let item = row(0, 0.5)
+        app.project.subtitles = [item]
+        await app.auditionSubtitle(item, target: .translated)
+        defer { app.cancelAudition() }
+        XCTAssertNil(app.errorMessage)
+        XCTAssertNotNil(app.auditionPlayer)
+        XCTAssertEqual(fixture.calls, 1)
+        XCTAssertNil(item.dubbedAudioURL, "Natural audition must not publish overlong export audio")
+        XCTAssertEqual(item.startTime.secondsValue, 0)
+        XCTAssertEqual(item.endTime.secondsValue, 0.5)
+        await app.auditionSubtitle(item, target: .translated)
+        XCTAssertNil(app.errorMessage)
+        XCTAssertEqual(fixture.calls, 1, "Repeated audition reuses natural speech")
+    }
+
     func testRatePolicyNeverSlowsAndRejectsInvalidOrExcessiveRates() throws {
         XCTAssertEqual(try DubbingPacing.rate(naturalDuration: 1, availableDuration: 5), 1)
         XCTAssertEqual(try DubbingPacing.rate(naturalDuration: 1.1, availableDuration: 1), 1.1, accuracy: 0.001)
