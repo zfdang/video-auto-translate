@@ -11,7 +11,7 @@ public struct SubtitleListView: View {
         VStack(spacing: 0) {
             // 工具栏头部 (靠右排列：撤销、重做、合并)
             HStack(spacing: 8) {
-                Text("字幕列表 (\(filteredSubtitles.count))")
+                Text("字幕 \(filteredSubtitles.count)/\(appState.project.subtitles.count)")
                     .font(.headline)
 
                 Spacer()
@@ -145,8 +145,13 @@ public struct SubtitleListView: View {
                         Image(systemName: "text.bubble")
                             .font(.system(size: 40))
                             .foregroundColor(.secondary)
-                        Text(appState.project.videoURL == nil ? "请先打开或拖拽视频文件" : "尚未提取字幕，点击上方「语音转录」开始")
-                            .foregroundColor(.secondary)
+                        if !appState.project.subtitles.isEmpty {
+                            Text("没有匹配的字幕，原有内容仍保留")
+                            Button("清除筛选") { searchText = "" }
+                        } else {
+                            Text(appState.project.videoURL == nil ? "请先打开或拖拽视频文件" : "尚未提取字幕，点击上方「语音转录」开始")
+                                .foregroundColor(.secondary)
+                        }
                     }
                     Spacer()
                 }
