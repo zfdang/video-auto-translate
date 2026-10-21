@@ -46,7 +46,8 @@ public actor OpenAICompatibleClient {
         model: String,
         messages: [[String: String]],
         temperature: Double = 0.3,
-        responseFormatJSON: Bool = false
+        responseFormatJSON: Bool = false,
+        maxTokens: Int? = 4096
     ) async throws -> String {
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             throw LLMError.invalidURL
@@ -65,6 +66,10 @@ public actor OpenAICompatibleClient {
             "messages": messages,
             "temperature": temperature
         ]
+
+        if let maxTokens = maxTokens {
+            payload["max_tokens"] = maxTokens
+        }
 
         if responseFormatJSON {
             payload["response_format"] = ["type": "json_object"]
