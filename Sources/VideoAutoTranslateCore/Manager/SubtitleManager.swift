@@ -224,11 +224,17 @@ public final class SubtitleManager {
         // 3. 计算语速伸缩比率 R = rawDuration / targetDuration
         let rate = Float(rawDuration.secondsValue / max(0.2, targetDuration.secondsValue))
 
-        // 4. 音调不变语速缩放
-        try timePitchEngine.changeSpeed(inputURL: rawTTSURL, outputURL: finalStretchedURL, rate: rate)
-
-        await MainActor.run {
-            item.dubbedAudioURL = finalStretchedURL
+        // 4. 音调不变语速缩放（带安全降级）
+        do {
+            try timePitchEngine.changeSpeed(inputURL: rawTTSURL, outputURL: finalStretchedURL, rate: rate)
+            await MainActor.run {
+                item.dubbedAudioURL = finalStretchedURL
+            }
+        } catch {
+            // 伸缩引擎异常时优雅降级：直接采用高质量原生合成音频，杜绝单句异常中断全篇配音
+            await MainActor.run {
+                item.dubbedAudioURL = rawTTSURL
+            }
         }
     }
 }

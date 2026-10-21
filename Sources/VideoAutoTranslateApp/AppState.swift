@@ -430,7 +430,11 @@ public final class AppState: ObservableObject {
             let total = Double(project.subtitles.count)
             for (idx, item) in project.subtitles.enumerated() {
                 guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
-                try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
+                do {
+                    try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
+                } catch {
+                    print("单句配音生成警告 [第\(idx + 1)句]: \(error)")
+                }
                 guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
                 await MainActor.run {
                     if currentGen == self.projectGeneration && !Task.isCancelled {
@@ -471,6 +475,28 @@ public final class AppState: ObservableObject {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
             statusMessage = "配音生成失败: \(error.localizedDescription)"
+        }
+    }
+
+    /// 确保所有含有译文（或原文）的字幕均具备有效的配音切片；缺失时即时自动合成补齐（供导出成片等场景使用，杜绝后半段失声）
+    public func ensureAllSubtitlesDubbed(voice: String? = nil, onProgress: (@Sendable (Int, Int) -> Void)? = nil) async {
+        let targetVoice = voice ?? project.llmConfig.targetLanguageVoiceCode
+        let total = project.subtitles.count
+        for (idx, item) in project.subtitles.enumerated() {
+            let text = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? item.originalText
+                : item.translatedText
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+
+            let needsAudio = (item.dubbedAudioURL == nil) || !FileManager.default.fileExists(atPath: item.dubbedAudioURL!.path)
+            if needsAudio {
+                onProgress?(idx + 1, total)
+                do {
+                    try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: targetVoice)
+                } catch {
+                    print("按需补齐配音警告 [第\(idx + 1)句]: \(error)")
+                }
+            }
         }
     }
 

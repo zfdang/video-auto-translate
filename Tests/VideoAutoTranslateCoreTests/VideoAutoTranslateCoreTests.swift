@@ -693,4 +693,43 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(dur, 0.5, "短译文仍应保留起码的基础发音时长")
         XCTAssertEqual(smoothed[0].startTime.secondsValue, 1.0, accuracy: 0.01, "起始时间保持原位锚定")
     }
+
+    func testTimelineAlignerLongListPreservation() {
+        let aligner = TimelineAligner()
+
+        var items: [SubtitleItem] = []
+        var curTime = 0.5
+        for i in 1...40 {
+            let dur = Double(i % 3 + 2)
+            let gap = (i % 5 == 0) ? 1.5 : 0.25
+            let start = curTime
+            let end = start + dur
+            curTime = end + gap
+
+            let zhCount = 10 + (i % 10)
+            let zhText = String(repeating: "中", count: zhCount)
+            let enText = "English sentence number \(i) with some words."
+
+            items.append(SubtitleItem(
+                startTime: .from(seconds: start),
+                endTime: .from(seconds: end),
+                originalText: enText,
+                translatedText: zhText
+            ))
+        }
+
+        let totalOriginalEnd = items.last!.endTime.secondsValue
+        let aligned = aligner.matchTimelineToTranslation(items: items, language: "zh", videoDuration: totalOriginalEnd + 10.0)
+
+        // 1. 验证数量完全一致，后半段没有任何行被丢弃
+        XCTAssertEqual(aligned.count, items.count)
+
+        // 2. 验证后半段每一行的起止时间合理推进，没有停滞或截断
+        for i in 20..<aligned.count {
+            XCTAssertGreaterThan(aligned[i].durationSeconds, 0.3, "后半段第 \(i) 句时长过短")
+            XCTAssertGreaterThan(aligned[i].startTime.secondsValue, aligned[i-1].endTime.secondsValue - 0.001, "后半段第 \(i) 句发生重叠")
+            XCTAssertEqual(aligned[i].originalText, items[i].originalText)
+            XCTAssertEqual(aligned[i].translatedText, items[i].translatedText)
+        }
+    }
 }

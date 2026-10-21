@@ -12,6 +12,10 @@ public struct ExportView: View {
     @State private var isExporting: Bool = false
     @State private var exportMessage: String = ""
 
+    private var hasTranslations: Bool {
+        appState.project.subtitles.contains(where: { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+    }
+
     private var hasDubbing: Bool {
         appState.project.subtitles.contains(where: { $0.dubbedAudioURL != nil })
     }
@@ -100,7 +104,7 @@ public struct ExportView: View {
                                         .fontWeight(.semibold)
                                 }
 
-                                if hasDubbing {
+                                if hasDubbing || hasTranslations {
                                     Picker("", selection: $videoAudioMode) {
                                         Text("自动翻译的语言").tag(VideoAudioExportMode.translated)
                                         Text("原始语言").tag(VideoAudioExportMode.original)
@@ -108,7 +112,7 @@ public struct ExportView: View {
                                     .pickerStyle(.radioGroup)
                                     .labelsHidden()
 
-                                    Text(videoAudioMode == .translated ? "合成目标语言配音与闪避背景音乐" : "保留视频原声语音轨")
+                                    Text(videoAudioMode == .translated ? "合成目标语言配音与闪避背景音乐（导出时自动补全整片配音）" : "保留视频原声语音轨")
                                         .font(.caption2)
                                         .foregroundColor(.secondary)
                                         .padding(.top, 2)
@@ -116,7 +120,7 @@ public struct ExportView: View {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text("原始语言")
                                             .font(.body)
-                                        Text("未检测到配音，将使用原视频原声")
+                                        Text("未检测到翻译或配音，将使用原视频原声")
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
                                     }
@@ -211,7 +215,7 @@ public struct ExportView: View {
         }
         .frame(width: 580, height: 600)
         .onAppear {
-            if hasDubbing {
+            if hasDubbing || hasTranslations {
                 videoAudioMode = .translated
             } else {
                 videoAudioMode = .original
@@ -263,48 +267,56 @@ public struct ExportView: View {
                     return
                 }
 
-                // R28: 冻结当前工程快照，防止导出期间异步翻译或人工修改导致混合错乱
+                // R28: 冻结当前工程音频素材引用
                 let frozenSourceAudio = appState.project.audioURL
-                let frozenSubtitles = appState.project.subtitles.map { item in
-                    SubtitleItem(
-                        id: item.id,
-                        startTime: item.startTime,
-                        endTime: item.endTime,
-                        originalText: item.originalText,
-                        translatedText: item.translatedText,
-                        words: item.words,
-                        dubbedAudioURL: item.dubbedAudioURL
-                    )
-                }
                 let currentAudioMode = videoAudioMode
                 let currentSubtitleMode = videoSubtitleMode
 
                 isExporting = true
-                exportMessage = "正在渲染画面字幕与音频，并执行硬件硬编导出..."
+                exportMessage = "正在准备合成导出任务..."
 
                 Task {
                     do {
-                        let hasDubbing = frozenSubtitles.contains(where: { $0.dubbedAudioURL != nil })
-                        let shouldUseDubbedAudio = hasDubbing && (currentAudioMode == .translated)
+                        let shouldUseDubbedAudio = (currentAudioMode == .translated) && (hasDubbing || hasTranslations)
                         var audioToUse: URL? = nil
 
                         if shouldUseDubbedAudio {
+                            await MainActor.run {
+                                exportMessage = "正在为全片字幕生成/校验完整配音切片..."
+                            }
+
+                            // 1. 确保所有字幕配音完整生成，缺失时即时补齐，彻底杜绝后半段失声
+                            await appState.ensureAllSubtitlesDubbed { current, total in
+                                Task { @MainActor in
+                                    exportMessage = "正在为全片合成配音切片 (\(current)/\(total))..."
+                                }
+                            }
+
+                            await MainActor.run {
+                                exportMessage = "正在执行音频无损伸缩与闪避混音..."
+                            }
+
                             let tempDir = FileManager.default.temporaryDirectory
                             let mixedAudio = tempDir.appendingPathComponent("final_mix_\(UUID().uuidString).m4a")
 
+                            // 使用已确保具备完整配音切片的工程字幕列表
                             try await appState.audioMixer.mix(
                                 backgroundAudioURL: frozenSourceAudio,
-                                subtitles: frozenSubtitles,
+                                subtitles: appState.project.subtitles,
                                 to: mixedAudio
                             )
                             audioToUse = mixedAudio
+                        }
+
+                        await MainActor.run {
+                            exportMessage = "正在渲染画面字幕与音频，并执行硬件硬编导出..."
                         }
 
                         try await appState.videoComposer.compose(
                             videoURL: sourceVideo,
                             newAudioURL: audioToUse,
                             outputURL: destinationURL,
-                            subtitles: frozenSubtitles,
+                            subtitles: appState.project.subtitles,
                             subtitleMode: currentSubtitleMode
                         )
 
