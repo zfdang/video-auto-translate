@@ -4,12 +4,18 @@ import VideoAutoTranslateCore
 
 public struct SettingsView: View {
     @ObservedObject var appState: AppState
+    @ObservedObject var modelStorageManager: ModelStorageManager
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab: SettingsTab = .asrModels
     @State private var isTestingASR: Bool = false
     @State private var asrTestFeedback: (isSuccess: Bool, message: String)? = nil
     @State private var selectedLanguageOption: String = "简体中文 (Simplified Chinese)"
     private let customLanguageTag: String = "__custom__"
+
+    public init(appState: AppState) {
+        self.appState = appState
+        self.modelStorageManager = appState.modelStorageManager
+    }
 
     enum SettingsTab: String, CaseIterable, Identifiable {
         case asrModels = "ASR 模型"
@@ -141,93 +147,20 @@ public struct SettingsView: View {
 
             Section(header: Text("ASR 语音识别模型库").font(.headline)) {
                 ForEach(ASRModelPreset.allPresets) { preset in
-                    modelPresetRow(preset)
+                    ASRModelPresetRowView(
+                        modelStorageManager: modelStorageManager,
+                        preset: preset,
+                        onDownload: {
+                            appState.downloadModel(preset: preset)
+                        },
+                        onCancel: {
+                            modelStorageManager.cancelDownload(for: preset.id)
+                        }
+                    )
                 }
             }
         }
         .formStyle(.grouped)
-    }
-
-    @ViewBuilder
-    private func modelPresetRow(_ preset: ASRModelPreset) -> some View {
-        let state = appState.modelStorageManager.modelStates[preset.id] ?? .notDownloaded
-
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(preset.displayName)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        Text(preset.sizeDescription)
-                            .font(.caption2)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.secondary.opacity(0.15))
-                            .cornerRadius(4)
-                    }
-                    Text(preset.note)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                Spacer()
-
-                switch state {
-                case .ready(let path, _):
-                    HStack(spacing: 8) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                            Text("已就绪")
-                                .font(.caption)
-                                .foregroundColor(.green)
-                        }
-
-                        Button("在访达定位") {
-                            NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: (path as NSString).deletingLastPathComponent)
-                        }
-                        .font(.caption)
-                    }
-
-                case .downloading(let progress, let speed):
-                    HStack(spacing: 8) {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            ProgressView(value: progress)
-                                .frame(width: 100)
-                            Text("\(Int(progress * 100))% · \(speed)")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-
-                        Button("取消") {
-                            appState.modelStorageManager.cancelDownload(for: preset.id)
-                        }
-                        .font(.caption)
-                    }
-
-                case .failed(let err):
-                    HStack(spacing: 8) {
-                        Text("失败: \(err)")
-                            .font(.caption2)
-                            .foregroundColor(.red)
-                            .lineLimit(1)
-                        Button("重试") {
-                            appState.downloadModel(preset: preset)
-                        }
-                        .font(.caption)
-                    }
-
-                case .notDownloaded:
-                    Button("立即下载") {
-                        appState.downloadModel(preset: preset)
-                    }
-                    .font(.caption)
-                    .buttonStyle(.borderedProminent)
-                }
-            }
-        }
-        .padding(.vertical, 4)
     }
 
     // MARK: - ASR 服务 Tab
@@ -504,5 +437,95 @@ public struct SettingsView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// 单个 ASR 模型预设行视图，独立以 @ObservedObject 订阅 ModelStorageManager
+/// 保证点击“立即下载”瞬间在第 0 毫秒由 SwiftUI 立即重绘，切换为“取消”和 0% 进度条
+struct ASRModelPresetRowView: View {
+    @ObservedObject var modelStorageManager: ModelStorageManager
+    let preset: ASRModelPreset
+    let onDownload: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        let state = modelStorageManager.modelStates[preset.id] ?? .notDownloaded
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(preset.displayName)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Text(preset.sizeDescription)
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.15))
+                            .cornerRadius(4)
+                    }
+                    Text(preset.note)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                switch state {
+                case .ready(let path, _):
+                    HStack(spacing: 8) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                            Text("已就绪")
+                                .font(.caption)
+                                .foregroundColor(.green)
+                        }
+
+                        Button("在访达定位") {
+                            NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: (path as NSString).deletingLastPathComponent)
+                        }
+                        .font(.caption)
+                    }
+
+                case .downloading(let progress, let speed):
+                    HStack(spacing: 8) {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            ProgressView(value: progress)
+                                .frame(width: 100)
+                            Text("\(Int(progress * 100))% · \(speed)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Button("取消") {
+                            onCancel()
+                        }
+                        .font(.caption)
+                    }
+
+                case .failed(let err):
+                    HStack(spacing: 8) {
+                        Text("失败: \(err)")
+                            .font(.caption2)
+                            .foregroundColor(.red)
+                            .lineLimit(1)
+                        Button("重试") {
+                            onDownload()
+                        }
+                        .font(.caption)
+                    }
+
+                case .notDownloaded:
+                    Button("立即下载") {
+                        onDownload()
+                    }
+                    .font(.caption)
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 }

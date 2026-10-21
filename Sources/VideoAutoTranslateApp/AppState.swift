@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import AVFoundation
 import AppKit
+import Combine
 import VideoAutoTranslateCore
 
 @MainActor
@@ -59,6 +60,7 @@ public final class AppState: ObservableObject {
     private var lastTextEditSnapshotTime: Date = .distantPast
 
     private var timeObserverToken: Any?
+    private var cancellables = Set<AnyCancellable>()
 
     private func bindProjectSubtitles() {
         for item in project.subtitles {
@@ -78,6 +80,20 @@ public final class AppState: ObservableObject {
     public init() {
         setupTimeObserver()
         bindProjectSubtitles()
+
+        // 桥接嵌套 ObservableObject 的变更通知至 AppState，保证 SwiftUI 界面第 0 毫秒即时刷新
+        modelStorageManager.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
+        sidecarManager.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
         Task {
             await sidecarManager.probeExistingStatus()
             await probeLocalOllama()
