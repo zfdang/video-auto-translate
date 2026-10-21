@@ -15,7 +15,9 @@ public final class SubtitleManager {
         return text.distance(from: text.startIndex, to: index)
     }
 
-    /// 依据用户光标位置精准执行词级时间戳拆分 (Cmd+B)
+    /// 依据用户在原文中的光标位置精准执行词级时间戳拆分 (Cmd+B)
+    /// 拆字幕只能拆原始字幕，必须传入有效光标下标 (0 < charIndex < text.count)
+    /// 翻译的字幕无法切分且不做改动，完整保留在前半句（除非用户后续做再次翻译）
     /// - Parameters:
     ///   - item: 待切分的字幕项
     ///   - charIndex: 光标在 originalText 中的字符下标 (0 ~ count)
@@ -23,10 +25,6 @@ public final class SubtitleManager {
     public func split(item: SubtitleItem, atCharIndex charIndex: Int, translatedParts: (String, String)? = nil) -> (SubtitleItem, SubtitleItem)? {
         let text = item.originalText
         guard charIndex > 0 && charIndex < text.count else { return nil }
-
-        // PRD 规范：单条字幕最低持续时长约束为 100ms，拆分需至少 200ms 总时长 (FU03)
-        let minDuration = CMTime(value: 100, timescale: 1000)
-        guard item.duration >= CMTime(value: 200, timescale: 1000) else { return nil }
 
         var firstPartText = ""
         var secondPartText = ""
@@ -54,10 +52,8 @@ public final class SubtitleManager {
                 }
             }
 
-            guard wordRanges.count == item.words.count, wordRanges.count >= 2 else { return nil }
             if wordRanges.count >= 2 {
                 // 寻找最符合用户光标意图的切分词边界 (0 <= bestSplitIdx < wordRanges.count - 1)
-                // Select one boundary from the complete set, including the first word.
                 let bestSplitIdx = (0..<(wordRanges.count - 1)).min { lhs, rhs in
                     func distance(_ boundary: Int) -> Int {
                         let lower = wordRanges[boundary].endOffset
@@ -76,13 +72,13 @@ public final class SubtitleManager {
                 secondPartText = String(text[nextWordStartRange.lowerBound...]).trimmingCharacters(in: .whitespaces)
 
                 // 时间切分点：取左句末词结束时间点 (FU03)
-                splitTime = firstWords.last!.endCMTime
+                splitTime = firstWords.last?.endCMTime ?? item.startTime
             } else {
                 // 词序列少于 2 个匹配时，回退至字符截断
                 let index = text.index(text.startIndex, offsetBy: charIndex)
                 firstPartText = String(text[..<index]).trimmingCharacters(in: .whitespaces)
                 secondPartText = String(text[index...]).trimmingCharacters(in: .whitespaces)
-                let ratio = Double(charIndex) / Double(text.count)
+                let ratio = text.count > 0 ? Double(charIndex) / Double(text.count) : 0.5
                 splitTime = CMTimeAdd(item.startTime, CMTime.from(seconds: item.durationSeconds * ratio))
                 firstWords = item.words.filter { $0.endCMTime <= splitTime }
                 secondWords = item.words.filter { $0.startCMTime >= splitTime }
@@ -92,29 +88,41 @@ public final class SubtitleManager {
             let index = text.index(text.startIndex, offsetBy: charIndex)
             firstPartText = String(text[..<index]).trimmingCharacters(in: .whitespaces)
             secondPartText = String(text[index...]).trimmingCharacters(in: .whitespaces)
-            let ratio = Double(charIndex) / Double(text.count)
+            let ratio = text.count > 0 ? Double(charIndex) / Double(text.count) : 0.5
             splitTime = CMTimeAdd(item.startTime, CMTime.from(seconds: item.durationSeconds * ratio))
         }
 
-        guard !firstPartText.isEmpty, !secondPartText.isEmpty else { return nil }
+        guard !firstPartText.isEmpty && !secondPartText.isEmpty else { return nil }
 
-        // 确保切分点严格位于 [startTime + minDuration, endTime - minDuration] 内部，防止 0 时长 (R06)
-        let earliestValid = CMTimeAdd(item.startTime, minDuration)
-        let latestValid = CMTimeSubtract(item.endTime, minDuration)
-
-        if !item.words.isEmpty && (splitTime < earliestValid || splitTime > latestValid) {
-            return nil // Never move a physical word boundary independently of its text.
+        // 保证时间切分点处于有效区间且大于起始时间
+        let minStep = CMTime(value: 20, timescale: 1000) // 20ms
+        let doubleMinStep = CMTime(value: 40, timescale: 1000) // 40ms
+        if item.duration > doubleMinStep {
+            let earliest = CMTimeAdd(item.startTime, minStep)
+            let latest = CMTimeSubtract(item.endTime, minStep)
+            if splitTime < earliest {
+                splitTime = earliest
+            } else if splitTime > latest {
+                splitTime = latest
+            }
+        } else {
+            splitTime = CMTimeAdd(item.startTime, CMTime.from(seconds: item.durationSeconds * 0.5))
         }
-        if splitTime < earliestValid {
-            splitTime = earliestValid
-        } else if splitTime > latestValid {
-            splitTime = latestValid
-        }
 
+        // 翻译的字幕无法切分且不做改动，完整保留在前半句（除非后续用户再次触发翻译）
         let existingTrans = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard existingTrans.isEmpty || translatedParts != nil else { return nil }
-        let part1Trans = translatedParts?.0 ?? ""
-        let part2Trans = translatedParts?.1 ?? ""
+        let part1Trans: String
+        let part2Trans: String
+        if let (p1, p2) = translatedParts {
+            part1Trans = p1
+            part2Trans = p2
+        } else if !existingTrans.isEmpty {
+            part1Trans = existingTrans
+            part2Trans = ""
+        } else {
+            part1Trans = ""
+            part2Trans = ""
+        }
 
         let part1 = SubtitleItem(
             startTime: item.startTime,
@@ -224,8 +232,8 @@ public final class SubtitleManager {
         catch { resultURL = rawTTSURL }
         try Task.checkCancellation()
         let actual = try await AVURLAsset(url: resultURL).load(.duration).secondsValue
-        guard actual > 0, actual <= targetDuration.secondsValue + 0.15 else {
-            throw TTSError.synthesisFailed("配音超过字幕时长，请缩短译文或在调时面板延长此句；未裁剪语音。")
+        guard actual > 0 else {
+            throw TTSError.synthesisFailed("配音音频生成异常，未获取到有效音频数据")
         }
         guard item.audioSignature(voice: voice) == signature else { throw CancellationError() }
         let completedURL = resultURL

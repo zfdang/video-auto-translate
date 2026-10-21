@@ -97,6 +97,7 @@ struct ProjectCommands: Commands {
             Button("打开工程…") { appState?.openProjectInteractively() }.keyboardShortcut("o")
             Button("保存工程") { appState?.saveProjectInteractively() }.keyboardShortcut("s")
             Button("工程另存为…") { appState?.saveProjectInteractively(chooseNewURL: true) }.keyboardShortcut("s", modifiers: [.command, .shift])
+            Button("重新定位媒体…") { appState?.relinkMedia() }
         }
         CommandGroup(replacing: .undoRedo) {
             Button("撤销字幕编辑") { appState?.undo() }.keyboardShortcut("z")

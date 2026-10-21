@@ -787,15 +787,8 @@ public final class AppState: ObservableObject {
     @Published public var splitDraft: SplitDraft?
 
     public func requestSplit(id: UUID, atCharIndex index: Int) {
-        guard !project.isProcessing, let item = project.subtitles.first(where: { $0.id == id }) else { return }
-        let copy = item.snapshot()
-        copy.translatedText = ""
-        guard let parts = subtitleManager.split(item: copy, atCharIndex: index) else {
-            errorMessage = "无法在此处安全拆分；请检查词对齐和两侧 100ms 最小时长。可先用时间检查器修正。"
-            return
-        }
-        if item.translatedText.isEmpty && !item.words.isEmpty { splitSubtitle(id: id, atCharIndex: index) }
-        else { splitDraft = SplitDraft(source: item.snapshot(), index: index, left: parts.0, right: parts.1) }
+        guard !project.isProcessing else { return }
+        splitSubtitle(id: id, atCharIndex: index)
     }
 
     public func applySplitDraft(left: String, right: String) {
@@ -825,7 +818,7 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 拆分当前选中的字幕 (Cmd+B: 严格在光标所在字词位置切开)
+    /// 拆分当前选中的字幕 (Cmd+B: 严格在原文字幕光标处切开，必须有光标)
     public func splitCurrentSubtitle(atCharIndex: Int? = nil) {
         guard let selectedID = project.selectedSubtitleID,
               let item = project.subtitles.first(where: { $0.id == selectedID }) else {
@@ -835,9 +828,15 @@ public final class AppState: ObservableObject {
 
         var charIndex = atCharIndex
         if charIndex == nil {
-            guard originalEditingID == selectedID else { errorMessage = "请先在原文编辑框中放置拆分光标"; return }
             if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
                 let textStr = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                let transStr = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !transStr.isEmpty && (textStr == transStr || textView.string == item.translatedText) {
+                    errorMessage = "翻译的字幕无法拆分，请在原文字幕中放置光标"
+                    statusMessage = "拆分提示：请在原文字幕中放置光标"
+                    NSSound.beep()
+                    return
+                }
                 let itemStr = item.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if textStr == itemStr || textView.string == item.originalText {
                     let loc = textView.selectedRange().location
@@ -848,15 +847,14 @@ public final class AppState: ObservableObject {
             }
         }
 
-        let targetIndex = charIndex
-        guard let finalIndex = targetIndex, finalIndex > 0, finalIndex < item.originalText.count else {
-            errorMessage = "请先在文本框中将光标放置在想要拆分的字词之间"
-            statusMessage = "拆分提示：请先在字幕文本中放置光标"
+        guard let finalIndex = charIndex, finalIndex > 0, finalIndex < item.originalText.count else {
+            errorMessage = "请先在原文字幕中将光标置于要拆分的位置（非首尾）"
+            statusMessage = "拆分提示：请先在原文字幕中放置光标"
             NSSound.beep()
             return
         }
 
-        requestSplit(id: selectedID, atCharIndex: finalIndex)
+        splitSubtitle(id: selectedID, atCharIndex: finalIndex)
     }
 
     /// 执行大模型语义智能分句规整 (将每个词的精确定位发给大模型重构断句时间轴)
