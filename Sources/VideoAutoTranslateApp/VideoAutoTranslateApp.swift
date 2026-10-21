@@ -95,5 +95,29 @@ struct ProjectCommands: Commands {
             Button("保存工程") { appState?.saveProjectInteractively() }.keyboardShortcut("s")
             Button("工程另存为…") { appState?.saveProjectInteractively(chooseNewURL: true) }.keyboardShortcut("s", modifiers: [.command, .shift])
         }
+        CommandGroup(replacing: .undoRedo) {
+            Button("撤销字幕编辑") { appState?.undo() }.keyboardShortcut("z")
+                .disabled(appState?.canUndo != true || appState?.project.isProcessing == true)
+            Button("重做字幕编辑") { appState?.redo() }.keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(appState?.canRedo != true || appState?.project.isProcessing == true)
+        }
+        CommandGroup(after: .textEditing) {
+            Button("在原文光标处拆分…") { appState?.splitCurrentSubtitle() }.keyboardShortcut("b")
+                .disabled(appState?.originalEditingID == nil || appState?.originalEditingID != appState?.project.selectedSubtitleID || appState?.project.isProcessing == true)
+            Button("合并所选连续字幕") {
+                guard let state = appState else { return }
+                state.mergeSubtitles(ids: state.selectedSubtitleIDs)
+                state.selectedSubtitleIDs.removeAll()
+            }.keyboardShortcut("j")
+                .disabled(appState.map { !$0.canMergeMultipleConsecutive(ids: $0.selectedSubtitleIDs) || $0.project.isProcessing } ?? true)
+        }
+        CommandGroup(replacing: .appSettings) {
+            Button("偏好设置…") { appState?.showSettings = true }.keyboardShortcut(",")
+                .disabled(appState?.project.isProcessing == true)
+        }
+        CommandGroup(after: .importExport) {
+            Button("导出字幕与视频…") { appState?.showExportSheet = true }.keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(appState?.project.videoURL == nil || appState?.project.isProcessing == true)
+        }
     }
 }

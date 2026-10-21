@@ -15,7 +15,7 @@ public struct SubtitleRowView: View {
     let onToggleSelect: () -> Void
     let onMergeNext: () -> Void
     let onDelete: () -> Void
-    let onFocus: () -> Void
+    let onFocus: (Bool, Bool) -> Void
 
     enum FieldType {
         case original
@@ -28,7 +28,7 @@ public struct SubtitleRowView: View {
 
     private func performSplitAtCursor() {
         var charIndex: Int? = nil
-        if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+        if focusedField == .original, let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
            textView.string == item.originalText {
             let loc = textView.selectedRange().location
             if loc != NSNotFound {
@@ -129,6 +129,7 @@ public struct SubtitleRowView: View {
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
+                .disabled(lastActiveField != .original || lastCursorIndex == nil)
                 .accessibilityLabel("在光标处分割字幕")
                 .help("在光标所在字词位置拆分此行字幕 (快捷键 Cmd+B)")
             }
@@ -153,8 +154,8 @@ public struct SubtitleRowView: View {
                 .onChange(of: focusedField) { _, newFocus in
                     if let f = newFocus {
                         self.lastActiveField = f
-                        onFocus()
-                    }
+                        onFocus(f == .original, true)
+                    } else { onFocus(false, false) }
                 }
 
 
@@ -171,8 +172,8 @@ public struct SubtitleRowView: View {
                 .onChange(of: focusedField) { _, newFocus in
                     if let f = newFocus {
                         self.lastActiveField = f
-                        onFocus()
-                    }
+                        onFocus(f == .original, true)
+                    } else { onFocus(false, false) }
                 }
 
             if item.translationNeedsReview {

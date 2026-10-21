@@ -3,7 +3,10 @@ import VideoAutoTranslateCore
 
 public struct SubtitleListView: View {
     @ObservedObject var appState: AppState
-    @State private var selectedIDs: Set<UUID> = []
+    private var selectedIDs: Set<UUID> {
+        get { appState.selectedSubtitleIDs }
+        nonmutating set { appState.selectedSubtitleIDs = newValue }
+    }
     @State private var lastClickedIndex: Int? = nil
     @State private var showTiming = false
     @State private var searchText: String = ""
@@ -125,9 +128,12 @@ public struct SubtitleListView: View {
                                         appState.deleteSubtitle(id: item.id)
                                         selectedIDs.remove(item.id)
                                     },
-                                    onFocus: {
-                                        appState.project.selectedSubtitleID = item.id
-                                        lastClickedIndex = index
+                                    onFocus: { isOriginal, hasFocus in
+                                        if hasFocus {
+                                            appState.originalEditingID = isOriginal ? item.id : nil
+                                            appState.project.selectedSubtitleID = item.id
+                                            lastClickedIndex = index
+                                        } else if appState.originalEditingID == item.id { appState.originalEditingID = nil }
                                     }
                                 )
                                 .disabled(appState.project.isProcessing)

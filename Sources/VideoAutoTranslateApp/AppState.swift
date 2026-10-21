@@ -37,6 +37,8 @@ public final class AppState: ObservableObject {
     public let player: AVPlayer = AVPlayer()
     @Published public var isPlaying: Bool = false
     @Published public var currentTime: CMTime = .zero
+    @Published public var selectedSubtitleIDs: Set<UUID> = []
+    @Published public var originalEditingID: UUID?
 
     // 引擎与管理实例
     public let audioExtractor = AudioExtractor()
@@ -101,6 +103,7 @@ public final class AppState: ObservableObject {
                     self.lastTextEditSnapshotTime = Date()
                     self.lastTextEditID = itemID
                 }
+                self.objectWillChange.send()
                 if !self.project.isDirty { self.project.isDirty = true }
                 self.scheduleRecovery()
             }
@@ -295,6 +298,8 @@ public final class AppState: ObservableObject {
         cancelAllTasks()
         projectGeneration += 1
 
+        selectedSubtitleIDs.removeAll()
+        originalEditingID = nil
         undoStack.removeAll()
         redoStack.removeAll()
         canUndo = false
@@ -784,6 +789,7 @@ public final class AppState: ObservableObject {
 
         var charIndex = atCharIndex
         if charIndex == nil {
+            guard originalEditingID == selectedID else { errorMessage = "请先在原文编辑框中放置拆分光标"; return }
             if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
                 let textStr = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
                 let itemStr = item.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -796,26 +802,7 @@ public final class AppState: ObservableObject {
             }
         }
 
-        var targetIndex = charIndex
-        if targetIndex == nil || targetIndex! <= 0 || targetIndex! >= item.originalText.count {
-            // 智能兜底：若用户未放置光标，在句子中间寻找最自然的标点/空格断句点
-            let chars = Array(item.originalText)
-            let mid = chars.count / 2
-            var bestBreak: Int? = nil
-            var minDiff = Int.max
-            for (idx, ch) in chars.enumerated() {
-                guard idx > 0 && idx < chars.count - 1 else { continue }
-                if "，,。!?.!?；; ".contains(ch) {
-                    let diff = abs(idx - mid)
-                    if diff < minDiff {
-                        minDiff = diff
-                        bestBreak = idx + 1 // 断在标点/空格之后
-                    }
-                }
-            }
-            targetIndex = bestBreak ?? (mid > 0 ? mid : nil)
-        }
-
+        let targetIndex = charIndex
         guard let finalIndex = targetIndex, finalIndex > 0, finalIndex < item.originalText.count else {
             errorMessage = "请先在文本框中将光标放置在想要拆分的字词之间"
             statusMessage = "拆分提示：请先在字幕文本中放置光标"
@@ -997,6 +984,8 @@ public final class AppState: ObservableObject {
         let doc = try ProjectStore.read(from: url)
         recoveryTask?.cancel()
         cancelAllTasks()
+        selectedSubtitleIDs.removeAll()
+        originalEditingID = nil
         undoStack.removeAll()
         redoStack.removeAll()
         canUndo = false
