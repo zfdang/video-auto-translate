@@ -58,8 +58,9 @@ jobs:
 
       - name: Verify build artifacts
         run: |
+          ls -lh dist/release
           test -d "dist/VideoAutoTranslate.app"
-          test -f "dist/VideoAutoTranslate.app/Contents/MacOS/VideoAutoTranslate"
+          test -f "dist/VideoAutoTranslate.app/Contents/MacOS/VideoAutoTranslateApp"
           test -f "dist/release/VideoAutoTranslate_${RELEASE_TAG}_macOS_arm64.dmg"
           test -f "dist/release/VideoAutoTranslate_${RELEASE_TAG}_macOS_arm64.zip"
           test -f "dist/release/SHA256SUMS.txt"
