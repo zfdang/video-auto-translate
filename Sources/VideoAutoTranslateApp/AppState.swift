@@ -787,15 +787,8 @@ public final class AppState: ObservableObject {
     @Published public var splitDraft: SplitDraft?
 
     public func requestSplit(id: UUID, atCharIndex index: Int) {
-        guard !project.isProcessing, let item = project.subtitles.first(where: { $0.id == id }) else { return }
-        let copy = item.snapshot()
-        copy.translatedText = ""
-        guard let parts = subtitleManager.split(item: copy, atCharIndex: index) else {
-            errorMessage = "无法在此处安全拆分；请检查词对齐和两侧 100ms 最小时长。可先用时间检查器修正。"
-            return
-        }
-        if item.translatedText.isEmpty && !item.words.isEmpty { splitSubtitle(id: id, atCharIndex: index) }
-        else { splitDraft = SplitDraft(source: item.snapshot(), index: index, left: parts.0, right: parts.1) }
+        guard !project.isProcessing else { return }
+        splitSubtitle(id: id, atCharIndex: index)
     }
 
     public func applySplitDraft(left: String, right: String) {
@@ -810,10 +803,11 @@ public final class AppState: ObservableObject {
     }
 
     /// 拆分指定字幕 (R14: 绑定确切行 ID，防止错位拆分)
-    public func splitSubtitle(id: UUID, atCharIndex: Int, translatedParts: (String, String)? = nil) {
+    public func splitSubtitle(id: UUID, atCharIndex: Int? = nil, translatedParts: (String, String)? = nil) {
         guard let index = project.subtitles.firstIndex(where: { $0.id == id }) else { return }
         let target = project.subtitles[index]
-        if let (part1, part2) = subtitleManager.split(item: target, atCharIndex: atCharIndex, translatedParts: translatedParts) {
+        let splitIdx = atCharIndex ?? SubtitleManager.findNaturalSplitIndex(in: target.originalText)
+        if let (part1, part2) = subtitleManager.split(item: target, atCharIndex: splitIdx, translatedParts: translatedParts) {
             recordUndoSnapshot()
             project.subtitles.remove(at: index)
             project.subtitles.insert(part2, at: index)
@@ -825,7 +819,7 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 拆分当前选中的字幕 (Cmd+B: 严格在光标所在字词位置切开)
+    /// 拆分当前选中的字幕 (Cmd+B: 严格在光标所在字词位置切开，未定位光标则智能断句拆分)
     public func splitCurrentSubtitle(atCharIndex: Int? = nil) {
         guard let selectedID = project.selectedSubtitleID,
               let item = project.subtitles.first(where: { $0.id == selectedID }) else {
@@ -835,7 +829,6 @@ public final class AppState: ObservableObject {
 
         var charIndex = atCharIndex
         if charIndex == nil {
-            guard originalEditingID == selectedID else { errorMessage = "请先在原文编辑框中放置拆分光标"; return }
             if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
                 let textStr = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
                 let itemStr = item.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -848,15 +841,8 @@ public final class AppState: ObservableObject {
             }
         }
 
-        let targetIndex = charIndex
-        guard let finalIndex = targetIndex, finalIndex > 0, finalIndex < item.originalText.count else {
-            errorMessage = "请先在文本框中将光标放置在想要拆分的字词之间"
-            statusMessage = "拆分提示：请先在字幕文本中放置光标"
-            NSSound.beep()
-            return
-        }
-
-        requestSplit(id: selectedID, atCharIndex: finalIndex)
+        let finalIndex = charIndex ?? SubtitleManager.findNaturalSplitIndex(in: item.originalText)
+        splitSubtitle(id: selectedID, atCharIndex: finalIndex)
     }
 
     /// 执行大模型语义智能分句规整 (将每个词的精确定位发给大模型重构断句时间轴)

@@ -60,11 +60,12 @@ import CoreMedia
         let row = SubtitleItem(startTime: .zero, endTime: .from(seconds: 2), originalText: "Hello world", translatedText: "你好世界")
         app.project.subtitles = [row]
         app.requestSplit(id: row.id, atCharIndex: 5)
-        XCTAssertEqual(app.project.subtitles.count, 1)
-        XCTAssertNotNil(app.splitDraft)
-        app.applySplitDraft(left: "你好", right: "世界")
-        XCTAssertEqual(app.project.subtitles.map(\.translatedText), ["你好", "世界"])
+        // 无论何时均允许直接拆分，译文自动切分且支持撤销
+        XCTAssertEqual(app.project.subtitles.count, 2, "无论何时均允许直接拆分字幕")
+        XCTAssertFalse(app.project.subtitles[0].translatedText.isEmpty)
+        XCTAssertFalse(app.project.subtitles[1].translatedText.isEmpty)
         app.undo()
+        XCTAssertEqual(app.project.subtitles.count, 1)
         XCTAssertEqual(app.project.subtitles[0].translatedText, "你好世界")
     }
 

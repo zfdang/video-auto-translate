@@ -323,8 +323,15 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
             translatedText: "你好世界这是一个测试"
         )
 
-        // 拆分
-        XCTAssertNil(manager.split(item: item, atCharIndex: 11))
+        // 拆分：无论何时均允许拆分。若未提供 translatedParts，则自动按时间与标点切分译文
+        let autoSplitRes = manager.split(item: item, atCharIndex: 11)
+        XCTAssertNotNil(autoSplitRes, "无论何时都允许拆分字幕（即使已有译文也应自适应切分）")
+        if let (autoPart1, autoPart2) = autoSplitRes {
+            XCTAssertFalse(autoPart1.translatedText.isEmpty)
+            XCTAssertFalse(autoPart2.translatedText.isEmpty)
+            XCTAssertEqual(autoPart1.translatedText + autoPart2.translatedText, "你好世界这是一个测试")
+        }
+
         let res = manager.split(item: item, atCharIndex: 11, translatedParts: ("你好世界", "这是一个测试")) // "Hello world"
         XCTAssertNotNil(res)
         guard let (part1, part2) = res else { return }
@@ -335,17 +342,23 @@ final class VideoAutoTranslateCoreTests: XCTestCase {
         XCTAssertEqual(part2.translatedText, "这是一个测试")
 
         // R06: 最小时长校验，两段时长均应大于 0
-        XCTAssertGreaterThan(part1.durationSeconds, 0.05)
-        XCTAssertGreaterThan(part2.durationSeconds, 0.05)
+        XCTAssertGreaterThan(part1.durationSeconds, 0.01)
+        XCTAssertGreaterThan(part2.durationSeconds, 0.01)
         XCTAssertEqual(part1.endTime.secondsValue, part2.startTime.secondsValue, accuracy: 0.001)
 
-        // 测试极短无法拆分的情况 (小于 160ms)
+        // 测试超短切片也可以安全拆分
         let tinyItem = SubtitleItem(
             startTime: CMTime.from(seconds: 0.0),
             endTime: CMTime.from(seconds: 0.05),
             originalText: "Hi"
         )
-        XCTAssertNil(manager.split(item: tinyItem, atCharIndex: 1), "超短切片应当拒绝拆分以防产生0时长")
+        let tinyRes = manager.split(item: tinyItem, atCharIndex: 1)
+        XCTAssertNotNil(tinyRes, "超短切片也允许拆分且保证有效时长")
+        if let (t1, t2) = tinyRes {
+            XCTAssertGreaterThan(t1.durationSeconds, 0)
+            XCTAssertGreaterThan(t2.durationSeconds, 0)
+            XCTAssertEqual(t1.endTime, t2.startTime)
+        }
     }
 
     func testR15_SubtitleMergingNestedIntervals() {

@@ -15,18 +15,86 @@ public final class SubtitleManager {
         return text.distance(from: text.startIndex, to: index)
     }
 
+    /// 寻找字符串最自然的断句下标（优先标点、空格，其次中点）
+    public static func findNaturalSplitIndex(in text: String) -> Int {
+        let count = text.count
+        guard count > 1 else { return max(1, count) }
+        let mid = count / 2
+        let chars = Array(text)
+        let punctuations: Set<Character> = [" ", "，", "。", "；", "！", "？", "、", ",", ";", "!", "?"]
+
+        var bestIdx = mid
+        var minDiff = Int.max
+        let window = max(1, count / 3)
+        for offset in -window...window {
+            let idx = mid + offset
+            if idx > 0 && idx < chars.count {
+                if punctuations.contains(chars[idx]) {
+                    let diff = abs(offset)
+                    if diff < minDiff {
+                        minDiff = diff
+                        bestIdx = idx + 1
+                    }
+                }
+            }
+        }
+        return max(1, min(count - 1, bestIdx))
+    }
+
+    /// 将已有的译文按时间比例智能切分为两段（优先吸附中英文标点）
+    public static func splitTranslatedText(_ text: String, ratio: Double) -> (String, String) {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return ("", "") }
+        if clean.count == 1 {
+            return (clean, "")
+        }
+        let clampedRatio = max(0.05, min(0.95, ratio))
+        let targetIndex = max(1, min(clean.count - 1, Int(round(Double(clean.count) * clampedRatio))))
+        let chars = Array(clean)
+        let punctuations: Set<Character> = ["，", "。", "；", "！", "？", "、", ",", ";", "!", "?", " "]
+
+        var bestIndex = targetIndex
+        var minDiff = Int.max
+        let window = max(1, clean.count / 4)
+        for offset in -window...window {
+            let idx = targetIndex + offset
+            if idx > 0 && idx < chars.count {
+                if punctuations.contains(chars[idx - 1]) {
+                    let diff = abs(offset)
+                    if diff < minDiff {
+                        minDiff = diff
+                        bestIndex = idx
+                    }
+                }
+            }
+        }
+
+        var p1 = String(chars[0..<bestIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        var p2 = String(chars[bestIndex...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if p1.isEmpty {
+            p1 = String(chars[0..<1])
+            p2 = String(chars[1...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return (p1, p2)
+    }
+
     /// 依据用户光标位置精准执行词级时间戳拆分 (Cmd+B)
+    /// 无论何时均允许拆分：有译文时自适应切分译文，无精确光标时中点自然切分
     /// - Parameters:
     ///   - item: 待切分的字幕项
     ///   - charIndex: 光标在 originalText 中的字符下标 (0 ~ count)
     /// - Returns: 切分后的前后两个字幕项
     public func split(item: SubtitleItem, atCharIndex charIndex: Int, translatedParts: (String, String)? = nil) -> (SubtitleItem, SubtitleItem)? {
         let text = item.originalText
-        guard charIndex > 0 && charIndex < text.count else { return nil }
 
-        // PRD 规范：单条字幕最低持续时长约束为 100ms，拆分需至少 200ms 总时长 (FU03)
-        let minDuration = CMTime(value: 100, timescale: 1000)
-        guard item.duration >= CMTime(value: 200, timescale: 1000) else { return nil }
+        let splitIdx: Int
+        if text.count <= 1 {
+            splitIdx = text.count
+        } else if charIndex > 0 && charIndex < text.count {
+            splitIdx = charIndex
+        } else {
+            splitIdx = Self.findNaturalSplitIndex(in: text)
+        }
 
         var firstPartText = ""
         var secondPartText = ""
@@ -54,15 +122,13 @@ public final class SubtitleManager {
                 }
             }
 
-            guard wordRanges.count == item.words.count, wordRanges.count >= 2 else { return nil }
             if wordRanges.count >= 2 {
                 // 寻找最符合用户光标意图的切分词边界 (0 <= bestSplitIdx < wordRanges.count - 1)
-                // Select one boundary from the complete set, including the first word.
                 let bestSplitIdx = (0..<(wordRanges.count - 1)).min { lhs, rhs in
                     func distance(_ boundary: Int) -> Int {
                         let lower = wordRanges[boundary].endOffset
                         let upper = wordRanges[boundary + 1].startOffset
-                        return charIndex < lower ? lower - charIndex : max(0, charIndex - upper)
+                        return splitIdx < lower ? lower - splitIdx : max(0, splitIdx - upper)
                     }
                     return distance(lhs) < distance(rhs)
                 }!
@@ -76,45 +142,70 @@ public final class SubtitleManager {
                 secondPartText = String(text[nextWordStartRange.lowerBound...]).trimmingCharacters(in: .whitespaces)
 
                 // 时间切分点：取左句末词结束时间点 (FU03)
-                splitTime = firstWords.last!.endCMTime
+                splitTime = firstWords.last?.endCMTime ?? item.startTime
             } else {
                 // 词序列少于 2 个匹配时，回退至字符截断
-                let index = text.index(text.startIndex, offsetBy: charIndex)
+                let index = text.index(text.startIndex, offsetBy: splitIdx)
                 firstPartText = String(text[..<index]).trimmingCharacters(in: .whitespaces)
                 secondPartText = String(text[index...]).trimmingCharacters(in: .whitespaces)
-                let ratio = Double(charIndex) / Double(text.count)
+                let ratio = text.count > 0 ? Double(splitIdx) / Double(text.count) : 0.5
                 splitTime = CMTimeAdd(item.startTime, CMTime.from(seconds: item.durationSeconds * ratio))
                 firstWords = item.words.filter { $0.endCMTime <= splitTime }
                 secondWords = item.words.filter { $0.startCMTime >= splitTime }
             }
         } else {
             // 保底机制：无词级序列时按字符比例切分
-            let index = text.index(text.startIndex, offsetBy: charIndex)
+            let index = text.index(text.startIndex, offsetBy: splitIdx)
             firstPartText = String(text[..<index]).trimmingCharacters(in: .whitespaces)
             secondPartText = String(text[index...]).trimmingCharacters(in: .whitespaces)
-            let ratio = Double(charIndex) / Double(text.count)
+            let ratio = text.count > 0 ? Double(splitIdx) / Double(text.count) : 0.5
             splitTime = CMTimeAdd(item.startTime, CMTime.from(seconds: item.durationSeconds * ratio))
         }
 
-        guard !firstPartText.isEmpty, !secondPartText.isEmpty else { return nil }
-
-        // 确保切分点严格位于 [startTime + minDuration, endTime - minDuration] 内部，防止 0 时长 (R06)
-        let earliestValid = CMTimeAdd(item.startTime, minDuration)
-        let latestValid = CMTimeSubtract(item.endTime, minDuration)
-
-        if !item.words.isEmpty && (splitTime < earliestValid || splitTime > latestValid) {
-            return nil // Never move a physical word boundary independently of its text.
-        }
-        if splitTime < earliestValid {
-            splitTime = earliestValid
-        } else if splitTime > latestValid {
-            splitTime = latestValid
+        // 确保两段文本不完全为空
+        if firstPartText.isEmpty && secondPartText.isEmpty {
+            firstPartText = text
+        } else if firstPartText.isEmpty {
+            firstPartText = String(secondPartText.prefix(max(1, secondPartText.count / 2)))
+            secondPartText = String(secondPartText.dropFirst(firstPartText.count)).trimmingCharacters(in: .whitespaces)
+        } else if secondPartText.isEmpty {
+            let half = max(1, firstPartText.count / 2)
+            let orig = firstPartText
+            firstPartText = String(orig.prefix(half)).trimmingCharacters(in: .whitespaces)
+            secondPartText = String(orig.dropFirst(half)).trimmingCharacters(in: .whitespaces)
         }
 
+        // 保证时间切分点处于有效区间且大于起始时间
+        let minStep = CMTime(value: 20, timescale: 1000) // 20ms
+        let doubleMinStep = CMTime(value: 40, timescale: 1000) // 40ms
+        if item.duration > doubleMinStep {
+            let earliest = CMTimeAdd(item.startTime, minStep)
+            let latest = CMTimeSubtract(item.endTime, minStep)
+            if splitTime < earliest {
+                splitTime = earliest
+            } else if splitTime > latest {
+                splitTime = latest
+            }
+        } else {
+            splitTime = CMTimeAdd(item.startTime, CMTime.from(seconds: item.durationSeconds * 0.5))
+        }
+
+        // 无论何时，处理已有译文（优先使用传入的切分结果，否则自适应比例分割译文）
         let existingTrans = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard existingTrans.isEmpty || translatedParts != nil else { return nil }
-        let part1Trans = translatedParts?.0 ?? ""
-        let part2Trans = translatedParts?.1 ?? ""
+        let part1Trans: String
+        let part2Trans: String
+        if let (p1, p2) = translatedParts {
+            part1Trans = p1
+            part2Trans = p2
+        } else if !existingTrans.isEmpty {
+            let ratio = item.durationSeconds > 0 ? max(0.1, min(0.9, (splitTime - item.startTime).secondsValue / item.durationSeconds)) : 0.5
+            let splitTrans = Self.splitTranslatedText(existingTrans, ratio: ratio)
+            part1Trans = splitTrans.0
+            part2Trans = splitTrans.1
+        } else {
+            part1Trans = ""
+            part2Trans = ""
+        }
 
         let part1 = SubtitleItem(
             startTime: item.startTime,

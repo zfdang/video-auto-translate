@@ -39,12 +39,14 @@ public struct SubtitleRowView: View {
             charIndex = cached
         }
 
+        let splitIdx: Int
         if let idx = charIndex, idx > 0, idx < item.originalText.count {
-            onSplit(idx)
+            splitIdx = idx
         } else {
-            // 光标未处于字符中间时提示用户
-            NSSound.beep()
+            // 未定位光标或光标在首尾时，自适应中点或自然断句处拆分
+            splitIdx = SubtitleManager.findNaturalSplitIndex(in: item.originalText)
         }
+        onSplit(splitIdx)
     }
 
     public var body: some View {
@@ -123,13 +125,13 @@ public struct SubtitleRowView: View {
                     .help("直接将当前字幕与下一行 (#\(rowIndex + 2)) 合并为一行")
                 }
 
-                // 拆分按钮 (在光标所在位置拆分)
+                // 拆分按钮 (在光标所在位置拆分；未放置光标则智能断句)
                 Button(action: performSplitAtCursor) {
-                    Image(systemName: "scissors")
+                    Image(systemName: "square.split.2x1")
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
-                .help("在光标所在字词位置拆分此行字幕 (快捷键 Cmd+B)")
+                .help("拆分此行字幕 (快捷键 Cmd+B)")
             }
 
             // 原文字幕编辑框 (英文/源语种)
@@ -210,7 +212,7 @@ public struct SubtitleRowView: View {
                 }
             }
             Button(action: performSplitAtCursor) {
-                Label("在光标处拆分字幕 (Cmd+B)", systemImage: "scissors")
+                Label("拆分此行字幕 (Cmd+B)", systemImage: "square.split.2x1")
             }
             Divider()
             Button(action: onDelete) {
