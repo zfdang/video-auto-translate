@@ -10,6 +10,10 @@ import AVFoundation
 public final class TimelineAligner {
     public init() {}
 
+    public static func pacingIssues(items: [SubtitleItem], language: String) -> Set<UUID> {
+        Set(items.filter { estimateNaturalDuration(text: $0.translatedText.isEmpty ? $0.originalText : $0.translatedText, language: language) > $0.durationSeconds * 1.25 }.map(\.id))
+    }
+
     /// 估算特定语言文本的自然舒适发音时长 (秒)
     /// - Parameters:
     ///   - text: 文本内容
@@ -108,7 +112,8 @@ public final class TimelineAligner {
             }
         }
 
-        return enforceStrictConstraints(alignedItems, videoDuration: videoDuration)
+        let constrained = enforceStrictConstraints(alignedItems, videoDuration: videoDuration)
+        return constrained.isEmpty ? items : constrained
     }
 
     /// 使用大模型 (LLM) 进行语义感知的译文时间轴精细匹配
@@ -183,7 +188,8 @@ public final class TimelineAligner {
             )
 
             if let parsed = parseLLMTimeline(from: responseText, baseMatched: baseMatched, language: config.targetLanguage, videoDuration: videoDuration) {
-                return enforceStrictConstraints(parsed, videoDuration: videoDuration)
+                let constrained = enforceStrictConstraints(parsed, videoDuration: videoDuration)
+                return constrained.isEmpty ? baseMatched : constrained
             }
         } catch {
             // 大模型异常或网络不可用时平滑使用确定性匹配结果
@@ -284,7 +290,7 @@ public final class TimelineAligner {
                     originalText: item.originalText,
                     translatedText: item.translatedText,
                     words: item.words,
-                    dubbedAudioURL: nil
+                    dubbedAudioURL: nil, sourceStartTime: item.sourceStartTime, sourceEndTime: item.sourceEndTime
                 )
             ]
         }
@@ -332,7 +338,7 @@ public final class TimelineAligner {
                     originalText: orig.originalText,
                     translatedText: orig.translatedText,
                     words: orig.words,
-                    dubbedAudioURL: nil
+                    dubbedAudioURL: nil, sourceStartTime: orig.sourceStartTime, sourceEndTime: orig.sourceEndTime
                 )
             )
             curStart = curEnd + itemPause
@@ -342,7 +348,7 @@ public final class TimelineAligner {
     }
 
     /// 解析大模型返回的时间轴数据，并施加发音自然时长与局部防漂移的保底校验
-    private func parseLLMTimeline(
+    internal func parseLLMTimeline(
         from response: String,
         baseMatched: [SubtitleItem],
         language: String,
@@ -365,23 +371,28 @@ public final class TimelineAligner {
             return nil
         }
 
-        let map = Dictionary(uniqueKeysWithValues: decoded.subtitles.map { ($0.id, ($0.start, $0.end)) })
+        guard decoded.subtitles.count == baseMatched.count,
+              Set(decoded.subtitles.map(\.id)) == Set(baseMatched.indices),
+              decoded.subtitles.allSatisfy({ $0.start.isFinite && $0.end.isFinite && $0.start >= 0 && $0.end > $0.start }) else {
+            return nil
+        }
+        let map = Dictionary(decoded.subtitles.map { ($0.id, ($0.start, $0.end)) }, uniquingKeysWith: { first, _ in first })
         var result: [SubtitleItem] = []
         var lastEnd = 0.0
 
         for (idx, base) in baseMatched.enumerated() {
-            let naturalDur = expectedDurationForSubtitle(base, language: language)
 
             if let timing = map[idx] {
                 let requestedDur = timing.1 - timing.0
-                let safeDur = max(naturalDur * 0.85, max(0.35, requestedDur))
+                let safeDur = max(0.20, min(base.durationSeconds + 0.5, requestedDur))
 
                 // 防漂移约束：大模型微调的结果，起止时间不得偏离局部基准超过 0.6 秒，杜绝跨场景漂移
                 let maxDrift = 0.6
                 let boundedStart = max(base.startTime.secondsValue - maxDrift,
                                        min(base.startTime.secondsValue + maxDrift, timing.0))
                 let safeStart = max(lastEnd + 0.04, boundedStart)
-                let safeEnd = safeStart + safeDur
+                let safeEnd = min(base.endTime.secondsValue + maxDrift, safeStart + safeDur)
+                guard safeEnd - safeStart >= 0.20 else { return nil }
 
                 result.append(SubtitleItem(
                     id: base.id,
@@ -390,7 +401,7 @@ public final class TimelineAligner {
                     originalText: base.originalText,
                     translatedText: base.translatedText,
                     words: base.words,
-                    dubbedAudioURL: nil
+                    dubbedAudioURL: nil, sourceStartTime: base.sourceStartTime, sourceEndTime: base.sourceEndTime
                 ))
                 lastEnd = safeEnd
             } else {
@@ -403,7 +414,7 @@ public final class TimelineAligner {
                     originalText: base.originalText,
                     translatedText: base.translatedText,
                     words: base.words,
-                    dubbedAudioURL: nil
+                    dubbedAudioURL: nil, sourceStartTime: base.sourceStartTime, sourceEndTime: base.sourceEndTime
                 ))
                 lastEnd = end
             }
@@ -433,15 +444,15 @@ public final class TimelineAligner {
                 end = start + 0.20
             }
 
-            // 3. 安全边界截断：不超过视频总时长
-            if let maxDur = videoDuration, end > maxDur {
-                if start < maxDur - 0.20 {
-                    end = maxDur
-                } else {
-                    start = max(0, maxDur - 0.25)
-                    end = maxDur
-                }
+            // Reserve room for all remaining rows; never rewind a start into a previous row.
+            if let maxDur = videoDuration {
+                guard maxDur.isFinite, maxDur > 0 else { return [] }
+                let remaining = Double(items.count - i - 1)
+                let latestEnd = maxDur - remaining * 0.23
+                end = min(end, latestEnd)
+                guard end - start >= 0.199 else { return [] }
             }
+            guard start.isFinite, end.isFinite, end > start else { return [] }
 
             let validItem = SubtitleItem(
                 id: item.id,
@@ -450,7 +461,7 @@ public final class TimelineAligner {
                 originalText: item.originalText,
                 translatedText: item.translatedText,
                 words: item.words,
-                dubbedAudioURL: nil
+                dubbedAudioURL: nil, sourceStartTime: item.sourceStartTime, sourceEndTime: item.sourceEndTime
             )
             sanitized.append(validItem)
             lastEnd = end

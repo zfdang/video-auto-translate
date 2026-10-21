@@ -15,7 +15,7 @@ public struct SubtitleRowView: View {
     let onToggleSelect: () -> Void
     let onMergeNext: () -> Void
     let onDelete: () -> Void
-    let onFocus: () -> Void
+    let onFocus: (Bool, Bool) -> Void
 
     enum FieldType {
         case original
@@ -28,11 +28,11 @@ public struct SubtitleRowView: View {
 
     private func performSplitAtCursor() {
         var charIndex: Int? = nil
-        if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+        if focusedField == .original, let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
            textView.string == item.originalText {
             let loc = textView.selectedRange().location
             if loc != NSNotFound {
-                charIndex = loc
+                charIndex = SubtitleManager.characterOffset(in: item.originalText, utf16Offset: loc)
             }
         }
         if charIndex == nil, let cached = lastCursorIndex {
@@ -57,6 +57,7 @@ public struct SubtitleRowView: View {
                         .foregroundColor(isMultiSelected ? .accentColor : .secondary.opacity(0.5))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("选择第\(rowIndex + 1)句字幕")
                 .help(isMultiSelected ? "取消勾选此行" : "勾选此行以多选合并 (支持 Shift 连续多选)")
 
                 // 行号
@@ -88,7 +89,7 @@ public struct SubtitleRowView: View {
                 }) {
                     HStack(spacing: 2) {
                         Image(systemName: "play.circle")
-                        Text("试听原声")
+                        Text("原声")
                             .font(.caption)
                     }
                 }
@@ -102,7 +103,7 @@ public struct SubtitleRowView: View {
                 }) {
                     HStack(spacing: 2) {
                         Image(systemName: item.isGeneratingAudio ? "waveform" : "speaker.wave.2")
-                        Text(item.isGeneratingAudio ? "生成中" : "试听译文")
+                        Text(item.isGeneratingAudio ? "生成中" : "译文")
                             .font(.caption)
                     }
                 }
@@ -115,8 +116,7 @@ public struct SubtitleRowView: View {
                     Button(action: onMergeNext) {
                         HStack(spacing: 2) {
                             Image(systemName: "arrow.triangle.merge")
-                            Text("向下合并")
-                                .font(.caption2)
+
                         }
                     }
                     .buttonStyle(.borderless)
@@ -129,11 +129,15 @@ public struct SubtitleRowView: View {
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
+                .disabled(lastActiveField != .original || lastCursorIndex == nil)
+                .accessibilityLabel("在光标处分割字幕")
                 .help("在光标所在字词位置拆分此行字幕 (快捷键 Cmd+B)")
             }
 
+            if item.words.isEmpty { Text("无词级对齐 · 拆分时间需人工复核").font(.caption2).foregroundColor(.secondary) }
             // 原文字幕编辑框 (英文/源语种)
-            TextField("原文内容", text: $item.originalText)
+            TextField("原文内容", text: $item.originalText, axis: .vertical)
+                .lineLimit(2...8)
                 .focused($focusedField, equals: .original)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .regular))
@@ -141,27 +145,24 @@ public struct SubtitleRowView: View {
                 .background(Color(nsColor: .textBackgroundColor).opacity(0.6))
                 .cornerRadius(4)
                 .onReceive(NotificationCenter.default.publisher(for: NSTextView.didChangeSelectionNotification)) { notif in
-                    if let textView = notif.object as? NSTextView, textView.string == item.originalText {
+                    if focusedField == .original, let textView = notif.object as? NSTextView, textView.string == item.originalText {
                         let loc = textView.selectedRange().location
                         if loc != NSNotFound {
-                            self.lastCursorIndex = loc
+                            self.lastCursorIndex = SubtitleManager.characterOffset(in: item.originalText, utf16Offset: loc)
                         }
                     }
                 }
                 .onChange(of: focusedField) { _, newFocus in
                     if let f = newFocus {
                         self.lastActiveField = f
-                        onFocus()
-                    }
-                }
-                .onChange(of: item.originalText) { _, _ in
-                    // R16: 修改原文后使词级映射及旧配音缓存失效
-                    item.words = []
-                    item.dubbedAudioURL = nil
+                        onFocus(f == .original, true)
+                    } else { onFocus(false, false) }
                 }
 
+
             // 译文字幕编辑框 (中文/目标语种)
-            TextField("译文内容 (未翻译，可直接编辑或点击上方「字幕翻译」)", text: $item.translatedText)
+            TextField("译文内容", text: $item.translatedText, axis: .vertical)
+                .lineLimit(2...8)
                 .focused($focusedField, equals: .translated)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
@@ -172,13 +173,16 @@ public struct SubtitleRowView: View {
                 .onChange(of: focusedField) { _, newFocus in
                     if let f = newFocus {
                         self.lastActiveField = f
-                        onFocus()
-                    }
+                        onFocus(f == .original, true)
+                    } else { onFocus(false, false) }
                 }
-                .onChange(of: item.translatedText) { _, _ in
-                    // R16: 修改译文后使旧配音缓存失效
-                    item.dubbedAudioURL = nil
-                }
+
+            if item.translationNeedsReview {
+                Label("译文待复核：原文或目标语言已改变", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundColor(.orange)
+                Button("已确认译文属于当前目标语言") { item.translationNeedsReview = false }
+            }
+
         }
         .padding(8)
         .background(

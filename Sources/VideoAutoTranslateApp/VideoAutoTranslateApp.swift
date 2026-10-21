@@ -62,6 +62,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard AppState.current?.confirmReplacingProject() != false else { return .terminateCancel }
+        if AppState.current?.project.isDirty == true { AppState.current?.clearRecoveryCheckpoint() }
+        AppState.current?.flushPreferences()
+        return .terminateNow
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // 应用退出时终止静默托管的后台 ASR 进程，释放显存与端口
         ASRSidecarManager.shared.stop()
@@ -77,7 +84,43 @@ struct VideoAutoTranslateApp: App {
             MainView()
                 .frame(minWidth: 960, minHeight: 600)
         }
+        .commands { ProjectCommands() }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
+    }
+}
+
+struct ProjectCommands: Commands {
+    @FocusedObject var appState: AppState?
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("打开工程…") { appState?.openProjectInteractively() }.keyboardShortcut("o")
+            Button("保存工程") { appState?.saveProjectInteractively() }.keyboardShortcut("s")
+            Button("工程另存为…") { appState?.saveProjectInteractively(chooseNewURL: true) }.keyboardShortcut("s", modifiers: [.command, .shift])
+        }
+        CommandGroup(replacing: .undoRedo) {
+            Button("撤销字幕编辑") { appState?.undo() }.keyboardShortcut("z")
+                .disabled(appState?.canUndo != true || appState?.project.isProcessing == true)
+            Button("重做字幕编辑") { appState?.redo() }.keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(appState?.canRedo != true || appState?.project.isProcessing == true)
+        }
+        CommandGroup(after: .textEditing) {
+            Button("在原文光标处拆分…") { appState?.splitCurrentSubtitle() }.keyboardShortcut("b")
+                .disabled(appState?.originalEditingID == nil || appState?.originalEditingID != appState?.project.selectedSubtitleID || appState?.project.isProcessing == true)
+            Button("合并所选连续字幕") {
+                guard let state = appState else { return }
+                state.mergeSubtitles(ids: state.selectedSubtitleIDs)
+                state.selectedSubtitleIDs.removeAll()
+            }.keyboardShortcut("j")
+                .disabled(appState.map { !$0.canMergeMultipleConsecutive(ids: $0.selectedSubtitleIDs) || $0.project.isProcessing } ?? true)
+        }
+        CommandGroup(replacing: .appSettings) {
+            Button("偏好设置…") { appState?.showSettings = true }.keyboardShortcut(",")
+                .disabled(appState?.project.isProcessing == true)
+        }
+        CommandGroup(after: .importExport) {
+            Button("导出字幕与视频…") { appState?.showExportSheet = true }.keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(appState?.project.videoURL == nil || appState?.project.isProcessing == true)
+        }
     }
 }

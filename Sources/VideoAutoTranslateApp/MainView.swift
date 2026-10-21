@@ -10,11 +10,37 @@ public struct MainView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
+            HStack {
+                Menu("工程") {
+                    Button("打开工程…") { appState.openProjectInteractively() }
+                    Button("保存工程") { appState.saveProjectInteractively() }
+                    Button("另存为…") { appState.saveProjectInteractively(chooseNewURL: true) }
+                    Button("重新定位媒体…") { appState.relinkMedia() }
+                }
+                Text(appState.documentURL?.lastPathComponent ?? appState.project.videoURL?.lastPathComponent ?? "未命名工程")
+                    .lineLimit(1)
+                Text(appState.project.isDirty ? "有未保存修改 · \(appState.saveStatus)" : appState.saveStatus)
+                    .font(.caption).foregroundColor(.secondary)
+                Spacer()
+            }.padding(.horizontal, 12).padding(.vertical, 6)
+            if appState.recoveryAvailable {
+                HStack {
+                    Text("发现上次编辑的恢复副本")
+                    Button("恢复") { appState.restoreRecovery() }
+                    Button("暂不恢复") { appState.recoveryAvailable = false }
+                }.padding(8)
+            }
             // 顶部一体化工作流工具栏
             topWorkflowBar
 
             Divider()
 
+            if let text = appState.project.unalignedTranscript {
+                DisclosureGroup("已识别文字，尚无时间对齐；请准备对齐模型后重试") {
+                    ScrollView { Text(text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 100)
+                    Button("打开模型设置") { appState.showSettings = true }
+                }.padding(8)
+            }
             // 主工作区（左侧播放器 + 右侧字幕时间轴）
             HSplitView {
                 // 左侧视频区
@@ -37,6 +63,10 @@ public struct MainView: View {
             // 底部状态栏与进度
             bottomStatusBar
         }
+        .focusedSceneObject(appState)
+        .background(WindowCloseGuard(appState: appState).frame(width: 0, height: 0))
+        .sheet(item: $appState.editProposal) { proposal in EditProposalView(appState: appState, proposal: proposal) }
+        .sheet(item: $appState.splitDraft) { draft in SplitReviewView(appState: appState, draft: draft) }
         .sheet(isPresented: $appState.showSettings) {
             SettingsView(appState: appState)
         }
@@ -79,272 +109,58 @@ public struct MainView: View {
 
     // MARK: - 顶部一体化工作流工具栏
     private var topWorkflowBar: some View {
-        HStack(spacing: 6) {
-            // 步骤 1: 导入视频
-            HStack(spacing: 6) {
-                StepBadge(
-                    step: 1,
-                    isCompleted: appState.project.videoURL != nil,
-                    isActive: appState.project.videoURL == nil
-                )
-
-                if appState.project.videoURL == nil {
-                    Button(action: openVideoFilePicker) {
-                        Label("打开视频", systemImage: "folder.fill")
-                            .lineLimit(1)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .fixedSize()
-                    .help("打开本地待处理视频文件")
-                } else {
-                    Button(action: openVideoFilePicker) {
-                        Label("更换视频", systemImage: "folder.fill")
-                            .lineLimit(1)
-                    }
-                    .buttonStyle(.bordered)
-                    .fixedSize()
-                    .help("更换当前本地待处理视频文件")
-                }
+        VStack(alignment: .leading, spacing: 6) {
+            ViewThatFits(in: .horizontal) {
+                workflowControls(compact: false).fixedSize(horizontal: true, vertical: false)
+                workflowControls(compact: true)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.06))
-            .cornerRadius(8)
-            .fixedSize()
-            .layoutPriority(1)
-
-            workflowArrow
-
-            // 步骤 2: 语音转录
-            HStack(spacing: 4) {
-                StepBadge(
-                    step: 2,
-                    isCompleted: !appState.project.subtitles.isEmpty,
-                    isActive: isStep2Active
-                )
-
-                Menu {
-                    ForEach(ASRLanguagePreset.presets) { preset in
-                        Button(action: {
-                            appState.project.asrConfig.language = preset.code
-                        }) {
-                            HStack {
-                                Text(preset.displayName)
-                                if appState.project.asrConfig.language == preset.code {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "globe")
-                        Text(currentASRLanguageName)
-                            .font(.subheadline)
-                            .lineLimit(1)
-                    }
-                }
-                .menuStyle(.borderedButton)
-                .fixedSize()
-                .help("指定待识别音视频的原语言 (默认自动检测)")
-
-                if isStep2Active {
-                    Button(action: {
-                        Task {
-                            await appState.runTranscription()
-                        }
-                    }) {
-                        Label("语音转录", systemImage: "waveform.and.mic")
-                            .lineLimit(1)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .fixedSize()
-                    .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
-                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳，并自动调用大模型进行智能语义断句规整")
-                } else {
-                    Button(action: {
-                        Task {
-                            await appState.runTranscription()
-                        }
-                    }) {
-                        Label("语音转录", systemImage: "waveform.and.mic")
-                            .lineLimit(1)
-                    }
-                    .buttonStyle(.bordered)
-                    .fixedSize()
-                    .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
-                    .help("使用本地 Qwen3-ASR 提取毫秒级逐词时间戳，并自动调用大模型进行智能语义断句规整")
-                }
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.06))
-            .cornerRadius(8)
-            .fixedSize()
-            .layoutPriority(1)
-
-            workflowArrow
-
-            // 步骤 3: 字幕翻译
-            HStack(spacing: 4) {
-                StepBadge(
-                    step: 3,
-                    isCompleted: hasTranslations,
-                    isActive: isStep3Active
-                )
-
-                Menu {
-                    ForEach(TargetLanguagePreset.defaultPresets) { preset in
-                        Button(action: {
-                            appState.project.llmConfig.targetLanguage = preset.name
-                        }) {
-                            HStack {
-                                Text(preset.name)
-                                if appState.project.llmConfig.targetLanguage == preset.name {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "character.bubble")
-                        Text(shortTargetLanguageName)
-                            .font(.subheadline)
-                            .lineLimit(1)
-                    }
-                }
-                .menuStyle(.borderedButton)
-                .fixedSize()
-                .help("选择字幕翻译的目标语言")
-
-                if isStep3Active {
-                    Button(action: {
-                        Task {
-                            await appState.runTranslation()
-                        }
-                    }) {
-                        Label("字幕翻译", systemImage: "character.book.closed.fill")
-                            .lineLimit(1)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .fixedSize()
-                    .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
-                    .help("使用本地大模型生成精准口语化双语字幕")
-                } else {
-                    Button(action: {
-                        Task {
-                            await appState.runTranslation()
-                        }
-                    }) {
-                        Label("字幕翻译", systemImage: "character.book.closed.fill")
-                            .lineLimit(1)
-                    }
-                    .buttonStyle(.bordered)
-                    .fixedSize()
-                    .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
-                    .help("使用本地大模型生成精准口语化双语字幕")
-                }
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.06))
-            .cornerRadius(8)
-            .fixedSize()
-            .layoutPriority(1)
-
-            workflowArrow
-
-            // 步骤 4: 自动配音 (可选步骤，用括号括起来表示可跳过)
-            HStack(spacing: 3) {
-                Text("(")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(.secondary.opacity(0.6))
-
-                StepBadge(
-                    step: 4,
-                    isCompleted: hasDubbing,
-                    isActive: hasTranslations && !hasDubbing,
-                    isOptional: true
-                )
-
-                Button(action: {
-                    Task {
-                        await appState.runFullDubbing()
-                    }
-                }) {
-                    Label("自动配音", systemImage: "speaker.wave.2.fill")
-                }
-                .buttonStyle(.bordered)
-                .fixedSize()
-                .disabled(!hasTranslations || appState.project.isProcessing)
-                .help("可选步骤：合成新语言配音，并执行自适应语速对齐与背景音自动闪避混音（可跳过直接进入第5步导出成片）")
-
-                Text(")")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(.secondary.opacity(0.6))
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.06))
-            .cornerRadius(8)
-            .fixedSize()
-            .layoutPriority(1)
-
-            workflowArrow
-
-            // 步骤 5: 导出成品
-            HStack(spacing: 4) {
-                StepBadge(
-                    step: 5,
-                    isCompleted: false,
-                    isActive: !appState.project.subtitles.isEmpty
-                )
-
-                Button(action: {
-                    appState.showExportSheet = true
-                }) {
-                    Label("导出成片", systemImage: "square.and.arrow.up.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .fixedSize()
-                .disabled(appState.project.subtitles.isEmpty)
-                .help("导出双语字幕文件 (SRT/VTT) 或全新压制音画同步视频")
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.06))
-            .cornerRadius(8)
-            .fixedSize()
-            .layoutPriority(1)
-
-            Spacer()
-
-            // 帮助按钮
-            Button(action: {
-                appState.showHelp = true
-            }) {
-                Image(systemName: "questionmark.circle")
-                    .font(.body)
-            }
-            .buttonStyle(.bordered)
-            .help("使用帮助与快捷键指南 (⌘?)")
-            .keyboardShortcut("?", modifiers: .command)
-
-            // 设置按钮
-            Button(action: {
-                appState.showSettings = true
-            }) {
-                Image(systemName: "gearshape.fill")
-                    .font(.body)
-            }
-            .buttonStyle(.bordered)
-            .help("偏好设置 (模型下载与存储、Ollama 与 ASR 引擎托管)")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color(nsColor: .windowBackgroundColor))
+            Text("字幕 \(appState.project.subtitles.count) · 翻译 \(translatedCount)/\(appState.project.subtitles.count) · 配音 \(dubbedCount)/\(appState.project.subtitles.count) · 待复核 \(appState.project.subtitles.filter { $0.translationNeedsReview }.count)")
+                .font(.caption).foregroundColor(.secondary)
+        }.padding(.horizontal, 12).padding(.vertical, 8)
     }
+
+    private func workflowControls(compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            Button(action: openVideoFilePicker) { workflowLabel("打开视频", image: "folder", compact: compact) }
+                .help("打开或更换视频；先处理未保存修改")
+            Menu {
+                ForEach(ASRLanguagePreset.presets) { preset in
+                    Button(preset.displayName) { appState.project.asrConfig.language = preset.code }
+                }
+            } label: { Text(compact ? "原语言" : currentASRLanguageName) }
+                .disabled(appState.project.isProcessing)
+            Button { Task { await appState.runTranscription() } } label: { workflowLabel("语音转录", image: "waveform.and.mic", compact: compact) }
+                .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
+                .help("识别语音；已有字幕时会先确认替换")
+            Menu {
+                ForEach(TargetLanguagePreset.defaultPresets) { preset in
+                    Button(preset.name) { appState.project.llmConfig.targetLanguage = preset.name }
+                }
+            } label: { Text(compact ? "译语言" : shortTargetLanguageName) }
+                .disabled(appState.project.isProcessing)
+            Button { Task { await appState.runTranslation() } } label: { workflowLabel("字幕翻译", image: "character.book.closed", compact: compact) }
+                .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
+                .help("翻译字幕；人工校对内容请先保存")
+            Button { Task { await appState.runFullDubbing() } } label: { workflowLabel("生成配音", image: "speaker.wave.2", compact: compact) }
+                .disabled(!hasTranslations || appState.project.isProcessing)
+                .help("按当前译文生成配音；缺译或超时会明确报告")
+            Button { appState.showExportSheet = true } label: { workflowLabel("导出", image: "square.and.arrow.up", compact: compact) }
+                .disabled(appState.project.videoURL == nil || appState.project.isProcessing)
+            Spacer(minLength: 0)
+            Button { appState.showHelp = true } label: { Image(systemName: "questionmark.circle") }
+                .accessibilityLabel("使用帮助").help("使用帮助").keyboardShortcut("?", modifiers: .command)
+            Button { appState.showSettings = true } label: { Image(systemName: "gearshape") }
+                .accessibilityLabel("偏好设置").help("偏好设置").disabled(appState.project.isProcessing)
+        }.buttonStyle(.bordered)
+    }
+
+    private func workflowLabel(_ title: String, image: String, compact: Bool) -> some View {
+        HStack(spacing: 4) { Image(systemName: image); if !compact { Text(title).lineLimit(1) } }
+            .accessibilityLabel(title)
+    }
+
+    private var translatedCount: Int { appState.project.subtitles.filter { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !$0.translationNeedsReview }.count }
+    private var dubbedCount: Int { appState.project.subtitles.filter { $0.hasCurrentAudio(voice: appState.project.llmConfig.targetLanguageVoiceCode) }.count }
 
     private var workflowArrow: some View {
         Image(systemName: "arrow.right")
@@ -363,12 +179,12 @@ public struct MainView: View {
 
     private var hasTranslations: Bool {
         !appState.project.subtitles.isEmpty &&
-        appState.project.subtitles.contains(where: { !$0.translatedText.isEmpty })
+        appState.project.subtitles.allSatisfy { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !$0.translationNeedsReview }
     }
 
     private var hasDubbing: Bool {
         !appState.project.subtitles.isEmpty &&
-        appState.project.subtitles.contains(where: { $0.dubbedAudioURL != nil })
+        appState.project.subtitles.allSatisfy { $0.hasCurrentAudio(voice: appState.project.llmConfig.targetLanguageVoiceCode) }
     }
 
     private var currentASRLanguageName: String {
@@ -419,7 +235,11 @@ public struct MainView: View {
     // MARK: - 底部状态栏
     private var bottomStatusBar: some View {
         HStack(spacing: 12) {
-            if appState.project.isProcessing {
+            if appState.exportJob.isRunning {
+                ProgressView(value: appState.exportJob.progress).frame(width: 120)
+                Text(appState.exportJob.message).font(.caption)
+                Button("取消导出") { appState.exportJob.cancel() }
+            } else if appState.project.isProcessing {
                 ProgressView(value: appState.project.progress)
                     .progressViewStyle(.linear)
                     .frame(width: 140)
@@ -438,9 +258,8 @@ public struct MainView: View {
                 .controlSize(.mini)
                 .help("取消当前任务并释放模型资源")
             } else {
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 8, height: 8)
+                Image(systemName: appState.feedbackKind == .failure ? "exclamationmark.triangle.fill" : appState.feedbackKind == .success ? "checkmark.circle.fill" : "info.circle")
+                    .foregroundColor(appState.feedbackKind == .failure ? .red : appState.feedbackKind == .success ? .green : .secondary)
                 Text(appState.statusMessage)
                     .font(.caption)
                     .foregroundColor(.secondary)

@@ -12,6 +12,7 @@ public struct SettingsView: View {
     @State private var isProbingOllama: Bool = false
     @State private var ollamaProbeFeedback: (isSuccess: Bool, message: String)? = nil
     @State private var selectedLanguageOption: String = "简体中文 (Simplified Chinese)"
+    @State private var onlineURLDraft = ""
     private let customLanguageTag: String = "__custom__"
 
     public init(appState: AppState) {
@@ -55,6 +56,9 @@ public struct SettingsView: View {
                 Spacer()
 
                 Button("完成") {
+                    if !onlineURLDraft.isEmpty { appState.useOnlineEndpoint(onlineURLDraft) }
+                    appState.applyStorageSettings()
+                    appState.flushPreferences()
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -78,8 +82,12 @@ public struct SettingsView: View {
         }
         .frame(width: 680, height: 560)
         .onAppear {
+            onlineURLDraft = appState.project.llmConfig.onlineBaseURL
             appState.modelStorageManager.config = appState.project.modelStorageConfig
             appState.modelStorageManager.refreshAll()
+            if let canonical = TargetLanguagePreset.defaultPresets.first(where: { $0.name == appState.project.llmConfig.targetLanguage || $0.name.hasPrefix(appState.project.llmConfig.targetLanguage + " (") }) {
+                appState.project.llmConfig.targetLanguage = canonical.name
+            }
             if TargetLanguagePreset.defaultPresets.contains(where: { $0.name == appState.project.llmConfig.targetLanguage }) {
                 selectedLanguageOption = appState.project.llmConfig.targetLanguage
             } else {
@@ -109,7 +117,8 @@ public struct SettingsView: View {
 
                 if appState.project.modelStorageConfig.locationType == .custom {
                     HStack {
-                        TextField("自定义保存路径", text: $appState.project.modelStorageConfig.customDirectoryPath)
+                        TextField("自定义保存路径（回车应用）", text: $appState.project.modelStorageConfig.customDirectoryPath)
+                            .onSubmit { appState.applyStorageSettings() }
                         Button("浏览选择...") {
                             appState.chooseCustomModelDirectory()
                         }
@@ -137,7 +146,7 @@ public struct SettingsView: View {
 
             Section(header: Text("模型下载镜像源").font(.headline)) {
                 Picker("下载镜像源", selection: $appState.project.modelStorageConfig.selectedMirror) {
-                    ForEach(ModelDownloadMirror.allCases) { mirror in
+                    ForEach(ModelDownloadMirror.allCases.filter { $0 != .modelScope }) { mirror in
                         Text(mirror.displayName).tag(mirror)
                     }
                 }
@@ -169,6 +178,26 @@ public struct SettingsView: View {
 
     private var asrServiceSettingsView: some View {
         Form {
+            Section("首次准备与诊断") {
+                Text("应用不捆绑 Python 和模型。首次准备需联网安装依赖；还需下载数 GB 识别/对齐模型。已有完整环境可直接使用。")
+                    .font(.caption)
+                Text(appState.sidecarManager.runtimeMessage).font(.caption).textSelection(.enabled)
+                HStack {
+                    if appState.sidecarManager.isPreparingRuntime {
+                        ProgressView().controlSize(.small)
+                        Button("取消准备") { appState.sidecarManager.cancelRuntimePreparation() }
+                    } else {
+                        Button("准备识别环境（需联网）") { Task { await appState.sidecarManager.prepareManagedRuntime() } }
+                        Button("选择 Python…") {
+                            let panel = NSOpenPanel()
+                            panel.allowsMultipleSelection = false
+                            if panel.runModal() == .OK { appState.sidecarManager.bootstrapPythonPath = panel.url?.path }
+                        }
+                    }
+                    Button("查看准备日志") { NSWorkspace.shared.open(appState.sidecarManager.runtimeLogURL) }
+                    Button("查看引擎日志") { NSWorkspace.shared.open(appState.sidecarManager.diagnosticLogURL) }
+                }
+            }
             Section(header: Text("本地 ASR 语音识别引擎托管").font(.headline)) {
                 HStack {
                     Circle()
@@ -241,7 +270,8 @@ public struct SettingsView: View {
                         .padding(.top, 2)
                     }
                 }
-                TextField("默认 ASR 模型标识", text: $appState.project.asrConfig.model)
+                TextField("服务模型标识", text: $appState.project.asrConfig.model).disabled(appState.usesManagedASR)
+                if appState.usesManagedASR { Text("内置引擎使用 Qwen3-ASR 1.7B；自定义服务可指定其支持的模型标识。").font(.caption) }
 
                 Picker("默认原语言策略", selection: $appState.project.asrConfig.language) {
                     ForEach(ASRLanguagePreset.presets) { preset in
@@ -313,53 +343,33 @@ public struct SettingsView: View {
                         }
 
                         if !appState.availableOllamaModels.isEmpty {
-                            Picker("当前生效模型", selection: $appState.project.llmConfig.ollamaModel) {
-                                ForEach(appState.availableOllamaModels, id: \.self) { model in
-                                    Text(model).tag(model)
-                                }
-                            }
-
-                            Divider()
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("推荐模型与一键安装")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-
-                                ForEach(OllamaModelPreset.recommended) { preset in
-                                    ollamaPresetRow(preset)
-                                }
-
-                                Text("💡 提示：您也可以在 macOS 终端随时执行 `ollama run qwen2.5:latest` 命令行拉取模型。")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                    .padding(.top, 4)
+                            Picker("当前模型", selection: $appState.project.llmConfig.ollamaModel) {
+                                ForEach(appState.availableOllamaModels, id: \.self) { Text($0).tag($0) }
                             }
                         } else {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .foregroundColor(.orange)
-                                    Text("未检测到运行中的 Ollama 服务 (http://localhost:11434)")
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                }
-
-                                Text("Ollama 是本地开源大模型运行时。如需完全离线运行：\n1. 访问 ollama.com 下载安装 Ollama 应用\n2. 打开终端执行 `ollama serve` 启动服务\n3. 执行 `ollama run qwen2.5:latest` 安装推荐模型\n4. 返回此处点击「刷新探测」即可自动绑定\n\n您也可以直接切换为上方「在线 API (兼容 OpenAI)」模式，免去本地显存负担。")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineSpacing(3)
-                            }
-                            .padding(8)
-                            .background(Color.orange.opacity(0.08))
-                            .cornerRadius(6)
+                            Text(ollamaProbeFeedback?.isSuccess == true ? "服务在线，尚未安装模型；可在下方下载。" : "请先安装并打开 Ollama，再测试连接。推荐模型始终显示在下方。")
+                                .font(.caption).foregroundColor(.secondary)
                         }
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("推荐模型").font(.headline)
+                            ForEach(OllamaModelPreset.recommended) { preset in ollamaPresetRow(preset) }
+                        }
+
                     }
                     .padding(.vertical, 4)
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        TextField("API Base URL (如 https://api.deepseek.com/v1)", text: $appState.project.llmConfig.onlineBaseURL)
+                        TextField("API Base URL（回车应用地址）", text: $onlineURLDraft)
+                            .onSubmit { appState.useOnlineEndpoint(onlineURLDraft) }
                         SecureField("API Key", text: $appState.project.llmConfig.onlineAPIKey)
+                            .disabled(onlineURLDraft != appState.project.llmConfig.onlineBaseURL)
+                        if onlineURLDraft != appState.project.llmConfig.onlineBaseURL {
+                            Text("请先按回车应用新地址，再输入该服务的密钥。").font(.caption)
+                        }
+                        Button("忘记该服务的密钥") {
+                            ServiceCredentials.remove(account: appState.project.llmConfig.onlineBaseURL)
+                            appState.project.llmConfig.onlineAPIKey = ""
+                        }.font(.caption)
                         TextField("模型 ID (如 deepseek-chat)", text: $appState.project.llmConfig.onlineModel)
                     }
                     .padding(.vertical, 4)
@@ -391,7 +401,8 @@ public struct SettingsView: View {
                     }
                 }
 
-                Stepper("最大并发请求数: \(appState.project.llmConfig.maxConcurrency)", value: $appState.project.llmConfig.maxConcurrency, in: 1...8)
+                Text("按批翻译，每批最多 10 句；修改设置对后续任务生效。凭据保存到本机钥匙串，不写入工程。")
+                    .font(.caption).foregroundColor(.secondary)
                 HStack {
                     Text("采样温度: \(String(format: "%.1f", appState.project.llmConfig.temperature))")
                     Slider(value: $appState.project.llmConfig.temperature, in: 0.0...1.0, step: 0.1)
@@ -404,7 +415,7 @@ public struct SettingsView: View {
     @ViewBuilder
     private func ollamaPresetRow(_ preset: OllamaModelPreset) -> some View {
         let isInstalled = appState.availableOllamaModels.contains(where: {
-            $0 == preset.name || $0.hasPrefix(preset.name.split(separator: ":").first.map(String.init) ?? preset.name)
+            $0 == preset.name
         })
         let isCurrent = appState.project.llmConfig.ollamaModel == preset.name
         let pullState = appState.ollamaPullStates[preset.name]

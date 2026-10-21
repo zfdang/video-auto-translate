@@ -1,0 +1,35 @@
+Window: "", App: VideoReview.
+0 sheet Secondary Actions: Raise
+	1 container
+		2 text 导出成果
+		3 button 关闭
+		4 scroll area
+			5 text 1. 导出独立字幕文件 (.srt / .vtt)
+			6 字幕内容
+				7 radio button Description: 双语对照, Value: 1
+				8 radio button Description: 仅译文, Value: 0
+				9 radio button Description: 仅原文, Value: 0
+			10 button 导出 SRT
+			11 button 导出 WebVTT
+			12 text 2. 导出成品视频 (.mp4) 保留原音轨 合成高清视频画面、音频轨道，并按需执行硬件加速内嵌字幕压制。
+			13 image Description: Volume High, ID: speaker.wave.2.fill
+			14 text 语音
+			15 image Description: Captions, ID: captions.bubble.fill
+			16 text 内嵌字幕
+			17 radio button (selected) Description: 自动翻译的语言, Value: 1
+			18 radio button Description: 原始语言, Value: 0
+			19 text 合成目标语言配音与闪避背景音乐（导出时自动补全整片配音）
+			20 radio button (selected) Description: 双语对照, Value: 1
+			21 radio button Description: 仅目标语, Value: 0
+			22 radio button Description: 仅原始语, Value: 0
+			23 radio button Description: 没有字幕, Value: 0
+			24 text 画面底部同时压制译文与原文对照字幕
+			25 button 合成并导出全新视频 MP4
+26 menu bar
+	27 VideoReview
+	28 Edit
+	29 View
+	30 Window
+	31 Help
+
+The focused UI element is 0 sheet Secondary Actions: Raise

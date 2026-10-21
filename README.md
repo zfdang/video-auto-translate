@@ -4,7 +4,7 @@
   <img src="assets/app-icon.png" width="128" height="128" alt="VideoAutoTranslate 应用图标">
 </p>
 
-专为 **macOS Apple Silicon (ARM64)** 原生打造的高性能、超轻量（安装包仅约 1.4MB）本地视频字幕制作与多语言配音工作站。
+专为 **macOS Apple Silicon (ARM64)** 原生打造的原生本地视频字幕制作与多语言配音工作站。
 
 ---
 
@@ -16,13 +16,13 @@
 2. **端云协同，本地 Qwen 优先 (Local-First)**：
    - **听（ASR 识别）**：本地芯片级加速的 **Qwen3-ASR** 与 **Qwen3-ForcedAligner** 模型，提取毫秒级逐词时间戳；
    - **译（语义翻译）**：**默认优先连接本地 Ollama (Qwen2.5)**，100% 离线、免费、无隐私顾虑；同时无缝支持在线大模型（如 DeepSeek、OpenAI、Claude 等）作为云端备选；
-   - **说（语言替换配音）**：保留原视频环境背景音，新语言配音利用系统级 `AVAudioUnitTimePitch` 智能自适应伸缩对齐原画面，配合背景音自动闪避混音（Audio Ducking）。
+   - **说（语言替换配音）**：支持纯目标语言配音，或原声压低叠加（包含原人声，尚无人声分离）。新语言配音利用系统级 `AVAudioUnitTimePitch` 智能自适应伸缩对齐原画面，配合背景音自动闪避混音（Audio Ducking）。
 3. **灵活的模型存储与一键下载管理**：
    - **多种存储路径支持**：
      - **共享缓存目录**（`~/.cache/huggingface/hub`）：与其他 AI 工具共用，不重复占用磁盘空间；
      - **应用独立目录**（`~/Library/Application Support/VideoAutoTranslate/models`）：隔离独立存储；
      - **自定义目录**：自由指定外置高速 SSD 或 NAS 挂载路径，带实时磁盘可用空间感知。
-   - **国内极速下载加速**：内置支持 `hf-mirror.com`、Hugging Face 官方源及魔搭社区，支持在新设备上一键下载 Qwen3-ASR 与 Aligner 模型。
+   - **国内极速下载加速**：内置支持 `hf-mirror.com`及 Hugging Face 官方源，支持在新设备上一键下载 Qwen3-ASR 与 Aligner 模型。
 4. **按需延迟托管（Lazy Sidecar）**：
    - 应用启动时不预占显存与端口；
    - 首个转录任务触发时自动静默拉起推理引擎并保持热驻留，后续任务秒级响应；
@@ -43,6 +43,12 @@
 - **自然语言处理**：Apple NaturalLanguage.framework (语义边界与断句分析)
 
 ---
+
+## 首次运行
+
+应用主体不包含 Python 和模型。在「设置 → ASR 服务」点击「准备识别环境（需联网）」，会在用户应用支持目录创建独立环境。需要已安装 Python 3.10–3.13（建议 3.12，可在界面选择解释器），以及下载依赖和模型所需的网络与数 GB 磁盘空间。完成后在「ASR 模型」下载识别及对齐模型。准备和引擎日志均可在设置中打开；环境准备可取消重试。
+
+翻译需要本地已运行的 Ollama 及模型，或用户配置的在线服务。完成依赖/模型准备后，本地模式可离线运行；尚未完成干净机器安装验收。
 
 ## 🚀 编译与运行
 

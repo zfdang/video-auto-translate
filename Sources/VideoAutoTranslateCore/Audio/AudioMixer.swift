@@ -78,14 +78,15 @@ public final class AudioMixer {
         let sortedSubtitles = subtitles.sorted { $0.startTime < $1.startTime }
 
         for item in sortedSubtitles {
+            try Task.checkCancellation()
             guard let snippetURL = item.dubbedAudioURL,
                   FileManager.default.fileExists(atPath: snippetURL.path) else {
-                continue
+                throw AudioMixerError.exportFailed("缺少配音：\(item.originalText.prefix(30))")
             }
 
             let snippetAsset = AVURLAsset(url: snippetURL)
             guard let snippetAudioTrack = try await snippetAsset.loadTracks(withMediaType: .audio).first else {
-                continue
+                throw AudioMixerError.exportFailed("配音文件无有效音轨：\(item.originalText.prefix(30))")
             }
 
             let snippetDuration = try await snippetAsset.load(.duration)
@@ -94,8 +95,7 @@ public final class AudioMixer {
             let snippetRange = CMTimeRange(start: .zero, duration: actualDuration)
 
             guard let targetTrack = getTrack(for: item.startTime) else {
-                print("创建配音轨道失败 [\(item.originalText)]")
-                continue
+                throw AudioMixerError.cannotCreateComposition
             }
 
             do {
@@ -109,7 +109,7 @@ public final class AudioMixer {
                 }
                 speechIntervals.append(CMTimeRange(start: item.startTime, duration: actualDuration))
             } catch {
-                print("插入配音切片失败 [\(item.originalText)]: \(error)")
+                throw AudioMixerError.exportFailed("插入配音失败：\(error.localizedDescription)")
             }
         }
 
@@ -193,13 +193,17 @@ public final class AudioMixer {
             throw AudioMixerError.exportFailed("无法创建导出任务")
         }
 
+        defer { try? FileManager.default.removeItem(at: tempOutputURL) }
         exportSession.outputURL = tempOutputURL
         exportSession.outputFileType = .m4a
         if let audioMix = audioMix {
             exportSession.audioMix = audioMix
         }
 
-        await exportSession.export()
+        await withTaskCancellationHandler {
+            await exportSession.export()
+        } onCancel: { exportSession.cancelExport() }
+        try Task.checkCancellation()
 
         if exportSession.status != .completed {
             try? FileManager.default.removeItem(at: tempOutputURL)

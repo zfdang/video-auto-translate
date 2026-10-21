@@ -1,0 +1,73 @@
+Building for production...
+[0/5] Write sources
+[2/5] Write swift-version--58304C5D6DBC2206.txt
+[4/6] Compiling VideoAutoTranslateCore ASREngineProtocol.swift
+<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:108:23: warning: capture of 'writerInput' with non-Sendable type 'AVAssetWriterInput' in a '@Sendable' closure [#SendableClosureCaptures]
+106 |
+107 |             writerInput.requestMediaDataWhenReady(on: queue) {
+108 |                 while writerInput.isReadyForMoreMediaData {
+    |                       `- warning: capture of 'writerInput' with non-Sendable type 'AVAssetWriterInput' in a '@Sendable' closure [#SendableClosureCaptures]
+109 |                     if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+110 |                         if !writerInput.append(sampleBuffer) {
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetWriterInput.h:39:12: note: class 'AVAssetWriterInput' does not conform to the 'Sendable' protocol
+ 37 | NS_SWIFT_NONSENDABLE
+ 38 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+ 39 | @interface AVAssetWriterInput : NSObject
+    |            `- note: class 'AVAssetWriterInput' does not conform to the 'Sendable' protocol
+ 40 | {
+ 41 | @private
+
+<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:109:43: warning: capture of 'readerOutput' with non-Sendable type 'AVAssetReaderTrackOutput' in a '@Sendable' closure [#SendableClosureCaptures]
+107 |             writerInput.requestMediaDataWhenReady(on: queue) {
+108 |                 while writerInput.isReadyForMoreMediaData {
+109 |                     if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+    |                                           `- warning: capture of 'readerOutput' with non-Sendable type 'AVAssetReaderTrackOutput' in a '@Sendable' closure [#SendableClosureCaptures]
+110 |                         if !writerInput.append(sampleBuffer) {
+111 |                             reader.cancelReading()
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetReaderOutput.h:201:12: note: class 'AVAssetReaderTrackOutput' does not conform to the 'Sendable' protocol
+199 |  */
+200 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+201 | @interface AVAssetReaderTrackOutput : AVAssetReaderOutput
+    |            `- note: class 'AVAssetReaderTrackOutput' does not conform to the 'Sendable' protocol
+202 | {
+203 | @private
+
+<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:111:29: warning: capture of 'reader' with non-Sendable type 'AVAssetReader' in a '@Sendable' closure [#SendableClosureCaptures]
+109 |                     if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+110 |                         if !writerInput.append(sampleBuffer) {
+111 |                             reader.cancelReading()
+    |                             `- warning: capture of 'reader' with non-Sendable type 'AVAssetReader' in a '@Sendable' closure [#SendableClosureCaptures]
+112 |                             writer.cancelWriting()
+113 |                             safeResume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "数据写入失败"))
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetReader.h:63:12: note: class 'AVAssetReader' does not conform to the 'Sendable' protocol
+ 61 | NS_SWIFT_NONSENDABLE
+ 62 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+ 63 | @interface AVAssetReader : NSObject
+    |            `- note: class 'AVAssetReader' does not conform to the 'Sendable' protocol
+ 64 | {
+ 65 | @private
+
+<repo>/Sources/VideoAutoTranslateCore/Audio/AudioExtractor.swift:112:29: warning: capture of 'writer' with non-Sendable type 'AVAssetWriter' in a '@Sendable' closure [#SendableClosureCaptures]
+110 |                         if !writerInput.append(sampleBuffer) {
+111 |                             reader.cancelReading()
+112 |                             writer.cancelWriting()
+    |                             `- warning: capture of 'writer' with non-Sendable type 'AVAssetWriter' in a '@Sendable' closure [#SendableClosureCaptures]
+113 |                             safeResume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "数据写入失败"))
+114 |                             return
+
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetWriter.h:66:12: note: class 'AVAssetWriter' does not conform to the 'Sendable' protocol
+ 64 | NS_SWIFT_NONSENDABLE
+ 65 | API_AVAILABLE(macos(10.7), ios(4.1), tvos(9.0), visionos(1.0)) API_UNAVAILABLE(watchos)
+ 66 | @interface AVAssetWriter : NSObject
+    |            `- note: class 'AVAssetWriter' does not conform to the 'Sendable' protocol
+ 67 | {
+ 68 | @private
+
+[#SendableClosureCaptures]: <https://docs.swift.org/compiler/documentation/diagnostics/sendable-closure-captures>
+[5/7] Compiling VideoAutoTranslateApp AppState.swift
+[5/7] Write Objects.LinkFileList
+[6/7] Linking VideoAutoTranslateApp
+Build complete! (29.95s)

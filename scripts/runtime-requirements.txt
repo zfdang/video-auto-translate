@@ -1,0 +1,6 @@
+# Direct dependencies match the validated development runtime (Python 3.12).
+fastapi==0.151.0
+uvicorn==0.54.0
+python-multipart==0.0.32
+mlx-audio==0.5.9
+huggingface-hub==1.33.0

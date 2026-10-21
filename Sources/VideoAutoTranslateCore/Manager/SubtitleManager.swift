@@ -8,12 +8,19 @@ public final class SubtitleManager {
 
     public init() {}
 
+    public static func characterOffset(in text: String, utf16Offset: Int) -> Int? {
+        guard utf16Offset >= 0, utf16Offset <= text.utf16.count,
+              let index = String.Index(text.utf16.index(text.utf16.startIndex, offsetBy: utf16Offset), within: text),
+              index == text.endIndex || text.indices.contains(index) else { return nil }
+        return text.distance(from: text.startIndex, to: index)
+    }
+
     /// 依据用户光标位置精准执行词级时间戳拆分 (Cmd+B)
     /// - Parameters:
     ///   - item: 待切分的字幕项
     ///   - charIndex: 光标在 originalText 中的字符下标 (0 ~ count)
     /// - Returns: 切分后的前后两个字幕项
-    public func split(item: SubtitleItem, atCharIndex charIndex: Int) -> (SubtitleItem, SubtitleItem)? {
+    public func split(item: SubtitleItem, atCharIndex charIndex: Int, translatedParts: (String, String)? = nil) -> (SubtitleItem, SubtitleItem)? {
         let text = item.originalText
         guard charIndex > 0 && charIndex < text.count else { return nil }
 
@@ -47,43 +54,18 @@ public final class SubtitleManager {
                 }
             }
 
+            guard wordRanges.count == item.words.count, wordRanges.count >= 2 else { return nil }
             if wordRanges.count >= 2 {
                 // 寻找最符合用户光标意图的切分词边界 (0 <= bestSplitIdx < wordRanges.count - 1)
-                var bestSplitIdx = 0
-                var foundBoundary = false
-
-                for k in 1..<wordRanges.count {
-                    let prevEnd = wordRanges[k - 1].endOffset
-                    let currStart = wordRanges[k].startOffset
-                    let currEnd = wordRanges[k].endOffset
-
-                    // 1. 光标位于上一词末尾到当前词开头之间（包括当前词首字符），用户意图在当前词前断句
-                    if prevEnd <= charIndex && charIndex <= currStart {
-                        bestSplitIdx = k - 1
-                        foundBoundary = true
-                        break
+                // Select one boundary from the complete set, including the first word.
+                let bestSplitIdx = (0..<(wordRanges.count - 1)).min { lhs, rhs in
+                    func distance(_ boundary: Int) -> Int {
+                        let lower = wordRanges[boundary].endOffset
+                        let upper = wordRanges[boundary + 1].startOffset
+                        return charIndex < lower ? lower - charIndex : max(0, charIndex - upper)
                     }
-
-                    // 2. 光标位于当前词内部：依据距词首词尾的距离智能判定归属
-                    if currStart < charIndex && charIndex < currEnd {
-                        let midpoint = Double(currStart + currEnd) / 2.0
-                        if Double(charIndex) < midpoint {
-                            bestSplitIdx = k - 1
-                        } else {
-                            bestSplitIdx = min(k, wordRanges.count - 2)
-                        }
-                        foundBoundary = true
-                        break
-                    }
-                }
-
-                if !foundBoundary {
-                    if charIndex <= wordRanges[0].startOffset {
-                        bestSplitIdx = 0
-                    } else {
-                        bestSplitIdx = wordRanges.count - 2
-                    }
-                }
+                    return distance(lhs) < distance(rhs)
+                }!
 
                 firstWords = Array(wordRanges[0...bestSplitIdx].map { $0.word })
                 secondWords = Array(wordRanges[(bestSplitIdx + 1)...].map { $0.word })
@@ -120,29 +102,28 @@ public final class SubtitleManager {
         let earliestValid = CMTimeAdd(item.startTime, minDuration)
         let latestValid = CMTimeSubtract(item.endTime, minDuration)
 
+        if !item.words.isEmpty && (splitTime < earliestValid || splitTime > latestValid) {
+            return nil // Never move a physical word boundary independently of its text.
+        }
         if splitTime < earliestValid {
             splitTime = earliestValid
         } else if splitTime > latestValid {
             splitTime = latestValid
         }
 
-        // R05: 保存人工译文成果，将原译文保留在前半句，防止拆分直接清空丢失劳动成果
         let existingTrans = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let (part1Trans, part2Trans): (String, String)
-        if !existingTrans.isEmpty {
-            part1Trans = existingTrans
-            part2Trans = ""
-        } else {
-            part1Trans = ""
-            part2Trans = ""
-        }
+        guard existingTrans.isEmpty || translatedParts != nil else { return nil }
+        let part1Trans = translatedParts?.0 ?? ""
+        let part2Trans = translatedParts?.1 ?? ""
 
         let part1 = SubtitleItem(
             startTime: item.startTime,
             endTime: splitTime,
             originalText: firstPartText,
             translatedText: part1Trans,
-            words: firstWords
+            words: firstWords,
+            sourceStartTime: item.sourceStartTime,
+            sourceEndTime: firstWords.last?.endCMTime ?? splitTime
         )
 
         let part2 = SubtitleItem(
@@ -150,7 +131,9 @@ public final class SubtitleManager {
             endTime: item.endTime,
             originalText: secondPartText,
             translatedText: part2Trans,
-            words: secondWords
+            words: secondWords,
+            sourceStartTime: secondWords.first?.startCMTime ?? splitTime,
+            sourceEndTime: item.sourceEndTime
         )
 
         return (part1, part2)
@@ -180,7 +163,9 @@ public final class SubtitleManager {
             endTime: maxEnd,
             originalText: combinedOriginal,
             translatedText: combinedTranslated,
-            words: combinedWords
+            words: combinedWords,
+            sourceStartTime: sorted.map(\.sourceStartTime).min(),
+            sourceEndTime: sorted.map(\.sourceEndTime).max()
         )
     }
 
@@ -194,9 +179,10 @@ public final class SubtitleManager {
         ttsService: TTSServiceProtocol,
         voice: String = "zh-CN"
     ) async throws {
-        let textToSpeak = item.translatedText.isEmpty ? item.originalText : item.translatedText
+        let textToSpeak = item.translatedText
+        guard !item.translationNeedsReview else { throw TTSError.synthesisFailed("译文待复核，请先确认目标语言与内容") }
         guard !textToSpeak.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return
+            throw TTSError.emptyText
         }
 
         await MainActor.run {
@@ -210,12 +196,20 @@ public final class SubtitleManager {
         }
 
         let tempDir = FileManager.default.temporaryDirectory
-        let rawTTSURL = tempDir.appendingPathComponent("raw_tts_\(item.id.uuidString).wav")
-        let finalStretchedURL = tempDir.appendingPathComponent("dubbed_\(item.id.uuidString).wav")
+        let signature = item.audioSignature(voice: voice)
+        let requestID = UUID().uuidString
+        let rawTTSURL = tempDir.appendingPathComponent("raw_tts_\(requestID).wav")
+        let finalStretchedURL = tempDir.appendingPathComponent("dubbed_\(requestID).wav")
 
+        defer {
+            if item.dubbedAudioURL != rawTTSURL { try? FileManager.default.removeItem(at: rawTTSURL) }
+            if item.dubbedAudioURL != finalStretchedURL { try? FileManager.default.removeItem(at: finalStretchedURL) }
+        }
         // 1. 合成原始语速语音
         _ = try await ttsService.synthesize(text: textToSpeak, voice: voice, outputURL: rawTTSURL)
 
+        try Task.checkCancellation()
+        guard item.audioSignature(voice: voice) == signature else { throw CancellationError() }
         // 2. 检测语音实际发音时长
         let rawAsset = AVURLAsset(url: rawTTSURL)
         let rawDuration = try await rawAsset.load(.duration)
@@ -224,17 +218,22 @@ public final class SubtitleManager {
         // 3. 计算语速伸缩比率 R = rawDuration / targetDuration
         let rate = Float(rawDuration.secondsValue / max(0.2, targetDuration.secondsValue))
 
-        // 4. 音调不变语速缩放（带安全降级）
-        do {
-            try timePitchEngine.changeSpeed(inputURL: rawTTSURL, outputURL: finalStretchedURL, rate: rate)
-            await MainActor.run {
-                item.dubbedAudioURL = finalStretchedURL
-            }
-        } catch {
-            // 伸缩引擎异常时优雅降级：直接采用高质量原生合成音频，杜绝单句异常中断全篇配音
-            await MainActor.run {
-                item.dubbedAudioURL = rawTTSURL
-            }
+        // Fall back only to complete audio which still fits the confirmed display interval.
+        var resultURL = finalStretchedURL
+        do { try timePitchEngine.changeSpeed(inputURL: rawTTSURL, outputURL: finalStretchedURL, rate: rate) }
+        catch { resultURL = rawTTSURL }
+        try Task.checkCancellation()
+        let actual = try await AVURLAsset(url: resultURL).load(.duration).secondsValue
+        guard actual > 0, actual <= targetDuration.secondsValue + 0.15 else {
+            throw TTSError.synthesisFailed("配音超过字幕时长，请缩短译文或在调时面板延长此句；未裁剪语音。")
         }
+        guard item.audioSignature(voice: voice) == signature else { throw CancellationError() }
+        let completedURL = resultURL
+        await MainActor.run {
+            guard !Task.isCancelled, item.audioSignature(voice: voice) == signature else { return }
+            item.dubbedAudioURL = completedURL
+            item.dubbedAudioSignature = signature
+        }
+        guard item.hasCurrentAudio(voice: voice) else { throw CancellationError() }
     }
 }

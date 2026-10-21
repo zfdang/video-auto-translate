@@ -7,14 +7,42 @@ import VideoAutoTranslateCore
 
 @MainActor
 public final class AppState: ObservableObject {
+    public static weak var current: AppState?
+    @Published public var documentURL: URL?
+    @Published public var saveStatus = "尚未保存"
+    @Published public var recoveryAvailable = false
+    private var recoveryTask: Task<Void, Never>?
+    private var recoveryWrite: Task<Void, Error>?
+    private var isRestoringProject = false
+    private var isApplyingEdit = false
+    @Published public var loopingSubtitleID: UUID?
+    private let storesPreferences: Bool
+    private var preferencesTask: Task<Void, Never>?
+    private let persistsRecovery: Bool
+    private let recoveryURL: URL
+
     @Published public var project: ProjectState = ProjectState() {
         didSet {
             bindProjectSubtitles()
+            if !isRestoringProject && (oldValue.llmConfig != project.llmConfig || oldValue.asrConfig != project.asrConfig || oldValue.modelStorageConfig != project.modelStorageConfig) { savePreferences() }
+            if !isRestoringProject && oldValue.llmConfig.targetLanguage != project.llmConfig.targetLanguage {
+                for item in project.subtitles {
+                    item.dubbedAudioURL = nil
+                    item.dubbedAudioSignature = nil
+                    item.translationNeedsReview = !item.translatedText.isEmpty
+                }
+                project.isDirty = true
+                scheduleRecovery()
+            }
+            if project.isDirty && (!oldValue.isDirty || oldValue.subtitles.map(\.id) != project.subtitles.map(\.id)) { scheduleRecovery() }
         }
     }
     public let player: AVPlayer = AVPlayer()
     @Published public var isPlaying: Bool = false
     @Published public var currentTime: CMTime = .zero
+    @Published public var selectedSubtitleIDs: Set<UUID> = []
+    @Published public var originalEditingID: UUID?
+    @Published public var showTimingInspector = false
 
     // 引擎与管理实例
     public let audioExtractor = AudioExtractor()
@@ -37,11 +65,18 @@ public final class AppState: ObservableObject {
     @Published public var showSettings: Bool = false
     @Published public var showHelp: Bool = false
     @Published public var showExportSheet: Bool = false
+    public let exportJob = ExportJob()
+    public enum FeedbackKind { case information, success, failure }
+    @Published public var feedbackKind: FeedbackKind = .information
     @Published public var statusMessage: String = "就绪"
-    @Published public var errorMessage: String? = nil
+    @Published public var errorMessage: String? = nil {
+        didSet { if errorMessage != nil { feedbackKind = .failure } }
+    }
 
     // R20: 持有试听播放器实例，防止局部变量析构导致播放被打断
     public var auditionPlayer: AVPlayer?
+    private var auditionTask: Task<Void, Never>?
+    private var auditionGeneration = 0
 
     // R03 & FU05: 任务代际与句柄持有，防止更换视频或取消后旧任务写入新项目
     private var projectGeneration: Int = 0
@@ -51,6 +86,15 @@ public final class AppState: ObservableObject {
     private var activeTranscriptionTask: Task<Void, Never>?
     private var activeTranslationTask: Task<Void, Error>?
     private var activeDubbingTask: Task<Void, Error>?
+    private var editingTask: Task<[SubtitleItem], Error>?
+    public struct EditProposal: Identifiable {
+        public let id = UUID()
+        public let title: String
+        public let before: [SubtitleItem]
+        public let after: [SubtitleItem]
+        public let generation: Int
+    }
+    @Published public var editProposal: EditProposal?
 
     // 撤销 / 重做历史状态堆栈
     private var undoStack: [[SubtitleItem]] = []
@@ -58,6 +102,7 @@ public final class AppState: ObservableObject {
     @Published public var canUndo: Bool = false
     @Published public var canRedo: Bool = false
     private let maxUndoHistory: Int = 40
+    private var lastTextEditID: UUID?
     private var lastTextEditSnapshotTime: Date = .distantPast
 
     private var timeObserverToken: Any?
@@ -66,20 +111,37 @@ public final class AppState: ObservableObject {
 
     private func bindProjectSubtitles() {
         for item in project.subtitles {
+            let itemID = item.id
             item.onModified = { [weak self] in
                 guard let self = self else { return }
-                if Date().timeIntervalSince(self.lastTextEditSnapshotTime) > 1.2 {
+                if !self.isApplyingEdit && !self.project.isProcessing && (self.lastTextEditID != itemID || Date().timeIntervalSince(self.lastTextEditSnapshotTime) > 1.2) {
                     self.recordUndoSnapshot()
                     self.lastTextEditSnapshotTime = Date()
+                    self.lastTextEditID = itemID
                 }
-                if !self.project.isDirty {
-                    self.project.isDirty = true
-                }
+                self.objectWillChange.send()
+                if !self.project.isDirty { self.project.isDirty = true }
+                self.scheduleRecovery()
             }
         }
     }
 
-    public init() {
+    public init(probeServices: Bool = true, recoveryURL: URL? = nil) {
+        self.storesPreferences = probeServices
+        self.persistsRecovery = probeServices || recoveryURL != nil
+        self.recoveryURL = recoveryURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("VideoAutoTranslate/Recovery.vatproject")
+        self.recoveryAvailable = probeServices && FileManager.default.fileExists(atPath: self.recoveryURL.path)
+        AppState.current = self
+        if probeServices, let data = UserDefaults.standard.data(forKey: "applicationPreferences"), let preferences = try? JSONDecoder().decode(ApplicationPreferences.self, from: data) {
+            isRestoringProject = true
+            project.llmConfig = preferences.llm
+            project.llmConfig.onlineAPIKey = ServiceCredentials.read(account: preferences.llm.onlineBaseURL)
+            project.asrConfig = preferences.asr
+            project.modelStorageConfig = preferences.storage
+            modelStorageManager.config = preferences.storage
+            sidecarManager.modelsDirectory = modelStorageManager.resolvedStorageDirectory()
+            isRestoringProject = false
+        }
         setupTimeObserver()
         bindProjectSubtitles()
 
@@ -96,12 +158,15 @@ public final class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
-        Task {
-            await sidecarManager.probeExistingStatus()
-            await probeLocalOllama()
-            await probeLocalASR()
+        if probeServices {
+            Task {
+                await sidecarManager.probeExistingStatus()
+                await probeLocalOllama()
+                await probeLocalASR()
+            }
         }
 
+        exportJob.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         // 监听外部打开视频文件事件
         NotificationCenter.default.addObserver(
             forName: Notification.Name("com.videoautotranslate.openVideoFile"),
@@ -119,7 +184,7 @@ public final class AppState: ObservableObject {
         for arg in CommandLine.arguments.dropFirst() {
             if !arg.hasPrefix("-") && FileManager.default.fileExists(atPath: arg) {
                 let ext = (arg as NSString).pathExtension.lowercased()
-                if ["mp4", "mov", "m4v", "mkv", "avi", "webm"].contains(ext) {
+                if ["mp4", "mov", "m4v", "mkv", "avi", "webm", "vatproject"].contains(ext) {
                     openVideo(url: URL(fileURLWithPath: arg))
                     break
                 }
@@ -132,7 +197,7 @@ public final class AppState: ObservableObject {
         let (online, _) = await LocalASRService.testConnection(urlString: project.asrConfig.serviceURL)
         await MainActor.run {
             self.isASRServerOnline = online
-            if online && !self.sidecarManager.status.isRunning {
+            if online && self.usesManagedASR && !self.sidecarManager.status.isRunning {
                 self.sidecarManager.status = .running(pid: 0, port: self.sidecarManager.defaultPort)
             }
         }
@@ -155,6 +220,9 @@ public final class AppState: ObservableObject {
         timeObserverToken = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
+                if let id = self.loopingSubtitleID, let row = self.project.subtitles.first(where: { $0.id == id }), time >= row.endTime {
+                    self.player.seek(to: row.startTime, toleranceBefore: .zero, toleranceAfter: .zero)
+                }
                 self.currentTime = time
                 self.updateSelectedSubtitle(for: time)
             }
@@ -186,7 +254,6 @@ public final class AppState: ObservableObject {
                         self.project.llmConfig.ollamaModel = first
                     }
                 }
-                self.project.llmConfig.providerType = .localOllama
             }
         }
         return (res.success, res.message)
@@ -227,6 +294,12 @@ public final class AppState: ObservableObject {
     /// 取消所有正在执行的后台任务 (R03 & FU05)
     public func cancelAllTasks() {
         projectGeneration += 1
+        splitDraft = nil
+        editProposal = nil
+        loopingSubtitleID = nil
+        cancelAudition()
+        editingTask?.cancel()
+        editingTask = nil
         activeTranscriptionTask?.cancel()
         activeTranscriptionTask = nil
         activeTranslationTask?.cancel()
@@ -240,14 +313,26 @@ public final class AppState: ObservableObject {
         dubbingTask?.cancel()
         dubbingTask = nil
         project.isProcessing = false
+        feedbackKind = .information
         statusMessage = "任务已取消"
     }
 
     /// 打开本地视频文件 (R03: 递增代际，终止旧任务)
     public func openVideo(url: URL) {
+        guard confirmReplacingProject() else { return }
+        if url.pathExtension.lowercased() == "vatproject" {
+            do { try loadProject(from: url) } catch { errorMessage = "无法打开工程：\(error.localizedDescription)" }
+            return
+        }
+        clearRecoveryCheckpoint()
+        documentURL = nil
+        saveStatus = "尚未保存"
+        recoveryTask?.cancel()
         cancelAllTasks()
         projectGeneration += 1
 
+        selectedSubtitleIDs.removeAll()
+        originalEditingID = nil
         undoStack.removeAll()
         redoStack.removeAll()
         canUndo = false
@@ -268,8 +353,9 @@ public final class AppState: ObservableObject {
 
     /// 执行本地音频提取与语音转录 (R03 & FU05: 严格代际校验与取消保护)
     public func runTranscription() async {
-        guard let videoURL = project.videoURL else { return }
+        guard let videoURL = project.videoURL, !project.isProcessing else { return }
 
+        guard confirmReplacingProject() else { return }
         transcriptionTask?.cancel()
         activeTranscriptionTask?.cancel()
         let currentGen = projectGeneration
@@ -292,7 +378,11 @@ public final class AppState: ObservableObject {
                     self.statusMessage = "正在按需准备本地 ASR 推理引擎..."
                 }
             }
-            _ = await sidecarManager.ensureRunning()
+            if usesManagedASR {
+                sidecarManager.modelsDirectory = modelStorageManager.resolvedStorageDirectory()
+                guard await sidecarManager.ensureRunning() else { throw ASRError.engineNotReady("识别引擎未就绪，请在设置中准备环境并查看引擎日志。") }
+            }
+            await syncModelStorageToServer()
             await probeLocalASR()
 
             guard currentGen == self.projectGeneration, !Task.isCancelled else { throw CancellationError() }
@@ -313,7 +403,11 @@ public final class AppState: ObservableObject {
                 }
             }
         }
-        self.activeTranscriptionTask = Task { _ = try? await worker.value }
+        self.activeTranscriptionTask = Task {
+            await withTaskCancellationHandler {
+                _ = try? await worker.value
+            } onCancel: { worker.cancel() }
+        }
 
         do {
             let items = try await withTaskCancellationHandler {
@@ -344,6 +438,7 @@ public final class AppState: ObservableObject {
             redoStack.removeAll()
             canUndo = false
             canRedo = false
+            feedbackKind = .success
             project.isProcessing = false
             project.progress = 1.0
             project.isDirty = true
@@ -355,6 +450,10 @@ public final class AppState: ObservableObject {
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
+            if case ASRError.alignmentRequired(let text) = error {
+                project.unalignedTranscript = text
+                project.isDirty = true
+            }
             statusMessage = "识别未完成: \(error.localizedDescription)"
             errorMessage = error.localizedDescription
         }
@@ -362,7 +461,7 @@ public final class AppState: ObservableObject {
 
     /// 执行字幕翻译 (R03, R07 & FU05: 任务防交叉、取消传递与脏状态标记)
     public func runTranslation() async {
-        guard !project.subtitles.isEmpty else { return }
+        guard !project.subtitles.isEmpty, !project.isProcessing else { return }
 
         translationTask?.cancel()
         activeTranslationTask?.cancel()
@@ -394,6 +493,7 @@ public final class AppState: ObservableObject {
             }
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.subtitles = Array(project.subtitles)
+            feedbackKind = .success
             project.isProcessing = false
             project.progress = 1.0
             project.currentStepName = ""
@@ -414,7 +514,7 @@ public final class AppState: ObservableObject {
 
     /// 执行多语言配音与混音 (R19 & FU05: 传入所选目标语言音色代码，await 前后严格代际校验)
     public func runFullDubbing() async {
-        guard !project.subtitles.isEmpty else { return }
+        guard !project.subtitles.isEmpty, !project.isProcessing else { return }
 
         dubbingTask?.cancel()
         activeDubbingTask?.cancel()
@@ -428,12 +528,13 @@ public final class AppState: ObservableObject {
 
         let worker = Task { () -> Void in
             let total = Double(project.subtitles.count)
+            var failures: [String] = []
             for (idx, item) in project.subtitles.enumerated() {
                 guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
                 do {
                     try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
                 } catch {
-                    print("单句配音生成警告 [第\(idx + 1)句]: \(error)")
+                    failures.append("第\(idx + 1)句：\(error.localizedDescription)")
                 }
                 guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
                 await MainActor.run {
@@ -444,20 +545,9 @@ public final class AppState: ObservableObject {
             }
 
             guard currentGen == self.projectGeneration, !Task.isCancelled else { return }
+            guard failures.isEmpty else { throw TTSError.synthesisFailed(failures.joined(separator: "\n")) }
 
-            await MainActor.run {
-                if currentGen == self.projectGeneration && !Task.isCancelled {
-                    self.project.currentStepName = "正在执行音频无损伸缩与闪避混音..."
-                }
-            }
-            let tempDir = FileManager.default.temporaryDirectory
-            let mixedAudioURL = tempDir.appendingPathComponent("mixed_dubbed_\(UUID().uuidString).m4a")
 
-            try await audioMixer.mix(
-                backgroundAudioURL: project.audioURL,
-                subtitles: project.subtitles,
-                to: mixedAudioURL
-            )
         }
         self.activeDubbingTask = worker
 
@@ -470,34 +560,31 @@ public final class AppState: ObservableObject {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
             project.isDirty = true
-            statusMessage = "配音合成完成！可导出新视频"
+            feedbackKind = .success
+            statusMessage = "配音已生成；导出时可选择纯配音或原声叠加"
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
+            errorMessage = error.localizedDescription
             statusMessage = "配音生成失败: \(error.localizedDescription)"
         }
     }
 
     /// 确保所有含有译文（或原文）的字幕均具备有效的配音切片；缺失时即时自动合成补齐（供导出成片等场景使用，杜绝后半段失声）
-    public func ensureAllSubtitlesDubbed(voice: String? = nil, onProgress: (@Sendable (Int, Int) -> Void)? = nil) async {
+    public func ensureAllSubtitlesDubbed(voice: String? = nil, onProgress: (@Sendable (Int, Int) -> Void)? = nil) async throws {
         let targetVoice = voice ?? project.llmConfig.targetLanguageVoiceCode
         let total = project.subtitles.count
+        var failures: [String] = []
         for (idx, item) in project.subtitles.enumerated() {
-            let text = item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? item.originalText
-                : item.translatedText
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-
-            let needsAudio = (item.dubbedAudioURL == nil) || !FileManager.default.fileExists(atPath: item.dubbedAudioURL!.path)
-            if needsAudio {
-                onProgress?(idx + 1, total)
-                do {
-                    try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: targetVoice)
-                } catch {
-                    print("按需补齐配音警告 [第\(idx + 1)句]: \(error)")
-                }
+            try Task.checkCancellation()
+            onProgress?(idx + 1, total)
+            if !item.hasCurrentAudio(voice: targetVoice) {
+                do { try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: targetVoice) }
+                catch is CancellationError { throw CancellationError() }
+                catch { failures.append("第\(idx + 1)句：\(error.localizedDescription)") }
             }
         }
+        guard failures.isEmpty else { throw TTSError.synthesisFailed(failures.joined(separator: "\n")) }
     }
 
     /// 试听目标类型
@@ -510,63 +597,85 @@ public final class AppState: ObservableObject {
     /// - Parameters:
     ///   - item: 字幕项
     ///   - target: .original 播放原声片段；.translated 播放翻译配音
-    public func auditionSubtitle(_ item: SubtitleItem, target: AuditionTarget = .original) async {
-        // 1. 停止上一次未完成的试听播放及视频主播放器，避免混音杂糅
-        self.player.pause()
-        self.isPlaying = false
-        self.auditionPlayer?.pause()
-        self.auditionPlayer = nil
+    public func cancelAudition() {
+        auditionGeneration += 1
+        auditionTask?.cancel()
+        auditionTask = nil
+        auditionPlayer?.pause()
+        auditionPlayer = nil
+    }
 
-        if target == .translated && !item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // 播放翻译后的配音语音 (TTS)
+    public func auditionSubtitle(_ item: SubtitleItem, target: AuditionTarget = .original) async {
+        cancelAudition()
+        player.pause()
+        isPlaying = false
+        let request = auditionGeneration
+        let generation = projectGeneration
+        let media = project.videoURL ?? project.audioURL
+        let voice = project.llmConfig.targetLanguageVoiceCode
+        let worker = Task {
             do {
-                item.isGeneratingAudio = true
-                defer { item.isGeneratingAudio = false }
-                let voice = project.llmConfig.targetLanguageVoiceCode
-                if item.dubbedAudioURL == nil || !FileManager.default.fileExists(atPath: item.dubbedAudioURL!.path) {
-                    try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
+                let audio: AVPlayer
+                if target == .translated {
+                    guard !item.translationNeedsReview else { throw TTSError.synthesisFailed("请先复核译文语言") }
+                    if !item.hasCurrentAudio(voice: voice) { try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice) }
+                    guard item.hasCurrentAudio(voice: voice), let url = item.dubbedAudioURL else { throw CancellationError() }
+                    audio = AVPlayer(url: url)
+                } else {
+                    guard let media = media else { return }
+                    let playerItem = AVPlayerItem(url: media)
+                    playerItem.forwardPlaybackEndTime = item.sourceEndTime
+                    audio = AVPlayer(playerItem: playerItem)
+                    await audio.seek(to: item.sourceStartTime, toleranceBefore: .zero, toleranceAfter: .zero)
                 }
-                if let audioURL = item.dubbedAudioURL {
-                    let p = AVPlayer(url: audioURL)
-                    self.auditionPlayer = p
-                    p.play()
-                    statusMessage = "正在试听译文配音: \(item.translatedText.prefix(25))..."
-                }
-            } catch {
-                statusMessage = "试听生成失败: \(error.localizedDescription)"
+                guard !Task.isCancelled, request == auditionGeneration, generation == projectGeneration else { return }
+                auditionPlayer = audio
+                audio.play()
+                statusMessage = target == .original ? "正在试听原声（原始声学区间）" : "正在试听当前译文"
+            } catch is CancellationError { }
+            catch {
+                if request == auditionGeneration && generation == projectGeneration { statusMessage = "试听失败：\(error.localizedDescription)"; errorMessage = error.localizedDescription }
             }
-        } else {
-            // 播放原声语音 (Rule 1 & Rule 3: 未选择或选择在原文时)
-            guard let mediaURL = project.audioURL ?? project.videoURL else {
-                statusMessage = "未找到可播放的原声音频素材"
-                return
-            }
-            let playerItem = AVPlayerItem(url: mediaURL)
-            playerItem.forwardPlaybackEndTime = item.endTime
-            let p = AVPlayer(playerItem: playerItem)
-            self.auditionPlayer = p
-            await p.seek(to: item.startTime, toleranceBefore: .zero, toleranceAfter: .zero)
-            p.play()
-            self.seek(to: item.startTime)
-            statusMessage = "正在试听原声: [\(item.startTime.displayFormat) ➔ \(item.endTime.displayFormat)] \(item.originalText.prefix(25))..."
         }
+        auditionTask = worker
+        await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+        if request == auditionGeneration { auditionTask = nil }
+    }
+
+    public func updateTiming(id: UUID, start: Double, end: Double, duration: Double) throws {
+        guard let index = project.subtitles.firstIndex(where: { $0.id == id }), !project.isProcessing else { return }
+        try SubtitleTiming.validate(start: start, end: end, mediaDuration: duration,
+            previousEnd: index > 0 ? project.subtitles[index-1].endTime.secondsValue : nil,
+            nextStart: index + 1 < project.subtitles.count ? project.subtitles[index+1].startTime.secondsValue : nil)
+        recordUndoSnapshot()
+        isApplyingEdit = true
+        defer { isApplyingEdit = false }
+        project.subtitles[index].startTime = .from(seconds: start)
+        project.subtitles[index].endTime = .from(seconds: end)
+        project.isDirty = true
+        scheduleRecovery()
+    }
+
+    public func selectAdjacentSubtitle(offset: Int) {
+        guard !project.subtitles.isEmpty else { return }
+        let current = project.subtitles.firstIndex(where: { $0.id == project.selectedSubtitleID }) ?? 0
+        let row = project.subtitles[max(0, min(project.subtitles.count - 1, current + offset))]
+        project.selectedSubtitleID = row.id
+        seek(to: row.startTime)
+    }
+
+    public func toggleSubtitleLoop(_ item: SubtitleItem) {
+        if loopingSubtitleID == item.id { loopingSubtitleID = nil; player.pause(); return }
+        loopingSubtitleID = item.id
+        seek(to: item.startTime)
+        player.play()
     }
 
     // MARK: - 撤销与重做支持
 
     /// 创建当前字幕列表的独立深拷贝快照
     public func createSubtitlesSnapshot() -> [SubtitleItem] {
-        return project.subtitles.map { item in
-            SubtitleItem(
-                id: item.id,
-                startTime: item.startTime,
-                endTime: item.endTime,
-                originalText: item.originalText,
-                translatedText: item.translatedText,
-                words: item.words,
-                dubbedAudioURL: item.dubbedAudioURL
-            )
-        }
+        project.subtitles.map { $0.snapshot() }
     }
 
     /// 记录当前状态至撤销历史堆栈
@@ -584,12 +693,14 @@ public final class AppState: ObservableObject {
     /// 撤销上一步操作 (Cmd+Z)
     public func undo() {
         guard let previous = undoStack.popLast() else { return }
+        lastTextEditID = nil
         let current = createSubtitlesSnapshot()
         redoStack.append(current)
         project.subtitles = previous
         canUndo = !undoStack.isEmpty
         canRedo = true
         project.isDirty = true
+        feedbackKind = .success
         statusMessage = "已撤销上一步操作"
     }
 
@@ -602,6 +713,7 @@ public final class AppState: ObservableObject {
         canUndo = true
         canRedo = !redoStack.isEmpty
         project.isDirty = true
+        feedbackKind = .success
         statusMessage = "已重做操作"
     }
 
@@ -650,6 +762,7 @@ public final class AppState: ObservableObject {
         recordUndoSnapshot()
         project.subtitles.remove(at: index)
         project.isDirty = true
+        feedbackKind = .success
         statusMessage = "已删除该行字幕"
     }
 
@@ -664,17 +777,50 @@ public final class AppState: ObservableObject {
         mergeSubtitles(ids: [id, nextID])
     }
 
+    public struct SplitDraft: Identifiable {
+        public let id = UUID()
+        public let source: SubtitleItem
+        public let index: Int
+        public let left: SubtitleItem
+        public let right: SubtitleItem
+    }
+    @Published public var splitDraft: SplitDraft?
+
+    public func requestSplit(id: UUID, atCharIndex index: Int) {
+        guard !project.isProcessing, let item = project.subtitles.first(where: { $0.id == id }) else { return }
+        let copy = item.snapshot()
+        copy.translatedText = ""
+        guard let parts = subtitleManager.split(item: copy, atCharIndex: index) else {
+            errorMessage = "无法在此处安全拆分；请检查词对齐和两侧 100ms 最小时长。可先用时间检查器修正。"
+            return
+        }
+        if item.translatedText.isEmpty && !item.words.isEmpty { splitSubtitle(id: id, atCharIndex: index) }
+        else { splitDraft = SplitDraft(source: item.snapshot(), index: index, left: parts.0, right: parts.1) }
+    }
+
+    public func applySplitDraft(left: String, right: String) {
+        guard let draft = splitDraft, let current = project.subtitles.first(where: { $0.id == draft.source.id }), current == draft.source else {
+            splitDraft = nil
+            errorMessage = "字幕已改变，请重新选择拆分位置"
+            return
+        }
+        splitSubtitle(id: current.id, atCharIndex: draft.index, translatedParts: (left, right))
+        if draft.source.words.isEmpty { showTimingInspector = true }
+        splitDraft = nil
+    }
+
     /// 拆分指定字幕 (R14: 绑定确切行 ID，防止错位拆分)
-    public func splitSubtitle(id: UUID, atCharIndex: Int) {
+    public func splitSubtitle(id: UUID, atCharIndex: Int, translatedParts: (String, String)? = nil) {
         guard let index = project.subtitles.firstIndex(where: { $0.id == id }) else { return }
         let target = project.subtitles[index]
-        if let (part1, part2) = subtitleManager.split(item: target, atCharIndex: atCharIndex) {
+        if let (part1, part2) = subtitleManager.split(item: target, atCharIndex: atCharIndex, translatedParts: translatedParts) {
             recordUndoSnapshot()
             project.subtitles.remove(at: index)
             project.subtitles.insert(part2, at: index)
             project.subtitles.insert(part1, at: index)
-            project.selectedSubtitleID = part1.id
+            project.selectedSubtitleID = part2.id
             project.isDirty = true
+            feedbackKind = .success
             statusMessage = "已成功拆分字幕"
         }
     }
@@ -689,38 +835,20 @@ public final class AppState: ObservableObject {
 
         var charIndex = atCharIndex
         if charIndex == nil {
+            guard originalEditingID == selectedID else { errorMessage = "请先在原文编辑框中放置拆分光标"; return }
             if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
                 let textStr = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
                 let itemStr = item.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if textStr == itemStr || textView.string == item.originalText {
                     let loc = textView.selectedRange().location
-                    if loc != NSNotFound && loc > 0 && loc < item.originalText.count {
-                        charIndex = loc
+                    if loc != NSNotFound, let offset = SubtitleManager.characterOffset(in: item.originalText, utf16Offset: loc), offset > 0 && offset < item.originalText.count {
+                        charIndex = offset
                     }
                 }
             }
         }
 
-        var targetIndex = charIndex
-        if targetIndex == nil || targetIndex! <= 0 || targetIndex! >= item.originalText.count {
-            // 智能兜底：若用户未放置光标，在句子中间寻找最自然的标点/空格断句点
-            let chars = Array(item.originalText)
-            let mid = chars.count / 2
-            var bestBreak: Int? = nil
-            var minDiff = Int.max
-            for (idx, ch) in chars.enumerated() {
-                guard idx > 0 && idx < chars.count - 1 else { continue }
-                if "，,。!?.!?；; ".contains(ch) {
-                    let diff = abs(idx - mid)
-                    if diff < minDiff {
-                        minDiff = diff
-                        bestBreak = idx + 1 // 断在标点/空格之后
-                    }
-                }
-            }
-            targetIndex = bestBreak ?? (mid > 0 ? mid : nil)
-        }
-
+        let targetIndex = charIndex
         guard let finalIndex = targetIndex, finalIndex > 0, finalIndex < item.originalText.count else {
             errorMessage = "请先在文本框中将光标放置在想要拆分的字词之间"
             statusMessage = "拆分提示：请先在字幕文本中放置光标"
@@ -728,85 +856,94 @@ public final class AppState: ObservableObject {
             return
         }
 
-        splitSubtitle(id: selectedID, atCharIndex: finalIndex)
+        requestSplit(id: selectedID, atCharIndex: finalIndex)
     }
 
     /// 执行大模型语义智能分句规整 (将每个词的精确定位发给大模型重构断句时间轴)
     public func runSmartSegmentation() async {
-        guard !project.subtitles.isEmpty else { return }
-
-        // 收集全部物理 WordTokens
-        var allTokens: [WordToken] = []
-        for item in project.subtitles {
-            if !item.words.isEmpty {
-                allTokens.append(contentsOf: item.words)
-            } else {
-                allTokens.append(WordToken(text: item.originalText, startTime: item.startTime, endTime: item.endTime))
-            }
+        guard !project.subtitles.isEmpty, !project.isProcessing else { return }
+        guard !project.subtitles.contains(where: { !$0.translatedText.isEmpty }) else {
+            errorMessage = "为保护已有译文，请在翻译前执行智能分句；已有译文可用行内拆分与合并调整。"
+            return
         }
-
-        guard !allTokens.isEmpty else { return }
-
-        recordUndoSnapshot()
-        project.isProcessing = true
-        project.currentStepName = "正在调用大模型执行智能语义断句规整..."
-        project.progress = 0.3
-        statusMessage = "正在结合字词精确时间戳进行 AI 智能语义分句..."
-
-        do {
-            let smartItems = try await llmSegmenter.segment(tokens: allTokens, config: project.llmConfig)
-            guard !smartItems.isEmpty else {
-                project.isProcessing = false
-                statusMessage = "智能分句未能生成有效结果，保留原有字幕"
-                return
-            }
-
-            project.subtitles = smartItems
-            project.selectedSubtitleID = smartItems.first?.id
-            project.isProcessing = false
-            project.progress = 1.0
-            project.isDirty = true
-            statusMessage = "AI 智能分句完成！已规整为 \(smartItems.count) 行自然字幕"
-        } catch {
-            project.isProcessing = false
-            statusMessage = "智能分句失败: \(error.localizedDescription)"
-            errorMessage = "智能分句失败: \(error.localizedDescription)"
+        let snapshot = createSubtitlesSnapshot()
+        guard snapshot.allSatisfy({ !$0.words.isEmpty }) else {
+            errorMessage = "智能分句需要字词对齐；请准备对齐模型，或使用调时面板人工修正。"
+            return
+        }
+        let tokens = snapshot.flatMap { item in
+            item.words.isEmpty ? [WordToken(text: item.originalText, startTime: item.startTime, endTime: item.endTime)] : item.words
+        }
+        let config = project.llmConfig
+        await runEditingJob(name: "智能分句", snapshot: snapshot) {
+            try await self.llmSegmenter.segment(tokens: tokens, config: config)
         }
     }
 
-    /// 匹配译文时间轴：保持原文与译文一一对应关系不变，根据译文期望发音时长重新排布时间轴，实现语速语调自然一致
     public func matchTimelineToTranslation() async {
-        guard !project.subtitles.isEmpty else { return }
-
-        let hasTranslations = project.subtitles.contains { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        guard hasTranslations else {
-            errorMessage = "尚未检测到翻译结果，请先执行「字幕翻译」后再匹配译文时间轴"
+        guard !project.subtitles.isEmpty, !project.isProcessing else { return }
+        guard project.subtitles.contains(where: { !$0.translatedText.isEmpty }) else {
+            errorMessage = "请先翻译字幕，再匹配译文时间轴"
             return
         }
-
-        recordUndoSnapshot()
-        project.isProcessing = true
-        project.progress = 0.3
-        project.currentStepName = "正在根据译文期望发音时长匹配时间轴..."
-        statusMessage = "正在根据译文期望发音时长匹配时间轴，平衡发音语速..."
-
-        let client = OpenAICompatibleClient(baseURL: project.llmConfig.effectiveBaseURL, apiKey: project.llmConfig.effectiveAPIKey)
-        let aligned = await timelineAligner.matchTimelineWithLLM(
-            items: project.subtitles,
-            config: project.llmConfig,
-            client: client
-        )
-
-        project.subtitles = aligned
-        // 重调时间轴后使旧配音缓存失效，以便后续以 1.0x 舒适语速重新试听与合成
-        for item in project.subtitles {
-            item.dubbedAudioURL = nil
+        let snapshot = createSubtitlesSnapshot()
+        let config = project.llmConfig
+        let media = project.videoURL
+        let duration = try? await player.currentItem?.asset.load(.duration)
+        guard media == project.videoURL, snapshot == createSubtitlesSnapshot() else { return }
+        guard let seconds = duration?.secondsValue, seconds.isFinite, seconds > 0 else {
+            errorMessage = "无法读取媒体时长，请重新定位媒体后再生成时间建议"
+            return
         }
-        project.isProcessing = false
-        project.progress = 1.0
-        project.currentStepName = ""
+        let client = OpenAICompatibleClient(baseURL: config.effectiveBaseURL, apiKey: config.effectiveAPIKey)
+        await runEditingJob(name: "匹配译文时间轴", snapshot: snapshot) {
+            await self.timelineAligner.matchTimelineWithLLM(items: snapshot, config: config, client: client, videoDuration: duration?.secondsValue)
+        }
+    }
+
+    /// All automatic editing uses the same ownership and cancellation boundary.
+    public func runEditingJob(name: String, snapshot: [SubtitleItem], operation: @escaping @MainActor () async throws -> [SubtitleItem]) async {
+        let generation = projectGeneration
+        project.isProcessing = true
+        project.currentStepName = name
+        let worker = Task { try await operation() }
+        editingTask = worker
+        do {
+            let result = try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: { worker.cancel() }
+            guard generation == projectGeneration, !worker.isCancelled, !Task.isCancelled else { return }
+            guard createSubtitlesSnapshot() == snapshot else {
+                throw LLMError.parsingFailed("字幕已修改，请重新生成建议")
+            }
+            guard !result.isEmpty else { throw LLMError.parsingFailed("未生成有效字幕，原有内容已保留") }
+            project.isProcessing = false
+            guard result != snapshot else { statusMessage = "没有可安全应用的新建议，原字幕已保留"; editingTask = nil; return }
+            editProposal = EditProposal(title: name, before: snapshot, after: result, generation: generation)
+            project.progress = 1
+            statusMessage = "建议已生成；请预览并确认应用"
+
+        } catch {
+            guard generation == projectGeneration else { return }
+            project.isProcessing = false
+            if !(error is CancellationError) { errorMessage = error.localizedDescription }
+            statusMessage = "\(name)未应用，原有字幕已保留"
+        }
+        if generation == projectGeneration { editingTask = nil }
+    }
+
+    public func applyEditProposal() {
+        guard let proposal = editProposal, proposal.generation == projectGeneration, createSubtitlesSnapshot() == proposal.before else {
+            editProposal = nil
+            errorMessage = "工程已改变，请重新生成建议"
+            return
+        }
+        recordUndoSnapshot()
+        project.subtitles = proposal.after
         project.isDirty = true
-        statusMessage = "时间轴已成功与译文发音匹配！语速已平滑一致"
+        scheduleRecovery()
+        editProposal = nil
+        statusMessage = "已应用建议，可撤销；请检查语速提示并试听"
     }
 
     /// 保持兼容
@@ -856,41 +993,191 @@ public final class AppState: ObservableObject {
             project.subtitles.insert(merged, at: firstIndex)
             project.selectedSubtitleID = merged.id
             project.isDirty = true
+            feedbackKind = .success
             statusMessage = "已合并 \(selectedItems.count) 条字幕"
         }
     }
 
     // MARK: - 工程持久化与存取 (R04)
 
-    /// 保存当前工程 (Cmd+S)
     public func saveProject(to url: URL) throws {
-        let data = try project.encodeDocument()
-        try data.write(to: url, options: .atomic)
+        try ProjectStore.write(documentData: project.encodeDocument(), to: url)
+        recoveryTask?.cancel()
+        recoveryWrite?.cancel()
+        ProjectStore.removeCheckpoint(at: recoveryURL)
+        recoveryAvailable = false
+        documentURL = url
         project.isDirty = false
-        statusMessage = "工程已保存: \(url.lastPathComponent)"
+        saveStatus = "已保存"
+        feedbackKind = .success
+        statusMessage = "工程已保存：\(url.lastPathComponent)"
     }
 
-    /// 从文件加载工程
+    @discardableResult public func saveProjectInteractively(chooseNewURL: Bool = false) -> Bool {
+        var destination = chooseNewURL ? nil : documentURL
+        if destination == nil {
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "字幕工程.vatproject"
+            guard panel.runModal() == .OK, let url = panel.url else { return false }
+            destination = url
+        }
+        do { try saveProject(to: destination!); return true }
+        catch { saveStatus = "保存失败"; errorMessage = error.localizedDescription; return false }
+    }
+
+    public func confirmReplacingProject() -> Bool {
+        guard persistsRecovery, project.isDirty else { return true }
+        let alert = NSAlert()
+        alert.messageText = "是否保存当前工程的修改？"
+        alert.informativeText = "保存工程可在下次继续校对；导出字幕不能替代工程保存。"
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: "放弃修改")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return saveProjectInteractively()
+        case .alertThirdButtonReturn: return true
+        default: return false
+        }
+    }
+
+    public func clearRecoveryCheckpoint() {
+        recoveryTask?.cancel()
+        recoveryWrite?.cancel()
+        ProjectStore.removeCheckpoint(at: recoveryURL)
+        recoveryAvailable = false
+    }
+
+    public func openProjectInteractively() {
+        guard confirmReplacingProject() else { return }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try loadProject(from: url) } catch { errorMessage = "无法打开工程：\(error.localizedDescription)" }
+    }
+
     public func loadProject(from url: URL) throws {
-        let data = try Data(contentsOf: url)
-        let decoder = JSONDecoder()
-        let doc = try decoder.decode(ProjectDocument.self, from: data)
+        let doc = try ProjectStore.read(from: url)
+        if url != recoveryURL { clearRecoveryCheckpoint() }
+        recoveryTask?.cancel()
         cancelAllTasks()
-        projectGeneration += 1
+        selectedSubtitleIDs.removeAll()
+        originalEditingID = nil
+        undoStack.removeAll()
+        redoStack.removeAll()
+        canUndo = false
+        canRedo = false
+        lastTextEditID = nil
+        isRestoringProject = true
         project.reset()
         project.restore(from: doc)
+        if storesPreferences { project.llmConfig.onlineAPIKey = ServiceCredentials.read(account: project.llmConfig.onlineBaseURL) }
+        isRestoringProject = false
+        project.audioURL = project.videoURL // Original-quality audio remains available after reopening.
+        documentURL = url
+        saveStatus = "已保存"
         if let video = project.videoURL {
-            let item = AVPlayerItem(url: video)
-            player.replaceCurrentItem(with: item)
+            if FileManager.default.fileExists(atPath: video.path) {
+                player.replaceCurrentItem(with: AVPlayerItem(url: video))
+            } else { errorMessage = "工程已打开，但原视频已移动。请使用「重新定位媒体」选择原文件。" }
         }
-        statusMessage = "已加载工程: \(url.lastPathComponent)"
+        statusMessage = "已加载工程：\(url.lastPathComponent)"
+    }
+
+    public func relinkMedia() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        project.videoURL = url
+        project.audioURL = url
+        project.isDirty = true
+        player.replaceCurrentItem(with: AVPlayerItem(url: url))
+        scheduleRecovery()
+    }
+
+    public func scheduleRecovery() {
+        guard persistsRecovery else { return }
+        recoveryTask?.cancel()
+        recoveryWrite?.cancel()
+        recoveryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 700_000_000)
+                guard let self = self, self.project.isDirty else { return }
+                let data = try self.project.encodeDocument()
+                let target = self.recoveryURL
+                self.saveStatus = "正在保存恢复副本…"
+                let write = Task.detached {
+                    try Task.checkCancellation()
+                    try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try ProjectStore.write(documentData: data, to: target)
+                }
+                self.recoveryWrite = write
+                try await write.value
+                if !Task.isCancelled { self.saveStatus = "恢复副本已保存；工程有修改" }
+            } catch is CancellationError { }
+            catch { self?.saveStatus = "恢复副本保存失败，请手动保存" }
+        }
+    }
+
+    public func restoreRecovery() {
+        do {
+            try loadProject(from: recoveryURL)
+            documentURL = nil
+            project.isDirty = true
+            recoveryAvailable = false
+            statusMessage = "已恢复上次未保存的编辑，请保存工程"
+        } catch { errorMessage = "恢复失败：\(error.localizedDescription)" }
+    }
+
+    public func flushPreferences() {
+        guard storesPreferences else { return }
+        preferencesTask?.cancel()
+        do {
+            let preferences = ApplicationPreferences(llm: project.llmConfig, asr: project.asrConfig, storage: project.modelStorageConfig)
+            UserDefaults.standard.set(try preferences.encodedWithoutSecrets(), forKey: "applicationPreferences")
+            try ServiceCredentials.write(preferences.llm.onlineAPIKey, account: preferences.llm.onlineBaseURL)
+        } catch { statusMessage = "配置保留于当前会话；凭据保存失败，下次可能需要重新输入" }
+    }
+
+    private func savePreferences() {
+        guard storesPreferences else { return }
+        preferencesTask?.cancel()
+        preferencesTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 600_000_000); self?.flushPreferences() }
+            catch { }
+        }
+    }
+
+    public func useOnlineEndpoint(_ endpoint: String) {
+        let cleaned = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleaned != project.llmConfig.onlineBaseURL else { return }
+        project.llmConfig.onlineBaseURL = cleaned
+        project.llmConfig.onlineAPIKey = storesPreferences ? ServiceCredentials.read(account: cleaned) : ""
+    }
+
+    public var asrManagementBaseURL: String {
+        guard var components = URLComponents(string: project.asrConfig.serviceURL) else { return "http://127.0.0.1:8765" }
+        components.path = ""; components.query = nil; components.fragment = nil
+        return components.string ?? "http://127.0.0.1:8765"
+    }
+    public var usesLocalASR: Bool { ["127.0.0.1", "localhost"].contains(URL(string: project.asrConfig.serviceURL)?.host ?? "") }
+    public var usesManagedASR: Bool {
+        let url = URL(string: project.asrConfig.serviceURL)
+        return ["127.0.0.1", "localhost"].contains(url?.host ?? "") && (url?.port ?? 80) == sidecarManager.defaultPort
+    }
+
+    public func applyStorageSettings() {
+        modelStorageManager.config = project.modelStorageConfig
+        modelStorageManager.refreshAll()
+        sidecarManager.modelsDirectory = modelStorageManager.resolvedStorageDirectory()
+        Task { await syncModelStorageToServer() }
     }
 
     // MARK: - 模型存储与下载管理
 
     /// 同步当前存储配置到服务端
     public func syncModelStorageToServer() async {
-        guard let url = URL(string: "http://127.0.0.1:8765/v1/models/storage") else { return }
+        guard usesLocalASR else { return }
+        guard let url = URL(string: "\(asrManagementBaseURL)/v1/models/storage") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -927,6 +1214,7 @@ public final class AppState: ObservableObject {
 
     /// 触发指定模型的下载 (R23: 首次下载先准备 sidecar 服务，避免连接失败或遗留下载中状态)
     public func downloadModel(preset: ASRModelPreset) {
+        guard usesLocalASR else { errorMessage = "远程服务的模型由服务端管理；本机模型下载仅用于本机引擎。"; return }
         // 先中止先前的下载准备任务（若有）
         downloadTasks[preset.id]?.cancel()
 
@@ -938,7 +1226,7 @@ public final class AppState: ObservableObject {
 
             if preset.isRepo {
                 // 确保 ASR 服务在线就绪（若未启动或已断开，自动唤醒并等待健康就绪）
-                let isReady = await sidecarManager.ensureRunning()
+                let isReady = usesManagedASR ? await sidecarManager.ensureRunning() : await LocalASRService(config: project.asrConfig).checkHealth()
                 if Task.isCancelled { return }
 
                 guard isReady else {
@@ -965,7 +1253,7 @@ public final class AppState: ObservableObject {
                 if Task.isCancelled { return }
 
                 do {
-                    try await modelStorageManager.triggerServerRepoDownload(preset: preset)
+                    try await modelStorageManager.triggerServerRepoDownload(preset: preset, asrBaseURL: asrManagementBaseURL)
                 } catch {
                     await MainActor.run {
                         if Task.isCancelled { return }
@@ -985,6 +1273,6 @@ public final class AppState: ObservableObject {
     public func cancelDownload(preset: ASRModelPreset) {
         downloadTasks[preset.id]?.cancel()
         downloadTasks.removeValue(forKey: preset.id)
-        modelStorageManager.cancelDownload(for: preset.id)
+        if usesLocalASR { modelStorageManager.cancelDownload(for: preset.id, asrBaseURL: asrManagementBaseURL) }
     }
 }
