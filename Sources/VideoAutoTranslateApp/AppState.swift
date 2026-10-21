@@ -24,6 +24,7 @@ public final class AppState: ObservableObject {
     public let videoComposer = VideoComposer()
     public let ttsService = SystemTTSService()
     public let ollamaProbe = OllamaProbe()
+    public let llmSegmenter = LLMSegmenter()
     @Published public var modelStorageManager = ModelStorageManager()
     @Published public var sidecarManager = ASRSidecarManager.shared
 
@@ -261,7 +262,20 @@ public final class AppState: ObservableObject {
                 worker.cancel()
             }
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
-            project.subtitles = items
+
+            var finalItems = items
+            // 若大模型可用，进一步执行大模型智能语义断句规整
+            let allTokens = items.flatMap { $0.words }
+            if !allTokens.isEmpty && (project.llmConfig.providerType == .localOllama || !project.llmConfig.onlineAPIKey.isEmpty) {
+                project.currentStepName = "正在调用大模型执行智能语义断句规整..."
+                project.progress = 0.92
+                if let smartItems = try? await llmSegmenter.segment(tokens: allTokens, config: project.llmConfig), !smartItems.isEmpty {
+                    finalItems = smartItems
+                }
+            }
+
+            guard currentGen == projectGeneration, !Task.isCancelled else { return }
+            project.subtitles = finalItems
             undoStack.removeAll()
             redoStack.removeAll()
             canUndo = false
@@ -269,7 +283,7 @@ public final class AppState: ObservableObject {
             project.isProcessing = false
             project.progress = 1.0
             project.isDirty = true
-            statusMessage = "识别完成，共生成 \(items.count) 行字幕"
+            statusMessage = "识别与智能断句完成，共生成 \(finalItems.count) 行字幕"
         } catch {
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.isProcessing = false
@@ -486,10 +500,76 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// 拆分当前选中的字幕 (Cmd+B)
-    public func splitCurrentSubtitle(atCharIndex: Int) {
-        guard let selectedID = project.selectedSubtitleID else { return }
-        splitSubtitle(id: selectedID, atCharIndex: atCharIndex)
+    /// 拆分当前选中的字幕 (Cmd+B: 严格在光标所在字词位置切开)
+    public func splitCurrentSubtitle(atCharIndex: Int? = nil) {
+        guard let selectedID = project.selectedSubtitleID,
+              let item = project.subtitles.first(where: { $0.id == selectedID }) else {
+            errorMessage = "请先选择需要拆分的字幕行"
+            return
+        }
+
+        var charIndex = atCharIndex
+        if charIndex == nil {
+            if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+               textView.string == item.originalText {
+                let loc = textView.selectedRange().location
+                if loc != NSNotFound {
+                    charIndex = loc
+                }
+            }
+        }
+
+        guard let targetIndex = charIndex, targetIndex > 0, targetIndex < item.originalText.count else {
+            errorMessage = "请先在文本框中将光标放置在想要拆分的字词之间"
+            statusMessage = "拆分提示：请先在字幕文本中放置光标"
+            NSSound.beep()
+            return
+        }
+
+        splitSubtitle(id: selectedID, atCharIndex: targetIndex)
+    }
+
+    /// 执行大模型语义智能分句规整 (将每个词的精确定位发给大模型重构断句时间轴)
+    public func runSmartSegmentation() async {
+        guard !project.subtitles.isEmpty else { return }
+
+        // 收集全部物理 WordTokens
+        var allTokens: [WordToken] = []
+        for item in project.subtitles {
+            if !item.words.isEmpty {
+                allTokens.append(contentsOf: item.words)
+            } else {
+                allTokens.append(WordToken(text: item.originalText, startTime: item.startTime, endTime: item.endTime))
+            }
+        }
+
+        guard !allTokens.isEmpty else { return }
+
+        recordUndoSnapshot()
+        project.isProcessing = true
+        project.currentStepName = "正在调用大模型执行智能语义断句规整..."
+        project.progress = 0.3
+        statusMessage = "正在结合字词精确时间戳进行 AI 智能语义分句..."
+
+        do {
+            let smartItems = try await llmSegmenter.segment(tokens: allTokens, config: project.llmConfig)
+            guard !smartItems.isEmpty else {
+                project.isProcessing = false
+                statusMessage = "智能分句未能生成有效结果，保留原有字幕"
+                return
+            }
+
+            project.subtitles = smartItems
+            project.selectedSubtitleID = smartItems.first?.id
+            project.isProcessing = false
+            project.progress = 1.0
+            project.isDirty = true
+            statusMessage = "AI 智能分句完成！已规整为 \(smartItems.count) 行自然字幕"
+        } catch {
+            project.isProcessing = false
+            statusMessage = "智能分句失败: \(error.localizedDescription)"
+            errorMessage = "智能分句失败: \(error.localizedDescription)"
+        }
     }
 
     /// 合并选中的字幕 (Cmd+J) (R15: 严格连续性校验)

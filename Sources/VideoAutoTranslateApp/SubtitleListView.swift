@@ -45,7 +45,23 @@ public struct SubtitleListView: View {
                 .keyboardShortcut("z", modifiers: [.command, .shift])
                 .help("恢复上一步被撤销的操作 (Cmd+Shift+Z)")
 
-                // 3. 合并按钮 (需选中 2 行或多行相邻字幕，支持 Cmd+J)
+                // 3. 智能分句按钮 (基于每个单词的毫秒时间戳与 LLM 语义规整)
+                Button(action: {
+                    Task {
+                        await appState.runSmartSegmentation()
+                    }
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "sparkles")
+                        Text("智能分句")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
+                .help("调用大模型结合每个词的精确时间戳进行语义智能断句规整")
+
+                // 4. 合并按钮 (需选中 2 行或多行相邻字幕，支持 Cmd+J)
                 let canMergeNow = appState.canMerge(ids: selectedIDs)
                 Button(action: {
                     appState.mergeSubtitles(ids: selectedIDs)
@@ -126,10 +142,8 @@ public struct SubtitleListView: View {
                                             await appState.auditionSubtitle(item)
                                         }
                                     },
-                                    onSplit: {
-                                        // 默认从中间字数拆分 (R14: 精准绑定本行 item.id)
-                                        let mid = max(1, item.originalText.count / 2)
-                                        appState.splitSubtitle(id: item.id, atCharIndex: mid)
+                                    onSplit: { cursorIndex in
+                                        appState.splitSubtitle(id: item.id, atCharIndex: cursorIndex)
                                     }
                                 )
                                 .id(item.id)

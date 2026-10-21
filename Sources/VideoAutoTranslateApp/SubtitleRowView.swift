@@ -8,7 +8,30 @@ public struct SubtitleRowView: View {
     var isPlaying: Bool = false
     let onSeek: () -> Void
     let onAudition: () -> Void
-    let onSplit: () -> Void
+    let onSplit: (Int) -> Void
+
+    @State private var lastCursorIndex: Int? = nil
+
+    private func performSplitAtCursor() {
+        var charIndex: Int? = nil
+        if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+           textView.string == item.originalText {
+            let loc = textView.selectedRange().location
+            if loc != NSNotFound {
+                charIndex = loc
+            }
+        }
+        if charIndex == nil, let cached = lastCursorIndex {
+            charIndex = cached
+        }
+
+        if let idx = charIndex, idx > 0, idx < item.originalText.count {
+            onSplit(idx)
+        } else {
+            // 光标未处于字符中间时提示用户
+            NSSound.beep()
+        }
+    }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -42,13 +65,13 @@ public struct SubtitleRowView: View {
                 .buttonStyle(.borderless)
                 .disabled(item.isGeneratingAudio)
 
-                // 拆分按钮
-                Button(action: onSplit) {
+                // 拆分按钮 (在光标所在位置拆分)
+                Button(action: performSplitAtCursor) {
                     Image(systemName: "scissors")
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
-                .help("从中间拆分此行字幕")
+                .help("在光标所在字词位置拆分此行字幕 (快捷键 Cmd+B)")
             }
 
             // 原文字幕编辑框 (英文/源语种)
@@ -58,6 +81,14 @@ public struct SubtitleRowView: View {
                 .padding(4)
                 .background(Color(nsColor: .textBackgroundColor).opacity(0.6))
                 .cornerRadius(4)
+                .onReceive(NotificationCenter.default.publisher(for: NSTextView.didChangeSelectionNotification)) { notif in
+                    if let textView = notif.object as? NSTextView, textView.string == item.originalText {
+                        let loc = textView.selectedRange().location
+                        if loc != NSNotFound {
+                            self.lastCursorIndex = loc
+                        }
+                    }
+                }
                 .onChange(of: item.originalText) { _, _ in
                     // R16: 修改原文后使词级映射及旧配音缓存失效
                     item.words = []
