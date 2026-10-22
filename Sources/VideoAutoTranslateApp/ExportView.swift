@@ -289,7 +289,6 @@ public struct ExportView: View {
                 let audioMode: VideoAudioExportMode = (hasDubbing || hasTranslations) ? videoAudioMode : .original
                 appState.exportJob.start(
                     video: sourceVideo,
-                    background: appState.project.audioURL,
                     rows: appState.project.subtitles,
                     voice: appState.project.effectiveVoiceCode,
                     audioMode: audioMode,

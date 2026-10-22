@@ -130,6 +130,7 @@ public final class SubtitleManager {
             originalText: firstPartText,
             translatedText: part1Trans,
             words: firstWords,
+            translationNeedsReview: item.translationNeedsReview && !part1Trans.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             sourceStartTime: item.sourceStartTime,
             sourceEndTime: firstWords.last?.endCMTime ?? splitTime
         )
@@ -140,6 +141,7 @@ public final class SubtitleManager {
             originalText: secondPartText,
             translatedText: part2Trans,
             words: secondWords,
+            translationNeedsReview: item.translationNeedsReview && !part2Trans.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             sourceStartTime: secondWords.first?.startCMTime ?? splitTime,
             sourceEndTime: item.sourceEndTime
         )
@@ -172,6 +174,9 @@ public final class SubtitleManager {
             originalText: combinedOriginal,
             translatedText: combinedTranslated,
             words: combinedWords,
+            translationNeedsReview: !combinedTranslated.isEmpty && sorted.contains {
+                $0.translationNeedsReview || $0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            },
             sourceStartTime: sorted.map(\.sourceStartTime).min(),
             sourceEndTime: sorted.map(\.sourceEndTime).max()
         )

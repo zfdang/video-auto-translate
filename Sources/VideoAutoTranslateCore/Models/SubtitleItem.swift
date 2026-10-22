@@ -25,7 +25,15 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
     }
     @Published public var translatedText: String {
         willSet { if translatedText != newValue { onModified?() } }
-        didSet { if translatedText != oldValue { naturalSpeech = nil; dubbedAudioURL = nil; dubbedAudioSignature = nil; dubbedRate = nil } }
+        didSet {
+            if translatedText != oldValue {
+                naturalSpeech = nil
+                dubbedAudioURL = nil
+                dubbedAudioSignature = nil
+                dubbedRate = nil
+                translationNeedsReview = false
+            }
+        }
     }
     @Published public var words: [WordToken] {
         willSet { if words != newValue { onModified?() } }
@@ -121,6 +129,12 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         !translationNeedsReview && dubbedAudioSignature == audioSignature(voice: voice) && dubbedAudioURL.map { FileManager.default.fileExists(atPath: $0.path) } == true
     }
 
+    /// Confirm an unchanged translation after correcting its source text.
+    public func confirmTranslation() {
+        guard !translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        translationNeedsReview = false
+    }
+
     public func snapshot() -> SubtitleItem {
         let copy = SubtitleItem(id: id, startTime: startTime, endTime: endTime, originalText: originalText, translatedText: translatedText, words: words, dubbedAudioURL: dubbedAudioURL, dubbedAudioSignature: dubbedAudioSignature, translationNeedsReview: translationNeedsReview, sourceStartTime: sourceStartTime, sourceEndTime: sourceEndTime, naturalSpeech: naturalSpeech, dubbedRate: dubbedRate)
         copy.timingContext = timingContext
@@ -150,7 +164,7 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
 
     // MARK: - Codable
     enum CodingKeys: String, CodingKey {
-        case id, startTime, endTime, originalText, translatedText, words, dubbedAudioURL, dubbedAudioSignature, translationNeedsReview, sourceStartTime, sourceEndTime
+        case id, startTime, endTime, originalText, translatedText, words, dubbedAudioURL, dubbedAudioSignature, dubbedRate, translationNeedsReview, sourceStartTime, sourceEndTime
     }
 
     public init(from decoder: Decoder) throws {
@@ -167,6 +181,8 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         self.words = try container.decode([WordToken].self, forKey: .words)
         self.dubbedAudioURL = try container.decodeIfPresent(URL.self, forKey: .dubbedAudioURL)
         self.dubbedAudioSignature = try container.decodeIfPresent(String.self, forKey: .dubbedAudioSignature)
+        let savedRate = try container.decodeIfPresent(Double.self, forKey: .dubbedRate)
+        self.dubbedRate = savedRate.flatMap { $0.isFinite && $0 >= 1 ? $0 : nil }
         self.translationNeedsReview = try container.decodeIfPresent(Bool.self, forKey: .translationNeedsReview) ?? false
     }
 
@@ -182,6 +198,9 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         try container.encode(words, forKey: .words)
         try container.encodeIfPresent(dubbedAudioURL, forKey: .dubbedAudioURL)
         try container.encodeIfPresent(dubbedAudioSignature, forKey: .dubbedAudioSignature)
+        if let dubbedRate, dubbedRate.isFinite, dubbedRate >= 1 {
+            try container.encode(dubbedRate, forKey: .dubbedRate)
+        }
         try container.encode(translationNeedsReview, forKey: .translationNeedsReview)
     }
 }

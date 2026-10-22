@@ -196,6 +196,17 @@ public struct SubtitleRowView: View {
                     // R16: 修改译文后使旧配音缓存失效
                     item.dubbedAudioURL = nil
                 }
+
+            if item.translationNeedsReview {
+                HStack {
+                    Text("译文待确认，请校对后确认")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Button("确认译文") { item.confirmTranslation() }
+                        .buttonStyle(.borderless)
+                        .disabled(item.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
         }
         .padding(8)
         .background(
