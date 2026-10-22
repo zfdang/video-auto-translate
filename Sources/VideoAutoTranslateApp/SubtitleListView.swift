@@ -159,7 +159,8 @@ public struct SubtitleListView: View {
                     ScrollView {
                         LazyVStack(spacing: 6) {
                             ForEach(Array(filteredSubtitles.enumerated()), id: \.element.id) { index, item in
-                                let canMergeNext = (index + 1 < filteredSubtitles.count)
+                                // A filtered next row can hide the actual source neighbor.
+                                let canMergeNext = searchText.isEmpty && (index + 1 < filteredSubtitles.count)
                                 let isRowSelected = (appState.project.selectedSubtitleID == item.id) || selectedIDs.contains(item.id)
 
                                 SubtitleRowView(
@@ -241,6 +242,10 @@ public struct SubtitleListView: View {
                     }
                 }
             }
+        }
+        .onChange(of: searchText) { _, _ in
+            selectedIDs.removeAll()
+            lastClickedIndex = nil
         }
     }
 
