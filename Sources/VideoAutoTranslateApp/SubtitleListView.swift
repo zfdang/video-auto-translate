@@ -11,7 +11,9 @@ public struct SubtitleListView: View {
         VStack(spacing: 0) {
             // 工具栏头部 (靠右排列：撤销、重做、合并)
             HStack(spacing: 8) {
-                Text("字幕列表 (\(filteredSubtitles.count))")
+                Text(searchText.isEmpty
+                     ? "字幕列表 (\(filteredSubtitles.count))"
+                     : "字幕列表 (\(filteredSubtitles.count)/\(appState.project.subtitles.count))")
                     .font(.headline)
 
                 Spacer()
@@ -145,7 +147,9 @@ public struct SubtitleListView: View {
                         Image(systemName: "text.bubble")
                             .font(.system(size: 40))
                             .foregroundColor(.secondary)
-                        Text(appState.project.videoURL == nil ? "请先打开或拖拽视频文件" : "尚未提取字幕，点击上方「语音转录」开始")
+                        Text(!appState.project.subtitles.isEmpty
+                             ? "没有匹配的字幕，请修改搜索词或清除搜索"
+                             : (appState.project.videoURL == nil ? "请先打开或拖拽视频文件" : "尚未提取字幕，点击上方「语音转录」开始"))
                             .foregroundColor(.secondary)
                     }
                     Spacer()
@@ -162,7 +166,7 @@ public struct SubtitleListView: View {
                                     item: item,
                                     isSelected: isRowSelected,
                                     isPlaying: appState.project.playingSubtitleID == item.id,
-                                    rowIndex: index,
+                                    rowIndex: appState.project.subtitles.firstIndex(where: { $0.id == item.id }) ?? index,
                                     isMultiSelected: selectedIDs.contains(item.id),
                                     canMergeWithNext: canMergeNext,
                                     onSeek: {
