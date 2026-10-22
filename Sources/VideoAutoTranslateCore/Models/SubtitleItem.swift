@@ -47,7 +47,7 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         guard durationSeconds > 0 else { return "字幕时长无效。" }
         let rate = audio.duration / durationSeconds
         guard rate > DubbingPacing.warningRate + 0.005 else { return nil }
-        return String(format: "此句配音约 %.2f 倍语速，可试听；不会阻止继续配音或导出。", rate)
+        return String(format: "此句配音约 %.2f 倍语速；建议使用「匹配译文时间轴」优化听感，也可直接试听或导出。", rate)
     }
 
     // 配音缓存状态
