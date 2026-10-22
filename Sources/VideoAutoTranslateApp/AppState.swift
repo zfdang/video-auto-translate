@@ -412,7 +412,7 @@ public final class AppState: ObservableObject {
         project.progress = 0.1
         statusMessage = "正在提取音频..."
 
-        let worker = Task { () -> [SubtitleItem] in
+        let worker = Task { () -> ([SubtitleItem], Bool) in
             let tempDir = FileManager.default.temporaryDirectory
             let wavURL = tempDir.appendingPathComponent("extracted_\(UUID().uuidString).wav")
             try await audioExtractor.extract16kMonoWav(from: videoURL, to: wavURL)
@@ -443,27 +443,14 @@ public final class AppState: ObservableObject {
             }
 
             let asrService = LocalASRService(config: project.asrConfig)
-            return try await asrService.transcribe(audioURL: wavURL) { [weak self] progress in
+            let items = try await asrService.transcribe(audioURL: wavURL) { [weak self] progress in
                 Task { @MainActor [weak self] in
                     guard let self = self, self.projectGeneration == currentGen, !Task.isCancelled else { return }
                     self.project.progress = 0.4 + progress * 0.5
                 }
             }
-        }
-        self.activeTranscriptionTask = Task {
-            await withTaskCancellationHandler {
-                _ = try? await worker.value
-            } onCancel: { worker.cancel() }
-        }
-
-        do {
-            let items = try await withTaskCancellationHandler {
-                try await worker.value
-            } onCancel: {
-                worker.cancel()
-            }
-            guard currentGen == projectGeneration, !Task.isCancelled else { return }
-
+            try Task.checkCancellation()
+            guard currentGen == projectGeneration else { throw CancellationError() }
             var finalItems = items
             var usedLLMSegmentation = false
             // 若大模型可用，进一步执行大模型智能语义断句规整
@@ -476,6 +463,7 @@ public final class AppState: ObservableObject {
                 if let smartItems = try? await llmSegmenter.segment(tokens: allTokens, config: project.llmConfig, onStatusUpdate: { [weak self] status, progress in
                     guard let self = self, !Task.isCancelled else { return }
                     Task { @MainActor in
+                        guard self.projectGeneration == currentGen else { return }
                         self.project.currentStepName = status
                         self.project.progress = 0.90 + progress * 0.09
                     }
@@ -485,6 +473,21 @@ public final class AppState: ObservableObject {
                 }
             }
 
+            try Task.checkCancellation()
+            return (finalItems, usedLLMSegmentation)
+        }
+        self.activeTranscriptionTask = Task {
+            await withTaskCancellationHandler {
+                _ = try? await worker.value
+            } onCancel: { worker.cancel() }
+        }
+
+        do {
+            let (finalItems, usedLLMSegmentation) = try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
             guard currentGen == projectGeneration, !Task.isCancelled else { return }
             project.subtitles = finalItems
             undoStack.removeAll()

@@ -18,6 +18,7 @@ public final class LLMSegmenter {
         config: LLMConfiguration,
         onStatusUpdate: ((_ status: String, _ progress: Double) -> Void)? = nil
     ) async throws -> [SubtitleItem] {
+        try Task.checkCancellation()
         guard !tokens.isEmpty else { return [] }
 
         let fullRawText = tokens.map { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -53,6 +54,7 @@ public final class LLMSegmenter {
         var batchIndex = 0
 
         while tokenOffset < tokens.count {
+            try Task.checkCancellation()
             batchIndex += 1
             let chunkTokens = Array(tokens[tokenOffset..<min(tokenOffset + batchWordSize, tokens.count)])
             tokenOffset += chunkTokens.count
@@ -78,6 +80,7 @@ public final class LLMSegmenter {
                     onStatusUpdate?(alignMsg, batchAlignProgress)
                 }
             )
+            try Task.checkCancellation()
             allSegmentedItems.append(contentsOf: items)
         }
 
@@ -89,6 +92,7 @@ public final class LLMSegmenter {
             finalItems = allSegmentedItems
         }
 
+        try Task.checkCancellation()
         onStatusUpdate?("智能分句重构完成：共生成 \(finalItems.count) 行自然字幕", 1.0)
         return finalItems
     }
@@ -135,9 +139,12 @@ public final class LLMSegmenter {
                 responseFormatJSON: true
             )
         } catch {
+            try Task.checkCancellation()
             // 模型调用失败时，安全回退到本地规整断句器
             return fallbackSegmenter.segment(tokens: tokens)
         }
+
+        try Task.checkCancellation()
 
         // 解析返回的 JSON 行
         guard let lines = parseLines(from: responseText), !lines.isEmpty else {
