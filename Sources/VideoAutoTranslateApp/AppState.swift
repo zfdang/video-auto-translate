@@ -211,6 +211,12 @@ public final class AppState: ObservableObject {
 
     /// 详细测试当前 ASR 配置 URL 连通性
     public func testASRConnection() async -> (success: Bool, message: String) {
+        if usesManagedASR && !sidecarManager.status.isRunning {
+            let started = await sidecarManager.ensureRunning()
+            if !started {
+                return (false, "唤醒本地内置 ASR 引擎失败，请查看引擎日志以排查原因")
+            }
+        }
         return await LocalASRService.testConnection(urlString: project.asrConfig.serviceURL)
     }
 

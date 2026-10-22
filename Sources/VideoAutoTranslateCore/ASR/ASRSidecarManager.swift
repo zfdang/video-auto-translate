@@ -227,9 +227,20 @@ public final class ASRSidecarManager: ObservableObject {
         env["HF_HUB_DISABLE_XET"] = "1"
         p.environment = env
 
-        let errPipe = Pipe()
-        p.standardError = errPipe
-        p.standardOutput = FileHandle.nullDevice
+        // 确保日志目录存在并将日志重定向至 diagnosticLogURL (asr.log)
+        let logURL = diagnosticLogURL
+        try? FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: logURL.path) {
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        }
+        if let logHandle = try? FileHandle(forWritingTo: logURL) {
+            logHandle.seekToEndOfFile()
+            p.standardOutput = logHandle
+            p.standardError = logHandle
+        } else {
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+        }
 
         do {
             try p.run()
@@ -240,9 +251,9 @@ public final class ASRSidecarManager: ObservableObject {
             for _ in 0..<16 {
                 try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
                 if !p.isRunning {
-                    let errData = errPipe.fileHandleForReading.availableData
-                    let errMsg = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    let fullDesc = errMsg.isEmpty ? "ASR 子进程异常退出 (PID: \(pid))" : "ASR 引擎启动错误: \(errMsg.prefix(200))"
+                    let logContent = (try? String(contentsOf: logURL, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let lastLines = logContent.components(separatedBy: .newlines).suffix(5).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                    let fullDesc = lastLines.isEmpty ? "ASR 子进程异常退出 (PID: \(pid))" : "ASR 引擎启动错误: \(lastLines.prefix(200))"
                     await MainActor.run {
                         self.status = .error(fullDesc)
                     }
