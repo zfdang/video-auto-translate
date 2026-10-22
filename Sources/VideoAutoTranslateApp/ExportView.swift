@@ -251,7 +251,7 @@ public struct ExportView: View {
         case .originalOnly:
             return "画面仅压制显示原始语言字幕"
         case .none:
-            return "不内嵌任何字幕，输出纯净画面视频"
+            return "不追加字幕，保留源视频画面（已有硬字幕仍会保留）"
         }
     }
 
