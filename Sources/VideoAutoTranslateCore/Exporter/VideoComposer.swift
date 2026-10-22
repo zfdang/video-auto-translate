@@ -226,9 +226,11 @@ public final class VideoComposer {
             exportSession.videoComposition = videoComposition
         }
 
+        try Task.checkCancellation()
+        let cancellation = ExportCancellation(exportSession)
         await withTaskCancellationHandler {
             await exportSession.export()
-        } onCancel: { exportSession.cancelExport() }
+        } onCancel: { cancellation.cancel() }
         try Task.checkCancellation()
 
         if exportSession.status != .completed {
