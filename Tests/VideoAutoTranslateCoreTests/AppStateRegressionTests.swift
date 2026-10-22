@@ -80,6 +80,21 @@ import CoreMedia
         XCTAssertFalse(app.canUndo)
     }
 
+    func testCancellingModelPullKeepsCurrentModelAndAllowsRetry() async {
+        let app = AppState(probeServices: false)
+        app.project.llmConfig.ollamaBaseURL = "http://127.0.0.1:1"
+        let current = app.project.llmConfig.ollamaModel
+        for _ in 0..<2 {
+            app.pullOllamaModel(name: "cancel-test")
+            XCTAssertNotNil(app.ollamaPullStates["cancel-test"])
+            app.cancelOllamaPull(name: "cancel-test")
+            await Task.yield()
+            XCTAssertNil(app.ollamaPullStates["cancel-test"])
+            XCTAssertNil(app.errorMessage)
+            XCTAssertEqual(app.project.llmConfig.ollamaModel, current)
+        }
+    }
+
     func testExportCancellationPreservesExistingDestination() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
         try Data("Previous output".utf8).write(to: url)

@@ -500,6 +500,8 @@ public struct SettingsView: View {
                         Text("\(Int(progress * 100))% · \(speed)")
                             .font(.caption2)
                             .foregroundColor(.secondary)
+                        Button("取消下载") { appState.cancelOllamaPull(name: preset.name) }
+                            .font(.caption)
                     }
                 } else if isInstalled {
                     HStack(spacing: 6) {
