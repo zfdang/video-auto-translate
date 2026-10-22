@@ -13,19 +13,19 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
 
     @Published public var startTime: CMTime {
         willSet { if startTime != newValue { onModified?() } }
-        didSet { if startTime != oldValue { dubbedAudioURL = nil; dubbedAudioSignature = nil } }
+        didSet { if startTime != oldValue { dubbedAudioURL = nil; dubbedAudioSignature = nil; dubbedRate = nil } }
     }
     @Published public var endTime: CMTime {
         willSet { if endTime != newValue { onModified?() } }
-        didSet { if endTime != oldValue { dubbedAudioURL = nil; dubbedAudioSignature = nil } }
+        didSet { if endTime != oldValue { dubbedAudioURL = nil; dubbedAudioSignature = nil; dubbedRate = nil } }
     }
     @Published public var originalText: String {
         willSet { if originalText != newValue { onModified?() } }
-        didSet { if originalText != oldValue { words = []; naturalSpeech = nil; dubbedAudioURL = nil; dubbedAudioSignature = nil; translationNeedsReview = !translatedText.isEmpty } }
+        didSet { if originalText != oldValue { words = []; naturalSpeech = nil; dubbedAudioURL = nil; dubbedAudioSignature = nil; dubbedRate = nil; translationNeedsReview = !translatedText.isEmpty } }
     }
     @Published public var translatedText: String {
         willSet { if translatedText != newValue { onModified?() } }
-        didSet { if translatedText != oldValue { naturalSpeech = nil; dubbedAudioURL = nil; dubbedAudioSignature = nil } }
+        didSet { if translatedText != oldValue { naturalSpeech = nil; dubbedAudioURL = nil; dubbedAudioSignature = nil; dubbedRate = nil } }
     }
     @Published public var words: [WordToken] {
         willSet { if words != newValue { onModified?() } }
@@ -42,16 +42,40 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         return audio
     }
 
+    /// 当配音因时长受限而不得不加速时，返回计算出的语速倍率（正常 1.0 倍速不提示）
+    public var dubbingPacingRate: Double? {
+        if let audio = currentNaturalSpeech, durationSeconds > 0 {
+            let rate = audio.duration / durationSeconds
+            if rate > 1.02 { return rate }
+        }
+        if let rate = dubbedRate, rate > 1.02 {
+            return rate
+        }
+        return nil
+    }
+
+    /// 简洁的倍速显示文本，例如 "1.6倍速"、"1.61倍速"、"2倍速"
+    public var dubbingSpeedDisplay: String? {
+        guard let rate = dubbingPacingRate else { return nil }
+        if abs(rate.rounded() - rate) < 0.01 {
+            return String(format: "%.0f倍速", rate)
+        } else if abs((rate * 10).rounded() / 10 - rate) < 0.01 {
+            return String(format: "%.1f倍速", rate)
+        } else {
+            return String(format: "%.2f倍速", rate)
+        }
+    }
+
+    /// 标记高语速警告（供业务统计与建议使用，简洁文本）
     public var dubbingTimingIssue: String? {
-        guard let audio = currentNaturalSpeech else { return nil }
-        guard durationSeconds > 0 else { return "字幕时长无效。" }
-        let rate = audio.duration / durationSeconds
+        guard let rate = dubbingPacingRate else { return durationSeconds <= 0 ? "字幕时长无效" : nil }
         guard rate > DubbingPacing.warningRate + 0.005 else { return nil }
-        return String(format: "此句配音约 %.2f 倍语速，可试听；不会阻止继续配音或导出。", rate)
+        return dubbingSpeedDisplay
     }
 
     // 配音缓存状态
     public var dubbedAudioSignature: String?
+    @Published public var dubbedRate: Double?
     @Published public var translationNeedsReview = false {
         willSet { if newValue != translationNeedsReview { onModified?() } }
     }
@@ -70,7 +94,8 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         translationNeedsReview: Bool = false,
         sourceStartTime: CMTime? = nil,
         sourceEndTime: CMTime? = nil,
-        naturalSpeech: NaturalSpeechAudio? = nil
+        naturalSpeech: NaturalSpeechAudio? = nil,
+        dubbedRate: Double? = nil
     ) {
         self.id = id
         self.naturalSpeech = naturalSpeech
@@ -84,6 +109,7 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         self.dubbedAudioURL = dubbedAudioURL
         self.dubbedAudioSignature = dubbedAudioSignature
         self.translationNeedsReview = translationNeedsReview
+        self.dubbedRate = dubbedRate
     }
 
     public func audioSignature(voice: String) -> String {
@@ -96,7 +122,7 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
     }
 
     public func snapshot() -> SubtitleItem {
-        let copy = SubtitleItem(id: id, startTime: startTime, endTime: endTime, originalText: originalText, translatedText: translatedText, words: words, dubbedAudioURL: dubbedAudioURL, dubbedAudioSignature: dubbedAudioSignature, translationNeedsReview: translationNeedsReview, sourceStartTime: sourceStartTime, sourceEndTime: sourceEndTime, naturalSpeech: naturalSpeech)
+        let copy = SubtitleItem(id: id, startTime: startTime, endTime: endTime, originalText: originalText, translatedText: translatedText, words: words, dubbedAudioURL: dubbedAudioURL, dubbedAudioSignature: dubbedAudioSignature, translationNeedsReview: translationNeedsReview, sourceStartTime: sourceStartTime, sourceEndTime: sourceEndTime, naturalSpeech: naturalSpeech, dubbedRate: dubbedRate)
         copy.timingContext = timingContext
         return copy
     }

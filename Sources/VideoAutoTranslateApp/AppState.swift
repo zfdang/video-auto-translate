@@ -568,7 +568,12 @@ public final class AppState: ObservableObject {
             project.isProcessing = false
             project.isDirty = true
             feedbackKind = .success
-            statusMessage = "配音已生成；播放器已切换至译文配音"
+            let highSpeedCount = project.subtitles.filter { $0.dubbingTimingIssue != nil }.count
+            if highSpeedCount > 0 {
+                statusMessage = "配音已完成（\(highSpeedCount) 句语速偏快，可使用「匹配译文时间轴」优化）；播放器已切换至译文配音"
+            } else {
+                statusMessage = "配音已完成；播放器已切换至译文配音"
+            }
             previewAudioTrack = .translated
             await updatePreviewPlayerItem()
         } catch {
@@ -671,17 +676,27 @@ public final class AppState: ObservableObject {
                 let audio: AVPlayer
                 if target == .translated {
                     guard !item.translationNeedsReview else { throw TTSError.synthesisFailed("请先复核译文语言") }
-                    if item.hasCurrentAudio(voice: voice), let url = item.dubbedAudioURL {
-                        audio = AVPlayer(url: url)
-                    } else {
-                        // Audition is a content check, not a prerequisite timing task.
-                        // Use natural speech without changing timestamps or publishing
-                        // an overlong clip as timeline-ready export audio.
-                        let natural = try await subtitleManager.prepareNaturalSpeech(item: item, ttsService: ttsService, voice: voice)
-                        audio = AVPlayer(url: natural.url)
+                    await MainActor.run {
+                        seek(to: item.startTime)
+                        project.selectedSubtitleID = item.id
                     }
+                    if !item.hasCurrentAudio(voice: voice) {
+                        try await subtitleManager.reDub(item: item, ttsService: ttsService, voice: voice)
+                        await MainActor.run { project.isDirty = true }
+                        if previewAudioTrack == .translated {
+                            await updatePreviewPlayerItem()
+                        }
+                    }
+                    guard let url = item.dubbedAudioURL else {
+                        throw TTSError.synthesisFailed("配音生成失败")
+                    }
+                    audio = AVPlayer(url: url)
                 } else {
                     guard let media = media else { return }
+                    await MainActor.run {
+                        seek(to: item.sourceStartTime)
+                        project.selectedSubtitleID = item.id
+                    }
                     let playerItem = AVPlayerItem(url: media)
                     playerItem.forwardPlaybackEndTime = item.sourceEndTime
                     audio = AVPlayer(playerItem: playerItem)
@@ -690,7 +705,7 @@ public final class AppState: ObservableObject {
                 guard !Task.isCancelled, request == auditionGeneration, generation == projectGeneration else { return }
                 auditionPlayer = audio
                 audio.play()
-                statusMessage = target == .original ? "正在试听原声（原始声学区间）" : "正在试听当前译文"
+                statusMessage = target == .original ? "正在试听原声（原始声学区间）" : "正在试听当前译文配音"
             } catch is CancellationError { }
             catch {
                 if request == auditionGeneration && generation == projectGeneration { statusMessage = "试听失败：\(error.localizedDescription)"; errorMessage = error.localizedDescription }

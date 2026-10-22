@@ -210,8 +210,8 @@ public final class SubtitleManager {
         return audio
     }
 
-    /// Generation only consumes confirmed audio, or publishes unchanged natural
-    /// speech when it already fits. All rate/timeline decisions belong to matching.
+    /// Generation only consumes confirmed audio, or publishes natural/rate-adjusted
+    /// speech to fit the subtitle interval.
     public func reDub(
         item: SubtitleItem, ttsService: TTSServiceProtocol, voice: String = "zh-CN"
     ) async throws {
@@ -221,10 +221,8 @@ public final class SubtitleManager {
         defer { Task { @MainActor in item.isGeneratingAudio = false } }
         let signature = item.audioSignature(voice: voice)
         let natural = try await prepareNaturalSpeech(item: item, ttsService: ttsService, voice: voice)
-        guard natural.duration <= item.durationSeconds + DubbingPacing.timeTolerance else {
-            throw DubbingTimingError.requiresTimelineMatch(natural: natural.duration, available: item.durationSeconds)
-        }
-        try await publishSpeech(item: item, natural: natural, voice: voice, signature: signature, rate: 1)
+        let rate = try DubbingPacing.rate(naturalDuration: natural.duration, availableDuration: item.durationSeconds)
+        try await publishSpeech(item: item, natural: natural, voice: voice, signature: signature, rate: rate)
     }
 
     /// Called only while constructing an explicit timeline proposal, never by
@@ -265,13 +263,15 @@ public final class SubtitleManager {
         }
         try Task.checkCancellation()
         let actual = try await AVURLAsset(url: result).load(.duration).secondsValue
-        guard actual.isFinite, actual > 0, actual <= item.durationSeconds + DubbingPacing.timeTolerance else {
+        let tolerance = max(DubbingPacing.timeTolerance, 0.06)
+        guard actual.isFinite, actual > 0, actual <= item.durationSeconds + tolerance else {
             throw TTSError.synthesisFailed("配音渲染时长超出字幕范围，请重新匹配时间轴后试听。")
         }
         try await MainActor.run {
             guard !Task.isCancelled, item.audioSignature(voice: voice) == signature else { throw CancellationError() }
             item.dubbedAudioURL = result
             item.dubbedAudioSignature = signature
+            item.dubbedRate = rate
         }
     }
 }

@@ -143,16 +143,13 @@ final class AnchoredDubbingTests: XCTestCase {
         XCTAssertEqual(again[0].durationSeconds, 1.08, accuracy: 0.02)
     }
 
-    @MainActor func testOverlongSpeechBlocksDubbingAndContentOrVoiceInvalidatesRawCache() async throws {
+    @MainActor func testOverlongSpeechAcceleratesToFitAndInvalidatesRawCacheOnContentOrVoiceChange() async throws {
         let manager = SubtitleManager()
         let tts = TimingFixtureTTS(duration: 2)
         let item = row(0, 1)
-        do {
-            try await manager.reDub(item: item, ttsService: tts)
-            XCTFail("Overlong speech must not be accelerated or published")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("匹配译文时间轴")) }
-        XCTAssertNil(item.dubbedAudioURL)
-        XCTAssertNotNil(item.dubbingTimingIssue)
+        try await manager.reDub(item: item, ttsService: tts)
+        XCTAssertNotNil(item.dubbedAudioURL, "超长配音应自适应加速适配并成功发布，绝不阻断用户配音流程")
+        XCTAssertNotNil(item.dubbingTimingIssue, "超长配音应标记提示高语速警告")
         _ = try await manager.prepareNaturalSpeech(item: item, ttsService: tts)
         XCTAssertEqual(tts.calls, 1)
         _ = try await manager.prepareNaturalSpeech(item: item, ttsService: tts, voice: "en-US")
@@ -257,24 +254,25 @@ final class AnchoredDubbingTests: XCTestCase {
         }
     }
 
-    @MainActor func testGenerationCannotAccelerateEvenWhenSpeechWouldFitAtGentleRate() async throws {
+    @MainActor func testGenerationAcceleratesToPreserveOriginalTimingWhenUnmatched() async throws {
         let item = row(2, 3)
         let manager = SubtitleManager()
         let tts = TimingFixtureTTS(duration: 1.1)
-        do {
-            try await manager.reDub(item: item, ttsService: tts)
-            XCTFail("Generation must request an explicit timeline match, not adjust speech")
-        } catch { XCTAssertTrue(error.localizedDescription.contains("匹配译文时间轴")) }
-        XCTAssertNil(item.dubbedAudioURL)
-        XCTAssertEqual(item.startTime.secondsValue, 2)
-        XCTAssertEqual(item.endTime.secondsValue, 3)
+        try await manager.reDub(item: item, ttsService: tts)
+        XCTAssertNotNil(item.dubbedAudioURL, "直接自动配音必须按照原始时长与起始点成功配音完成")
+        XCTAssertEqual(item.startTime.secondsValue, 2, "必须保留原始起始点")
+        XCTAssertEqual(item.endTime.secondsValue, 3, "必须保留原始结束点与时长")
         XCTAssertEqual(item.currentNaturalSpeech?.duration ?? 0, 1.1, accuracy: 0.005)
+        let file = try AVAudioFile(forReading: XCTUnwrap(item.dubbedAudioURL))
+        let actualDuration = Double(file.length) / file.processingFormat.sampleRate
+        XCTAssertLessThanOrEqual(actualDuration, 1.0 + 0.05)
     }
 
     @MainActor func testConfirmedMatchedAudioSurvivesSaveAndGenerationDoesNotSynthesize() async throws {
         let manager = SubtitleManager()
         let planned = try await TimelineAligner().matchTimelineUsingSpeech(
             items: [row(0, 1)], language: "zh", voice: "zh-CN", ttsService: TimingFixtureTTS(duration: 1.1), manager: manager, videoDuration: 1)
+        defer { for item in planned { if let url = item.dubbedAudioURL { try? FileManager.default.removeItem(at: url) } } }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -290,7 +288,6 @@ final class AnchoredDubbingTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: url), before)
         XCTAssertEqual(loaded.startTime.secondsValue, 0)
         XCTAssertEqual(loaded.endTime.secondsValue, 1)
-        defer { for item in planned { if let url = item.dubbedAudioURL { try? FileManager.default.removeItem(at: url) } } }
     }
 
     @MainActor func testMixedMatchedAudioKeepsTheGapBeforeTheNextSentence() async throws {
@@ -320,12 +317,12 @@ final class AnchoredDubbingTests: XCTestCase {
         XCTAssertNil(app.errorMessage)
         XCTAssertNotNil(app.auditionPlayer)
         XCTAssertEqual(fixture.calls, 1)
-        XCTAssertNil(item.dubbedAudioURL, "Natural audition must not publish overlong export audio")
+        XCTAssertNotNil(item.dubbedAudioURL, "单句配音试听应生成并发布适配语速的配音切片")
         XCTAssertEqual(item.startTime.secondsValue, 0)
         XCTAssertEqual(item.endTime.secondsValue, 0.5)
         await app.auditionSubtitle(item, target: .translated)
         XCTAssertNil(app.errorMessage)
-        XCTAssertEqual(fixture.calls, 1, "Repeated audition reuses natural speech")
+        XCTAssertEqual(fixture.calls, 1, "重复试听复用配音缓存")
     }
 
     @MainActor func testContextPlanMovesInternalStartsAndBalancesMeasuredSpeech() async throws {

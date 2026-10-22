@@ -54,12 +54,6 @@ public struct SubtitleRowView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let issue = item.dubbingTimingIssue {
-                Label(issue, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             HStack(spacing: 6) {
                 // 1. 多选勾选圈 (可直观勾选多行进行批量合并)
                 Button(action: onToggleSelect) {
@@ -90,6 +84,18 @@ public struct SubtitleRowView: View {
                     .cornerRadius(4)
                 }
                 .buttonStyle(.plain)
+
+                // 倍速指示标签（仅在需要加速时显示，如 1.6倍速）
+                if let rate = item.dubbingPacingRate, let speedText = item.dubbingSpeedDisplay {
+                    Text(speedText)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(rate > DubbingPacing.warningRate ? Color.orange.opacity(0.18) : Color.secondary.opacity(0.12))
+                        .foregroundColor(rate > DubbingPacing.warningRate ? .orange : .secondary)
+                        .cornerRadius(4)
+                        .help(String(format: "配音语速: %.2f倍速；可点击顶部「匹配译文时间轴」优化听感", rate))
+                }
 
                 Spacer()
 

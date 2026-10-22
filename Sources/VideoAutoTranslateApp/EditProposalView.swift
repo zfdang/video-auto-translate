@@ -46,13 +46,12 @@ struct EditProposalView: View {
                                     Button("试听正常语速") { play(audio.url) }
                                     if row.hasCurrentAudio(voice: proposal.voice), let url = row.dubbedAudioURL {
                                         Button("试听匹配结果") { play(url) }
-                                        Text(String(format: "建议语速：%.2f 倍", max(1, audio.duration / row.durationSeconds)))
-                                            .font(.caption).foregroundStyle(.secondary)
+                                        let speed = max(1, audio.duration / row.durationSeconds)
+                                        Text(String(format: "语速：%.2f 倍", speed))
+                                            .font(.caption)
+                                            .foregroundStyle(speed > DubbingPacing.warningRate ? .orange : .secondary)
                                     }
                                 }
-                            }
-                            if let issue = row.dubbingTimingIssue {
-                                Text(issue).font(.caption).foregroundStyle(.orange)
                             }
                         }
                         Divider()
