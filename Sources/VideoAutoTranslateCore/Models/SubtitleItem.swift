@@ -164,7 +164,7 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
 
     // MARK: - Codable
     enum CodingKeys: String, CodingKey {
-        case id, startTime, endTime, originalText, translatedText, words, dubbedAudioURL, dubbedAudioSignature, translationNeedsReview, sourceStartTime, sourceEndTime
+        case id, startTime, endTime, originalText, translatedText, words, dubbedAudioURL, dubbedAudioSignature, dubbedRate, translationNeedsReview, sourceStartTime, sourceEndTime
     }
 
     public init(from decoder: Decoder) throws {
@@ -181,6 +181,8 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         self.words = try container.decode([WordToken].self, forKey: .words)
         self.dubbedAudioURL = try container.decodeIfPresent(URL.self, forKey: .dubbedAudioURL)
         self.dubbedAudioSignature = try container.decodeIfPresent(String.self, forKey: .dubbedAudioSignature)
+        let savedRate = try container.decodeIfPresent(Double.self, forKey: .dubbedRate)
+        self.dubbedRate = savedRate.flatMap { $0.isFinite && $0 >= 1 ? $0 : nil }
         self.translationNeedsReview = try container.decodeIfPresent(Bool.self, forKey: .translationNeedsReview) ?? false
     }
 
@@ -196,6 +198,9 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
         try container.encode(words, forKey: .words)
         try container.encodeIfPresent(dubbedAudioURL, forKey: .dubbedAudioURL)
         try container.encodeIfPresent(dubbedAudioSignature, forKey: .dubbedAudioSignature)
+        if let dubbedRate, dubbedRate.isFinite, dubbedRate >= 1 {
+            try container.encode(dubbedRate, forKey: .dubbedRate)
+        }
         try container.encode(translationNeedsReview, forKey: .translationNeedsReview)
     }
 }
