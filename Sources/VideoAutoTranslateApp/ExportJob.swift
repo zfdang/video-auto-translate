@@ -11,7 +11,7 @@ import VideoAutoTranslateCore
     @Published public private(set) var outputURL: URL?
     private var task: Task<Void, Never>?
 
-    public func start(video: URL, background: URL?, rows: [SubtitleItem], voice: String, audioMode: VideoAudioExportMode, subtitleMode: SubtitleExportMode, destination: URL, skipped: Int, ttsService: TTSServiceProtocol? = nil) {
+    public func start(video: URL, rows: [SubtitleItem], voice: String, audioMode: VideoAudioExportMode, subtitleMode: SubtitleExportMode, destination: URL, skipped: Int, ttsService: TTSServiceProtocol? = nil) {
         guard !isRunning else { return }
         let snapshot = rows.map { $0.snapshot() }
         isRunning = true
@@ -46,7 +46,7 @@ import VideoAutoTranslateCore
                     message = "正在混音…"
                     let mixed = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
                     audio = mixed
-                    try await AudioMixer().mix(backgroundAudioURL: audioMode == .overlay ? (background ?? video) : nil, subtitles: snapshot, to: mixed)
+                    try await AudioMixer().mix(backgroundAudioURL: audioMode == .overlay ? video : nil, subtitles: snapshot, to: mixed)
                 }
                 try Task.checkCancellation()
                 progress = 0.75

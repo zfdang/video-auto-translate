@@ -72,7 +72,7 @@ final class RealSampleDubbingTests: XCTestCase {
         }
         let destination = folder.appendingPathComponent("cluster-preview.mp4")
         print("REAL SAMPLE: exporting \(destination.path)"); fflush(stdout)
-        app.exportJob.start(video: video, background: nil, rows: app.project.subtitles, voice: voice,
+        app.exportJob.start(video: video, rows: app.project.subtitles, voice: voice,
             audioMode: .translated, subtitleMode: .bilingual, destination: destination, skipped: 0)
         let deadline = Date().addingTimeInterval(180)
         while app.exportJob.isRunning && Date() < deadline { try await Task.sleep(nanoseconds: 100_000_000) }
