@@ -65,6 +65,8 @@ public final class AppState: ObservableObject {
     // 设置与探测
     @Published public var availableOllamaModels: [String] = []
     @Published public var ollamaPullStates: [String: ModelState] = [:]
+    private var ollamaPullTasks: [String: Task<Void, Never>] = [:]
+    private var ollamaPullTokens: [String: UUID] = [:]
     @Published public var isASRServerOnline: Bool = false
     @Published public var isTestingASR: Bool = false
     @Published public var asrTestFeedback: (isSuccess: Bool, message: String)? = nil
@@ -294,29 +296,45 @@ public final class AppState: ObservableObject {
 
     /// 一键从 Ollama 官方源拉取推荐大语言模型并实时报告下载进度
     public func pullOllamaModel(name: String) {
-        Task {
-            await MainActor.run {
-                self.ollamaPullStates[name] = .downloading(progress: 0.05, speed: "连接 Ollama 服务...")
+        guard ollamaPullTasks[name] == nil else { return }
+        let token = UUID()
+        ollamaPullTokens[name] = token
+        ollamaPullStates[name] = .downloading(progress: 0, speed: "连接 Ollama 服务...")
+        let baseURL = project.llmConfig.ollamaBaseURL
+        ollamaPullTasks[name] = Task {
+            defer {
+                if ollamaPullTokens[name] == token {
+                    ollamaPullTasks[name] = nil
+                    ollamaPullTokens[name] = nil
+                }
             }
             do {
-                try await ollamaProbe.pullModel(name: name, baseURL: project.llmConfig.ollamaBaseURL) { [weak self] progress, speed in
+                try Task.checkCancellation()
+                try await ollamaProbe.pullModel(name: name, baseURL: baseURL) { [weak self] progress, speed in
                     Task { @MainActor [weak self] in
-                        self?.ollamaPullStates[name] = .downloading(progress: progress, speed: speed)
+                        guard let self, self.ollamaPullTokens[name] == token else { return }
+                        self.ollamaPullStates[name] = .downloading(progress: progress, speed: speed)
                     }
                 }
+                try Task.checkCancellation()
                 await probeLocalOllama()
-                await MainActor.run {
-                    self.ollamaPullStates[name] = .ready(localPath: "Ollama: \(name)", sizeDescription: "")
-                    self.project.llmConfig.ollamaModel = name
-                    self.statusMessage = "模型 \(name) 已成功下载至 Ollama 并设为当前模型"
-                }
+                guard ollamaPullTokens[name] == token, !Task.isCancelled else { return }
+                ollamaPullStates[name] = .ready(localPath: "Ollama: \(name)", sizeDescription: "")
+                project.llmConfig.ollamaModel = name
+                statusMessage = "模型 \(name) 已成功下载至 Ollama 并设为当前模型"
             } catch {
-                await MainActor.run {
-                    self.ollamaPullStates[name] = .failed(error.localizedDescription)
-                    self.errorMessage = "Ollama 拉取模型失败: \(error.localizedDescription)"
-                }
+                guard ollamaPullTokens[name] == token, !Task.isCancelled else { return }
+                ollamaPullStates[name] = .failed(error.localizedDescription)
+                errorMessage = "Ollama 拉取模型失败: \(error.localizedDescription)"
             }
         }
+    }
+
+    public func cancelOllamaPull(name: String) {
+        ollamaPullTokens[name] = nil
+        ollamaPullTasks.removeValue(forKey: name)?.cancel()
+        ollamaPullStates[name] = nil
+        statusMessage = "已取消模型 \(name) 的下载"
     }
 
     /// 取消所有正在执行的后台任务 (R03 & FU05)
@@ -349,7 +367,7 @@ public final class AppState: ObservableObject {
     public func openVideo(url: URL) {
         guard confirmReplacingProject() else { return }
         if url.pathExtension.lowercased() == "vatproject" {
-            do { try loadProject(from: url) } catch { errorMessage = "无法打开工程：\(error.localizedDescription)" }
+            do { try loadProject(from: url) } catch { errorMessage = error is DecodingError ? "工程文件格式无效，请选择有效的 .vatproject 工程文件。" : "无法打开工程：\(error.localizedDescription)" }
             return
         }
         clearRecoveryCheckpoint()
@@ -1187,7 +1205,7 @@ public final class AppState: ObservableObject {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try loadProject(from: url) } catch { errorMessage = "无法打开工程：\(error.localizedDescription)" }
+        do { try loadProject(from: url) } catch { errorMessage = error is DecodingError ? "工程文件格式无效，请选择有效的 .vatproject 工程文件。" : "无法打开工程：\(error.localizedDescription)" }
     }
 
     public func loadProject(from url: URL) throws {
@@ -1349,7 +1367,14 @@ public final class AppState: ObservableObject {
     /// 在访达中打开当前生效的模型目录
     public func revealCurrentModelDirectoryInFinder() {
         let dir = modelStorageManager.resolvedStorageDirectory()
-        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir.path)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            if !NSWorkspace.shared.selectFile(dir.path, inFileViewerRootedAtPath: dir.deletingLastPathComponent().path) {
+                errorMessage = "无法打开模型目录，请检查目录权限。"
+            }
+        } catch {
+            errorMessage = "无法打开模型目录：\(error.localizedDescription)"
+        }
     }
 
     /// 触发指定模型的下载 (R23: 首次下载先准备 sidecar 服务，避免连接失败或遗留下载中状态)

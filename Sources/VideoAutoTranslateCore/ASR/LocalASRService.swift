@@ -58,6 +58,15 @@ public final class LocalASRService: ASREngineProtocol {
         try write("\r\n--\(boundary)--\r\n")
     }
 
+    /// Aligners can place unresolvable words at a shared boundary. Preserve that
+    /// zero-length anchor rather than extending it into the following sentence.
+    internal static func alignedWordToken(_ word: ASRWordResponse) throws -> WordToken {
+        guard word.start.isFinite, word.end.isFinite, word.start >= 0, word.end >= word.start else {
+            throw ASRError.alignmentRequired(word.word)
+        }
+        return WordToken(text: word.word, startTime: .from(seconds: word.start), endTime: .from(seconds: word.end))
+    }
+
     /// 快速检测本地 ASR 服务是否在线
     public func checkHealth() async -> Bool {
         let (success, _) = await Self.testConnection(urlString: config.serviceURL)
@@ -194,20 +203,14 @@ public final class LocalASRService: ASREngineProtocol {
 
         if let words = decoded.words, !words.isEmpty {
             for w in words {
-                let startCM = CMTime.from(seconds: w.start)
-                let endCM = CMTime.from(seconds: max(w.start + 0.05, w.end))
-                wordTokens.append(WordToken(text: w.word, startTime: startCM, endTime: endCM))
+                wordTokens.append(try Self.alignedWordToken(w))
             }
         } else if let segments = decoded.segments, !segments.isEmpty {
             // 如果只有 segments，从 segments 提取
             for seg in segments {
                 if let segWords = seg.words, !segWords.isEmpty {
                     for w in segWords {
-                        wordTokens.append(WordToken(
-                            text: w.word,
-                            startTime: CMTime.from(seconds: w.start),
-                            endTime: CMTime.from(seconds: max(w.start + 0.05, w.end))
-                        ))
+                        wordTokens.append(try Self.alignedWordToken(w))
                     }
                 } else {
                     // 按句子构建 token

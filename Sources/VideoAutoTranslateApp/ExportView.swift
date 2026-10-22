@@ -9,7 +9,7 @@ public struct ExportView: View {
     @State private var subtitleFileMode: SubtitleExportMode = .bilingual
     @State private var videoAudioMode: VideoAudioExportMode = .translated
     @State private var videoSubtitleMode: SubtitleExportMode = .bilingual
-    @State private var isExporting: Bool = false
+    private var isExporting: Bool { appState.exportJob.isRunning }
     @State private var exportMessage: String = ""
 
     private var hasTranslations: Bool {
@@ -199,14 +199,18 @@ public struct ExportView: View {
                                 ProgressView()
                                     .controlSize(.small)
                             } else {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
+                                Image(systemName: appState.exportJob.error != nil || exportMessage.contains("失败") || exportMessage.contains("不能") ? "exclamationmark.triangle.fill" : (exportMessage.contains("取消") ? "minus.circle" : "checkmark.circle.fill"))
+                                    .foregroundColor(appState.exportJob.error != nil || exportMessage.contains("失败") || exportMessage.contains("不能") ? .orange : (exportMessage.contains("取消") ? .secondary : .green))
                             }
                             Text(exportMessage)
                                 .font(.caption)
                                 .foregroundColor(isExporting ? .accentColor : .primary)
                         }
                         .padding(.horizontal, 4)
+                        if isExporting {
+                            ProgressView(value: appState.exportJob.progress)
+                            Button("取消导出") { appState.exportJob.cancel() }
+                        }
                     }
 
                     Spacer()
@@ -215,6 +219,9 @@ public struct ExportView: View {
             }
         }
         .frame(width: 580, height: 600)
+        .onReceive(appState.exportJob.$message) { message in
+            if !message.isEmpty { exportMessage = message }
+        }
         .onAppear {
             if hasDubbing || hasTranslations {
                 videoAudioMode = .translated
@@ -244,7 +251,7 @@ public struct ExportView: View {
         case .originalOnly:
             return "画面仅压制显示原始语言字幕"
         case .none:
-            return "不内嵌任何字幕，输出纯净画面视频"
+            return "不追加字幕，保留源视频画面（已有硬字幕仍会保留）"
         }
     }
 
@@ -279,71 +286,18 @@ public struct ExportView: View {
                     return
                 }
 
-                // R28: 冻结当前工程音频素材引用
-                let frozenSourceAudio = appState.project.audioURL
-                let currentAudioMode = videoAudioMode
-                let currentSubtitleMode = videoSubtitleMode
-
-                isExporting = true
-                exportMessage = "正在准备合成导出任务..."
-
-                Task {
-                    do {
-                        let shouldUseDubbedAudio = (currentAudioMode == .translated || currentAudioMode == .overlay) && (hasDubbing || hasTranslations)
-                        var audioToUse: URL? = nil
-
-                        if shouldUseDubbedAudio {
-                            await MainActor.run {
-                                exportMessage = "正在为全片字幕生成/校验完整配音切片..."
-                            }
-
-                            // 1. 确保所有字幕配音完整生成，缺失时即时补齐，彻底杜绝后半段失声
-                            try await appState.ensureAllSubtitlesDubbed { current, total in
-                                Task { @MainActor in
-                                    exportMessage = "正在为全片合成配音切片 (\(current)/\(total))..."
-                                }
-                            }
-
-                            await MainActor.run {
-                                exportMessage = "正在执行音频无损伸缩与闪避混音..."
-                            }
-
-                            let tempDir = FileManager.default.temporaryDirectory
-                            let mixedAudio = tempDir.appendingPathComponent("final_mix_\(UUID().uuidString).m4a")
-
-                            // 使用已确保具备完整配音切片的工程字幕列表
-                            let duckBackground = (currentAudioMode == .overlay)
-                            try await appState.audioMixer.mix(
-                                backgroundAudioURL: duckBackground ? frozenSourceAudio : nil,
-                                subtitles: appState.project.subtitles,
-                                to: mixedAudio
-                            )
-                            audioToUse = mixedAudio
-                        }
-
-                        await MainActor.run {
-                            exportMessage = "正在渲染画面字幕与音频，并执行硬件硬编导出..."
-                        }
-
-                        try await appState.videoComposer.compose(
-                            videoURL: sourceVideo,
-                            newAudioURL: audioToUse,
-                            outputURL: destinationURL,
-                            subtitles: appState.project.subtitles,
-                            subtitleMode: currentSubtitleMode
-                        )
-
-                        await MainActor.run {
-                            isExporting = false
-                            exportMessage = "视频已成功合成并导出至: \(destinationURL.lastPathComponent)"
-                        }
-                    } catch {
-                        await MainActor.run {
-                            isExporting = false
-                            exportMessage = "导出失败: \(error.localizedDescription)"
-                        }
-                    }
-                }
+                let audioMode: VideoAudioExportMode = (hasDubbing || hasTranslations) ? videoAudioMode : .original
+                appState.exportJob.start(
+                    video: sourceVideo,
+                    background: appState.project.audioURL,
+                    rows: appState.project.subtitles,
+                    voice: appState.project.effectiveVoiceCode,
+                    audioMode: audioMode,
+                    subtitleMode: videoSubtitleMode,
+                    destination: destinationURL,
+                    skipped: 0,
+                    ttsService: TTSFactory.makeService(for: appState.project.ttsConfig.engineType)
+                )
             }
         }
     }

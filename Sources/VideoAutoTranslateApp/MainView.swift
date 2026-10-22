@@ -130,6 +130,40 @@ public struct MainView: View {
     // MARK: - 顶部一体化工作流工具栏
     private var topWorkflowBar: some View {
         HStack(spacing: 6) {
+            ScrollView(.horizontal) {
+                workflowSteps
+            }
+            .scrollIndicators(.visible)
+            .frame(height: 40)
+
+            // 帮助按钮
+            Button(action: {
+                appState.showHelp = true
+            }) {
+                Image(systemName: "questionmark.circle")
+                    .font(.body)
+            }
+            .buttonStyle(.bordered)
+            .help("使用帮助与快捷键指南 (⌘?)")
+            .keyboardShortcut("?", modifiers: .command)
+
+            // 设置按钮
+            Button(action: {
+                appState.showSettings = true
+            }) {
+                Image(systemName: "gearshape.fill")
+                    .font(.body)
+            }
+            .buttonStyle(.bordered)
+            .help("偏好设置 (模型下载与存储、Ollama 与 ASR 引擎托管)")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var workflowSteps: some View {
+        HStack(spacing: 6) {
             // 步骤 1: 导入视频
             HStack(spacing: 6) {
                 StepBadge(
@@ -368,32 +402,8 @@ public struct MainView: View {
             .fixedSize()
             .layoutPriority(1)
 
-            Spacer()
-
-            // 帮助按钮
-            Button(action: {
-                appState.showHelp = true
-            }) {
-                Image(systemName: "questionmark.circle")
-                    .font(.body)
-            }
-            .buttonStyle(.bordered)
-            .help("使用帮助与快捷键指南 (⌘?)")
-            .keyboardShortcut("?", modifiers: .command)
-
-            // 设置按钮
-            Button(action: {
-                appState.showSettings = true
-            }) {
-                Image(systemName: "gearshape.fill")
-                    .font(.body)
-            }
-            .buttonStyle(.bordered)
-            .help("偏好设置 (模型下载与存储、Ollama 与 ASR 引擎托管)")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var workflowArrow: some View {

@@ -500,6 +500,8 @@ public struct SettingsView: View {
                         Text("\(Int(progress * 100))% · \(speed)")
                             .font(.caption2)
                             .foregroundColor(.secondary)
+                        Button("取消下载") { appState.cancelOllamaPull(name: preset.name) }
+                            .font(.caption)
                     }
                 } else if isInstalled {
                     HStack(spacing: 6) {
@@ -635,7 +637,10 @@ public struct SettingsView: View {
                         engine: appState.project.ttsConfig.engineType
                     )
 
-                    Picker("当前音色", selection: $appState.project.ttsConfig.selectedVoice) {
+                    Picker("当前音色", selection: Binding(
+                        get: { appState.project.effectiveVoiceCode },
+                        set: { appState.project.ttsConfig.selectedVoice = $0 }
+                    )) {
                         ForEach(availableVoices) { voice in
                             HStack {
                                 Text(voice.name)

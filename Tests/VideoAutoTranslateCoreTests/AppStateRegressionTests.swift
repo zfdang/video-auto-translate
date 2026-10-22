@@ -1,5 +1,6 @@
 import XCTest
 import CoreMedia
+import AVFoundation
 @testable import VideoAutoTranslateCore
 @testable import VideoAutoTranslateApp
 
@@ -78,6 +79,28 @@ import CoreMedia
         XCTAssertEqual(app.project.subtitles[0].startTime.secondsValue, 1)
         XCTAssertEqual(app.project.subtitles[0].endTime.secondsValue, 2)
         XCTAssertFalse(app.canUndo)
+    }
+
+    func testCancellingModelPullKeepsCurrentModelAndAllowsRetry() async {
+        let app = AppState(probeServices: false)
+        app.project.llmConfig.ollamaBaseURL = "http://127.0.0.1:1"
+        let current = app.project.llmConfig.ollamaModel
+        for _ in 0..<2 {
+            app.pullOllamaModel(name: "cancel-test")
+            XCTAssertNotNil(app.ollamaPullStates["cancel-test"])
+            app.cancelOllamaPull(name: "cancel-test")
+            await Task.yield()
+            XCTAssertNil(app.ollamaPullStates["cancel-test"])
+            XCTAssertNil(app.errorMessage)
+            XCTAssertEqual(app.project.llmConfig.ollamaModel, current)
+        }
+    }
+
+    func testInvalidExportMediaExplainsHowToRecover() {
+        let error = NSError(domain: AVFoundationErrorDomain, code: AVError.Code.fileFormatNotRecognized.rawValue)
+        XCTAssertTrue(ExportJob.failureDescription(error).contains("重新定位媒体"))
+        let other = NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "磁盘空间不足"])
+        XCTAssertEqual(ExportJob.failureDescription(other), "磁盘空间不足")
     }
 
     func testExportCancellationPreservesExistingDestination() async throws {

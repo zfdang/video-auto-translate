@@ -4,7 +4,7 @@ import AVFoundation
 @testable import VideoAutoTranslateApp
 
 /// Opt-in real-media acceptance test. Uses the supplied Paris tour and its
-/// captured 25-line project, real system voices, local context planning and export.
+/// captured 25-line project, configured real voices, local context planning and export.
 final class RealSampleDubbingTests: XCTestCase {
     @MainActor func testParisTourMatchAuditionGenerateAndExport() async throws {
         guard ProcessInfo.processInfo.environment["VAT_REAL_DUBBING_SAMPLE"] == "1" else {
@@ -34,7 +34,7 @@ final class RealSampleDubbingTests: XCTestCase {
         let proposal = try XCTUnwrap(app.editProposal)
         XCTAssertEqual(proposal.after.count, 25)
         XCTAssertEqual(proposal.after.map(\.translatedText), original.map(\.translatedText))
-        let voice = app.project.llmConfig.targetLanguageVoiceCode
+        let voice = app.project.effectiveVoiceCode
         let timeline = proposal.after.map { ($0.startTime, $0.endTime, $0.dubbedAudioURL) }
         var report: [[String: Any]] = []
         var fastest = 1.0
