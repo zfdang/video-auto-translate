@@ -1367,7 +1367,14 @@ public final class AppState: ObservableObject {
     /// 在访达中打开当前生效的模型目录
     public func revealCurrentModelDirectoryInFinder() {
         let dir = modelStorageManager.resolvedStorageDirectory()
-        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir.path)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            if !NSWorkspace.shared.selectFile(dir.path, inFileViewerRootedAtPath: dir.deletingLastPathComponent().path) {
+                errorMessage = "无法打开模型目录，请检查目录权限。"
+            }
+        } catch {
+            errorMessage = "无法打开模型目录：\(error.localizedDescription)"
+        }
     }
 
     /// 触发指定模型的下载 (R23: 首次下载先准备 sidecar 服务，避免连接失败或遗留下载中状态)
