@@ -240,7 +240,7 @@ final class AnchoredDubbingTests: XCTestCase {
         await app.matchTimelineToTranslation()
         XCTAssertEqual(fixture.calls, 2)
         let proposal = try XCTUnwrap(app.editProposal)
-        XCTAssertEqual(proposal.after[0].currentNaturalSpeech?.voice, app.project.llmConfig.targetLanguageVoiceCode)
+        XCTAssertEqual(proposal.after[0].currentNaturalSpeech?.voice, app.project.effectiveVoiceCode)
         XCTAssertEqual(app.project.subtitles[0].durationSeconds, 4)
         app.project.llmConfig.targetLanguage = "English"
         app.applyEditProposal()

@@ -19,5 +19,5 @@ fi
 mkdir -p "$(dirname "$TARGET")"
 "$PYTHON" -m venv "$TARGET"
 "$TARGET/bin/python" -m pip install --disable-pip-version-check -r "$SCRIPT_DIR/runtime-requirements.txt"
-"$TARGET/bin/python" -c 'import fastapi, uvicorn, multipart, mlx_audio, huggingface_hub'
-echo "识别环境已准备完成；接下来请下载识别与对齐模型。"
+"$TARGET/bin/python" -c 'import fastapi, uvicorn, multipart, mlx_audio, huggingface_hub, edge_tts'
+echo "识别与配音环境已准备完成；接下来请下载识别与对齐模型。"

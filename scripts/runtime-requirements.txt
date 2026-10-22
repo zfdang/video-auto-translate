@@ -4,3 +4,4 @@ uvicorn==0.54.0
 python-multipart==0.0.32
 mlx-audio==0.5.9
 huggingface-hub==1.33.0
+edge-tts>=7.0.0

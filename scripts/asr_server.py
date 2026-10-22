@@ -26,9 +26,16 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 import uvicorn
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+HAS_EDGE_TTS = False
+try:
+    import edge_tts
+    HAS_EDGE_TTS = True
+except ImportError:
+    pass
 
 app = FastAPI(title="VideoAutoTranslate Local ASR Service", version="1.1.0")
 
@@ -192,6 +199,7 @@ def health_check():
         "status": "ok",
         "engine": "mlx-audio (Apple Silicon)" if HAS_MLX else "fallback-engine",
         "device": "Apple Silicon (Metal)" if HAS_MLX else "CPU",
+        "has_edge_tts": HAS_EDGE_TTS,
         "current_storage_dir": str(CURRENT_STORAGE_DIR)
     }
 
@@ -699,6 +707,119 @@ def run_local_transcription(audio_path: str, model: str = "qwen3-asr", language:
         raise RuntimeError(f"ASR 识别处理失败: {e}")
 
 
+# ==============================================================================
+# Edge TTS 语音合成支持
+# ==============================================================================
+
+EDGE_PRESET_VOICES = [
+    # 简体中文
+    {"id": "zh-CN-YunxiNeural", "name": "云希 (热门影视解说·活力生动·男)", "gender": "Male", "locale": "zh-CN", "recommended": True},
+    {"id": "zh-CN-XiaoxiaoNeural", "name": "晓晓 (亲和自然·温暖温润·女)", "gender": "Female", "locale": "zh-CN", "recommended": True},
+    {"id": "zh-CN-YunjianNeural", "name": "云健 (沉稳专业·纪录片解说·男)", "gender": "Male", "locale": "zh-CN", "recommended": True},
+    {"id": "zh-CN-XiaoyiNeural", "name": "晓伊 (生动活泼·故事朗读·女)", "gender": "Female", "locale": "zh-CN", "recommended": False},
+    {"id": "zh-CN-YunyangNeural", "name": "云扬 (专业大气·新闻播报·男)", "gender": "Male", "locale": "zh-CN", "recommended": False},
+    {"id": "zh-CN-liaoning-XiaobeiNeural", "name": "晓北 (东北口音·幽默生动·女)", "gender": "Female", "locale": "zh-CN", "recommended": False},
+    {"id": "zh-CN-shaanxi-YifanNeural", "name": "一凡 (陕西方言·质朴沉稳·男)", "gender": "Male", "locale": "zh-CN", "recommended": False},
+    # 繁体中文
+    {"id": "zh-TW-HsiaoChenNeural", "name": "晓臻 (台湾国语·自然温柔·女)", "gender": "Female", "locale": "zh-TW", "recommended": True},
+    {"id": "zh-TW-YunJheNeural", "name": "云哲 (台湾国语·阳光亲切·男)", "gender": "Male", "locale": "zh-TW", "recommended": True},
+    {"id": "zh-HK-HiuMaanNeural", "name": "晓曼 (粤语·清晰流畅·女)", "gender": "Female", "locale": "zh-HK", "recommended": True},
+    {"id": "zh-HK-WanLungNeural", "name": "云龙 (粤语·沉稳自然·男)", "gender": "Male", "locale": "zh-HK", "recommended": True},
+    # 英语
+    {"id": "en-US-AvaMultilingualNeural", "name": "Ava (多语神经网络·自然地道·女)", "gender": "Female", "locale": "en-US", "recommended": True},
+    {"id": "en-US-AndrewMultilingualNeural", "name": "Andrew (多语神经网络·沉稳自信·男)", "gender": "Male", "locale": "en-US", "recommended": True},
+    {"id": "en-US-AriaNeural", "name": "Aria (专业自信·新闻科普·女)", "gender": "Female", "locale": "en-US", "recommended": True},
+    {"id": "en-US-GuyNeural", "name": "Guy (自然热情·随和解说·男)", "gender": "Male", "locale": "en-US", "recommended": True},
+    {"id": "en-US-JennyNeural", "name": "Jenny (友好舒适·日常交流·女)", "gender": "Female", "locale": "en-US", "recommended": False},
+    {"id": "en-GB-SoniaNeural", "name": "Sonia (英式发音·优雅知性·女)", "gender": "Female", "locale": "en-GB", "recommended": True},
+    {"id": "en-GB-RyanNeural", "name": "Ryan (英式发音·醇厚自然·男)", "gender": "Male", "locale": "en-GB", "recommended": True},
+    # 日语
+    {"id": "ja-JP-NanamiNeural", "name": "Nanami 七海 (温柔清澈·日语·女)", "gender": "Female", "locale": "ja-JP", "recommended": True},
+    {"id": "ja-JP-KeitaNeural", "name": "Keita 圭太 (清爽利落·日语·男)", "gender": "Male", "locale": "ja-JP", "recommended": True},
+    # 韩语
+    {"id": "ko-KR-SunHiNeural", "name": "SunHi 善熙 (清晰亲和·韩语·女)", "gender": "Female", "locale": "ko-KR", "recommended": True},
+    {"id": "ko-KR-InJoonNeural", "name": "InJoon 仁俊 (磁性沉着·韩语·男)", "gender": "Male", "locale": "ko-KR", "recommended": True},
+    # 法语
+    {"id": "fr-FR-DeniseNeural", "name": "Denise (优雅地道·法语·女)", "gender": "Female", "locale": "fr-FR", "recommended": True},
+    {"id": "fr-FR-HenriNeural", "name": "Henri (成熟稳重·法语·男)", "gender": "Male", "locale": "fr-FR", "recommended": True},
+    # 德语
+    {"id": "de-DE-KatjaNeural", "name": "Katja (严谨清晰·德语·女)", "gender": "Female", "locale": "de-DE", "recommended": True},
+    {"id": "de-DE-ConradNeural", "name": "Conrad (沉稳可靠·德语·男)", "gender": "Male", "locale": "de-DE", "recommended": True},
+    # 西班牙语
+    {"id": "es-ES-ElviraNeural", "name": "Elvira (自然明快·西语·女)", "gender": "Female", "locale": "es-ES", "recommended": True},
+    {"id": "es-ES-AlvaroNeural", "name": "Alvaro (醇厚生动·西语·男)", "gender": "Male", "locale": "es-ES", "recommended": True},
+    # 俄语
+    {"id": "ru-RU-SvetlanaNeural", "name": "Svetlana (清晰自然·俄语·女)", "gender": "Female", "locale": "ru-RU", "recommended": True},
+    {"id": "ru-RU-DmitryNeural", "name": "Dmitry (稳健有力·俄语·男)", "gender": "Male", "locale": "ru-RU", "recommended": True},
+]
+
+
+class SpeechRequest(BaseModel):
+    input: str
+    voice: Optional[str] = "zh-CN-YunxiNeural"
+    model: Optional[str] = "edge-tts"
+    speed: Optional[float] = 1.0
+    response_format: Optional[str] = "mp3"
+
+
+@app.get("/v1/audio/voices")
+async def list_voices(locale: Optional[str] = None):
+    """获取支持的高质量音色列表，支持按语言代码前缀过滤"""
+    if not locale:
+        return {"voices": EDGE_PRESET_VOICES}
+
+    target = locale.strip().lower().replace("_", "-")
+    filtered = []
+    for v in EDGE_PRESET_VOICES:
+        v_loc = v["locale"].lower()
+        if v_loc == target or v_loc.startswith(target) or target.startswith(v_loc.split("-")[0]):
+            filtered.append(v)
+
+    if not filtered:
+        return {"voices": EDGE_PRESET_VOICES}
+    return {"voices": filtered}
+
+
+@app.post("/v1/audio/speech")
+async def create_speech(req: SpeechRequest):
+    """OpenAI 规范兼容的语音合成接口，基于 Microsoft Edge Neural TTS"""
+    clean_text = req.input.strip()
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="待合成文本不能为空")
+
+    if not HAS_EDGE_TTS:
+        raise HTTPException(
+            status_code=503,
+            detail="当前 Python 环境未安装 edge-tts 依赖，请在终端执行 'pip install edge-tts' 或启用系统原生 TTS。"
+        )
+
+    voice = (req.voice or "zh-CN-YunxiNeural").strip()
+    if "-" not in voice or len(voice) <= 6:
+        for preset in EDGE_PRESET_VOICES:
+            if preset["locale"].lower().startswith(voice.lower()) and preset["recommended"]:
+                voice = preset["id"]
+                break
+
+    speed = max(0.5, min(2.5, req.speed or 1.0))
+    rate_percent = int(round((speed - 1.0) * 100))
+    rate_str = f"+{rate_percent}%" if rate_percent >= 0 else f"{rate_percent}%"
+
+    try:
+        communicate = edge_tts.Communicate(text=clean_text, voice=voice, rate=rate_str)
+        audio_chunks = []
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_chunks.append(chunk["data"])
+
+        if not audio_chunks:
+            raise RuntimeError(f"Edge TTS 未能成功生成音频数据 (音色: {voice})")
+
+        audio_bytes = b"".join(audio_chunks)
+        return Response(content=audio_bytes, media_type="audio/mpeg")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"语音合成失败: {str(e)}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="VideoAutoTranslate Local Lightweight ASR Service")
     parser.add_argument("--host", default="127.0.0.1", help="绑定监听 IP")
@@ -722,6 +843,8 @@ def main():
     print(f"  监听地址: http://{args.host}:{args.port}")
     print(f"  当前模型存储目录: {CURRENT_STORAGE_DIR}")
     print(f"  OpenAI 兼容端点: http://{args.host}:{args.port}/v1/audio/transcriptions")
+    print(f"  Edge TTS 语音端点: http://{args.host}:{args.port}/v1/audio/speech")
+    print(f"  Edge TTS 音色列表: http://{args.host}:{args.port}/v1/audio/voices")
     print(f"  模型列表与状态: http://{args.host}:{args.port}/v1/models/list")
     print(f"  健康探测端点:   http://{args.host}:{args.port}/health")
     print("=" * 60)

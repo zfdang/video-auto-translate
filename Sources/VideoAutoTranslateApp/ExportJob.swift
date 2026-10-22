@@ -11,7 +11,7 @@ import VideoAutoTranslateCore
     @Published public private(set) var outputURL: URL?
     private var task: Task<Void, Never>?
 
-    public func start(video: URL, background: URL?, rows: [SubtitleItem], voice: String, audioMode: VideoAudioExportMode, subtitleMode: SubtitleExportMode, destination: URL, skipped: Int) {
+    public func start(video: URL, background: URL?, rows: [SubtitleItem], voice: String, audioMode: VideoAudioExportMode, subtitleMode: SubtitleExportMode, destination: URL, skipped: Int, ttsService: TTSServiceProtocol? = nil) {
         guard !isRunning else { return }
         let snapshot = rows.map { $0.snapshot() }
         isRunning = true
@@ -24,7 +24,7 @@ import VideoAutoTranslateCore
                 var audio: URL?
                 if audioMode != .original {
                     let manager = SubtitleManager()
-                    let tts = SystemTTSService()
+                    let tts = ttsService ?? EdgeTTSService()
                     for (index, row) in snapshot.enumerated() {
                         try Task.checkCancellation()
                         message = "生成配音 \(index + 1)/\(snapshot.count)"

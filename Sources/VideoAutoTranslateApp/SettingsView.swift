@@ -1,12 +1,13 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 import VideoAutoTranslateCore
 
 public struct SettingsView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var modelStorageManager: ModelStorageManager
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedTab: SettingsTab = .asrModels
+    @State private var selectedTab: SettingsTab = .tts
     @State private var isTestingASR: Bool = false
     @State private var asrTestFeedback: (isSuccess: Bool, message: String)? = nil
     @State private var isProbingOllama: Bool = false
@@ -14,6 +15,16 @@ public struct SettingsView: View {
     @State private var selectedLanguageOption: String = "简体中文 (Simplified Chinese)"
     @State private var onlineURLDraft = ""
     private let customLanguageTag: String = "__custom__"
+
+    // 语音合成 (TTS) 试听与环境状态
+    @State private var previewText: String = "你好，这是微软 Edge 语音合成的测试效果，发音自然生动。"
+    @State private var isSynthesizingPreview: Bool = false
+    @State private var isPlayingPreview: Bool = false
+    @State private var previewPlayer: AVPlayer? = nil
+    @State private var ttsFeedbackMessage: String? = nil
+    @State private var edgeTTSStatus: (installed: Bool, version: String, pythonPath: String) = (false, "检测中...", "")
+    @State private var isInstallingEdgeTTS: Bool = false
+    @State private var edgeTTSInstallMessage: String? = nil
 
     public init(appState: AppState) {
         self.appState = appState
@@ -24,6 +35,7 @@ public struct SettingsView: View {
         case asrModels = "ASR 模型"
         case asrService = "ASR 服务"
         case translation = "大语言模型 (LLM)"
+        case tts = "语音合成 (TTS)"
 
         var id: String { rawValue }
         var icon: String {
@@ -31,6 +43,7 @@ public struct SettingsView: View {
             case .asrModels: return "waveform.circle"
             case .asrService: return "server.rack"
             case .translation: return "brain"
+            case .tts: return "speaker.wave.3"
             }
         }
     }
@@ -51,7 +64,7 @@ public struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 380)
+                .frame(width: 480)
 
                 Spacer()
 
@@ -76,6 +89,8 @@ public struct SettingsView: View {
                     asrServiceSettingsView
                 case .translation:
                     translationSettingsView
+                case .tts:
+                    ttsSettingsView
                 }
             }
             .padding()
@@ -93,6 +108,12 @@ public struct SettingsView: View {
             } else {
                 selectedLanguageOption = customLanguageTag
             }
+            checkEdgeTTS()
+        }
+        .onDisappear {
+            previewPlayer?.pause()
+            previewPlayer = nil
+            isPlayingPreview = false
         }
     }
 
@@ -478,6 +499,271 @@ public struct SettingsView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    // MARK: - 语音合成 (TTS) Tab
+
+    private var ttsSettingsView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                // 1. 引擎选择卡片
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: "cpu")
+                            .foregroundColor(.accentColor)
+                        Text("语音合成 (TTS) 引擎")
+                            .font(.headline)
+                    }
+
+                    Picker("合成引擎", selection: $appState.project.ttsConfig.engineType) {
+                        ForEach(TTSEngineType.allCases) { engine in
+                            Text(engine.displayName).tag(engine)
+                        }
+                    }
+                    .pickerStyle(.radioGroup)
+                    .onChange(of: appState.project.ttsConfig.engineType) {
+                        appState.flushPreferences()
+                    }
+
+                    if appState.project.ttsConfig.engineType == .edgeTTS {
+                        Text("采用微软 Azure 神经网络拟真模型，语调抑扬顿挫极其自然生动，影视解说与视频配音行业首选标准（免 API Key 免费调用）。")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("基于 macOS 内置系统原生引擎，完全离线运行。但机械感稍强，推荐优先选用 Edge 拟真引擎。")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Divider()
+
+                    // 环境依赖状态指示条
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(edgeTTSStatus.installed ? Color.green : Color.orange)
+                            .frame(width: 8, height: 8)
+
+                        if edgeTTSStatus.installed {
+                            Text("Edge TTS 依赖已就绪 (版本: \(edgeTTSStatus.version))")
+                                .font(.caption)
+                                .foregroundColor(.primary)
+                        } else {
+                            Text("未检测到 edge-tts 依赖（当前环境: \(edgeTTSStatus.pythonPath)）")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+
+                        Spacer()
+
+                        if !edgeTTSStatus.installed {
+                            Button(action: installEdgeTTSAction) {
+                                HStack(spacing: 4) {
+                                    if isInstallingEdgeTTS {
+                                        ProgressView().controlSize(.small)
+                                        Text("正在安装...")
+                                    } else {
+                                        Image(systemName: "arrow.down.circle")
+                                        Text("一键安装 edge-tts")
+                                    }
+                                }
+                            }
+                            .font(.caption)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isInstallingEdgeTTS)
+                        } else {
+                            Button("重新检测") {
+                                checkEdgeTTS()
+                            }
+                            .font(.caption)
+                        }
+                    }
+
+                    if let msg = edgeTTSInstallMessage {
+                        Text(msg)
+                            .font(.caption2)
+                            .foregroundColor(msg.contains("成功") ? .green : .red)
+                    }
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(8)
+
+                // 2. 音色选择卡片
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: "person.wave.2")
+                            .foregroundColor(.accentColor)
+                        Text("配音音色")
+                            .font(.headline)
+                    }
+
+                    let availableVoices = TTSVoiceOption.voices(
+                        for: appState.project.llmConfig.targetLanguage,
+                        engine: appState.project.ttsConfig.engineType
+                    )
+
+                    Picker("当前音色", selection: $appState.project.ttsConfig.selectedVoice) {
+                        ForEach(availableVoices) { voice in
+                            HStack {
+                                Text(voice.name)
+                                if voice.isRecommended {
+                                    Text("推荐")
+                                        .font(.caption2)
+                                        .foregroundColor(.green)
+                                }
+                            }
+                            .tag(voice.id)
+                        }
+                    }
+                    .onChange(of: appState.project.ttsConfig.selectedVoice) {
+                        appState.flushPreferences()
+                    }
+
+                    HStack(spacing: 8) {
+                        Text("目标语言关联:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(appState.project.llmConfig.targetLanguage)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        Spacer()
+                        Text("生效音色代码: \(appState.project.effectiveVoiceCode)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(8)
+
+                // 3. 音色试听卡片
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: "headphones")
+                            .foregroundColor(.accentColor)
+                        Text("音色效果试听")
+                            .font(.headline)
+                    }
+
+                    TextField("试听文本", text: $previewText)
+                        .textFieldStyle(.roundedBorder)
+
+                    HStack(spacing: 12) {
+                        Button(action: togglePreviewSpeech) {
+                            HStack(spacing: 6) {
+                                if isSynthesizingPreview {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("正在生成语音...")
+                                } else if isPlayingPreview {
+                                    Image(systemName: "stop.fill")
+                                    Text("停止播放")
+                                } else {
+                                    Image(systemName: "play.fill")
+                                    Text("试听声音")
+                                }
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isSynthesizingPreview || previewText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        if let feedback = ttsFeedbackMessage {
+                            Text(feedback)
+                                .font(.caption)
+                                .foregroundColor(feedback.contains("失败") ? .red : .secondary)
+                        }
+                    }
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(8)
+
+                Spacer()
+            }
+            .padding()
+        }
+    }
+
+    private func togglePreviewSpeech() {
+        if isPlayingPreview {
+            previewPlayer?.pause()
+            previewPlayer = nil
+            isPlayingPreview = false
+            return
+        }
+
+        let text = previewText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        isSynthesizingPreview = true
+        ttsFeedbackMessage = nil
+
+        let voice = appState.project.effectiveVoiceCode
+        let service = appState.ttsService
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("tts_preview_\(UUID().uuidString).wav")
+
+        Task {
+            do {
+                _ = try await service.synthesize(text: text, voice: voice, outputURL: tempURL)
+                await MainActor.run {
+                    isSynthesizingPreview = false
+                    isPlayingPreview = true
+                    ttsFeedbackMessage = "播放中 (音色: \(voice))"
+
+                    let item = AVPlayerItem(url: tempURL)
+                    let p = AVPlayer(playerItem: item)
+                    previewPlayer = p
+                    p.play()
+
+                    NotificationCenter.default.addObserver(
+                        forName: .AVPlayerItemDidPlayToEndTime,
+                        object: item,
+                        queue: .main
+                    ) { _ in
+                        isPlayingPreview = false
+                        ttsFeedbackMessage = "试听完成"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isSynthesizingPreview = false
+                    isPlayingPreview = false
+                    ttsFeedbackMessage = "试听合成失败: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func checkEdgeTTS() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let res = EdgeTTSService.probeEdgeTTS()
+            DispatchQueue.main.async {
+                self.edgeTTSStatus = res
+            }
+        }
+    }
+
+    private func installEdgeTTSAction() {
+        isInstallingEdgeTTS = true
+        edgeTTSInstallMessage = "正在连接 PyPI 自动安装 edge-tts..."
+        Task.detached {
+            do {
+                try await EdgeTTSService.installEdgeTTS()
+                await MainActor.run {
+                    self.isInstallingEdgeTTS = false
+                    self.edgeTTSInstallMessage = "安装成功！已可直接使用微软 Edge 拟真配音。"
+                    self.checkEdgeTTS()
+                }
+            } catch {
+                await MainActor.run {
+                    self.isInstallingEdgeTTS = false
+                    self.edgeTTSInstallMessage = "安装失败: \(error.localizedDescription)。您也可以在终端执行: pip install edge-tts"
+                }
+            }
+        }
     }
 }
 
