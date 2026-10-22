@@ -54,7 +54,9 @@ public final class AppState: ObservableObject {
     public let timelineAligner = TimelineAligner()
     public let audioMixer = AudioMixer()
     public let videoComposer = VideoComposer()
-    public var ttsService: TTSServiceProtocol = SystemTTSService()
+    public var ttsService: TTSServiceProtocol = DynamicTTSService {
+        AppState.current?.project.ttsConfig ?? TTSConfiguration()
+    }
     public let ollamaProbe = OllamaProbe()
     public let llmSegmenter = LLMSegmenter()
     @Published public var modelStorageManager = ModelStorageManager()
@@ -141,6 +143,7 @@ public final class AppState: ObservableObject {
             project.llmConfig.onlineAPIKey = ServiceCredentials.read(account: preferences.llm.onlineBaseURL)
             project.asrConfig = preferences.asr
             project.modelStorageConfig = preferences.storage
+            project.ttsConfig = preferences.tts
             modelStorageManager.config = preferences.storage
             sidecarManager.modelsDirectory = modelStorageManager.resolvedStorageDirectory()
             isRestoringProject = false
@@ -528,7 +531,7 @@ public final class AppState: ObservableObject {
         project.currentStepName = "正在合成新语言配音片段..."
         project.progress = 0.0
 
-        let voice = project.llmConfig.targetLanguageVoiceCode
+        let voice = project.effectiveVoiceCode
 
         let worker = Task { () -> Void in
             let total = Double(project.subtitles.count)
@@ -622,7 +625,7 @@ public final class AppState: ObservableObject {
 
     /// 确保所有含有译文（或原文）的字幕均具备有效的配音切片；缺失时即时自动合成补齐（供导出成片等场景使用，杜绝后半段失声）
     public func ensureAllSubtitlesDubbed(voice: String? = nil, onProgress: (@Sendable (Int, Int) -> Void)? = nil) async throws {
-        let targetVoice = voice ?? project.llmConfig.targetLanguageVoiceCode
+        let targetVoice = voice ?? project.effectiveVoiceCode
         let total = project.subtitles.count
         var failures: [String] = []
         for (idx, item) in project.subtitles.enumerated() {
@@ -662,7 +665,7 @@ public final class AppState: ObservableObject {
         let request = auditionGeneration
         let generation = projectGeneration
         let media = project.videoURL ?? project.audioURL
-        let voice = project.llmConfig.targetLanguageVoiceCode
+        let voice = project.effectiveVoiceCode
         let worker = Task {
             do {
                 let audio: AVPlayer
@@ -949,7 +952,7 @@ public final class AppState: ObservableObject {
             errorMessage = "无法读取媒体时长，请重新定位媒体后再生成时间建议"
             return
         }
-        let voice = config.targetLanguageVoiceCode
+        let voice = project.effectiveVoiceCode
         let client = OpenAICompatibleClient(baseURL: config.effectiveBaseURL, apiKey: config.effectiveAPIKey, timeout: 25)
         await runEditingJob(name: "匹配译文时间轴", snapshot: snapshot, reviewUnchangedResult: true) {
             try await self.timelineAligner.matchTimelineUsingSpeech(
@@ -972,7 +975,7 @@ public final class AppState: ObservableObject {
     /// All automatic editing uses the same ownership and cancellation boundary.
     public func runEditingJob(name: String, snapshot: [SubtitleItem], reviewUnchangedResult: Bool = false, operation: @escaping @MainActor () async throws -> [SubtitleItem]) async {
         let generation = projectGeneration
-        let voice = project.llmConfig.targetLanguageVoiceCode
+        let voice = project.effectiveVoiceCode
         project.isProcessing = true
         project.currentStepName = name
         let worker = Task { try await operation() }
@@ -982,7 +985,7 @@ public final class AppState: ObservableObject {
                 try await worker.value
             } onCancel: { worker.cancel() }
             guard generation == projectGeneration, !worker.isCancelled, !Task.isCancelled else { return }
-            guard createSubtitlesSnapshot() == snapshot, project.llmConfig.targetLanguageVoiceCode == voice else {
+            guard createSubtitlesSnapshot() == snapshot, project.effectiveVoiceCode == voice else {
                 throw LLMError.parsingFailed("字幕已修改，请重新生成建议")
             }
             guard !result.isEmpty else { throw LLMError.parsingFailed("未生成有效字幕，原有内容已保留") }
@@ -1002,7 +1005,7 @@ public final class AppState: ObservableObject {
     }
 
     public func applyEditProposal() {
-        guard let proposal = editProposal, proposal.generation == projectGeneration, proposal.voice == project.llmConfig.targetLanguageVoiceCode, createSubtitlesSnapshot() == proposal.before else {
+        guard let proposal = editProposal, proposal.generation == projectGeneration, proposal.voice == project.effectiveVoiceCode, createSubtitlesSnapshot() == proposal.before else {
             editProposal = nil
             errorMessage = "工程已改变，请重新生成建议"
             return
@@ -1207,7 +1210,12 @@ public final class AppState: ObservableObject {
         guard storesPreferences else { return }
         preferencesTask?.cancel()
         do {
-            let preferences = ApplicationPreferences(llm: project.llmConfig, asr: project.asrConfig, storage: project.modelStorageConfig)
+            let preferences = ApplicationPreferences(
+                llm: project.llmConfig,
+                asr: project.asrConfig,
+                storage: project.modelStorageConfig,
+                tts: project.ttsConfig
+            )
             UserDefaults.standard.set(try preferences.encodedWithoutSecrets(), forKey: "applicationPreferences")
             try ServiceCredentials.write(preferences.llm.onlineAPIKey, account: preferences.llm.onlineBaseURL)
         } catch { statusMessage = "配置保留于当前会话；凭据保存失败，下次可能需要重新输入" }

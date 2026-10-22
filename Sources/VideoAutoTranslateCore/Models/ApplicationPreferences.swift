@@ -5,11 +5,40 @@ public struct ApplicationPreferences: Codable {
     public var llm: LLMConfiguration
     public var asr: ASRConfiguration
     public var storage: ModelStorageConfig
-    public init(llm: LLMConfiguration, asr: ASRConfiguration, storage: ModelStorageConfig) {
+    public var tts: TTSConfiguration
+
+    public init(
+        llm: LLMConfiguration,
+        asr: ASRConfiguration,
+        storage: ModelStorageConfig,
+        tts: TTSConfiguration = TTSConfiguration()
+    ) {
         self.llm = llm
         self.asr = asr
         self.storage = storage
+        self.tts = tts
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case llm, asr, storage, tts
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.llm = try container.decode(LLMConfiguration.self, forKey: .llm)
+        self.asr = try container.decode(ASRConfiguration.self, forKey: .asr)
+        self.storage = try container.decode(ModelStorageConfig.self, forKey: .storage)
+        self.tts = try container.decodeIfPresent(TTSConfiguration.self, forKey: .tts) ?? TTSConfiguration()
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(llm, forKey: .llm)
+        try container.encode(asr, forKey: .asr)
+        try container.encode(storage, forKey: .storage)
+        try container.encode(tts, forKey: .tts)
+    }
+
     public func encodedWithoutSecrets() throws -> Data {
         var safe = self
         safe.llm.onlineAPIKey = ""

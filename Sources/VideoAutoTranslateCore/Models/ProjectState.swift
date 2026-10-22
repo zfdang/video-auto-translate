@@ -8,6 +8,7 @@ public struct ProjectDocument: Codable {
     public var subtitles: [SubtitleItem]
     public var llmConfig: LLMConfiguration
     public var asrConfig: ASRConfiguration
+    public var ttsConfig: TTSConfiguration
 
     public init(
         unalignedTranscript: String? = nil,
@@ -15,7 +16,8 @@ public struct ProjectDocument: Codable {
         videoPath: String? = nil,
         subtitles: [SubtitleItem] = [],
         llmConfig: LLMConfiguration = LLMConfiguration(),
-        asrConfig: ASRConfiguration = ASRConfiguration()
+        asrConfig: ASRConfiguration = ASRConfiguration(),
+        ttsConfig: TTSConfiguration = TTSConfiguration()
     ) {
         self.unalignedTranscript = unalignedTranscript
         self.version = version
@@ -23,6 +25,22 @@ public struct ProjectDocument: Codable {
         self.subtitles = subtitles
         self.llmConfig = llmConfig
         self.asrConfig = asrConfig
+        self.ttsConfig = ttsConfig
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case unalignedTranscript, version, videoPath, subtitles, llmConfig, asrConfig, ttsConfig
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.unalignedTranscript = try container.decodeIfPresent(String.self, forKey: .unalignedTranscript)
+        self.version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        self.videoPath = try container.decodeIfPresent(String.self, forKey: .videoPath)
+        self.subtitles = try container.decodeIfPresent([SubtitleItem].self, forKey: .subtitles) ?? []
+        self.llmConfig = try container.decodeIfPresent(LLMConfiguration.self, forKey: .llmConfig) ?? LLMConfiguration()
+        self.asrConfig = try container.decodeIfPresent(ASRConfiguration.self, forKey: .asrConfig) ?? ASRConfiguration()
+        self.ttsConfig = try container.decodeIfPresent(TTSConfiguration.self, forKey: .ttsConfig) ?? TTSConfiguration()
     }
 }
 
@@ -44,7 +62,13 @@ public struct ProjectState: Equatable {
 
     public var llmConfig: LLMConfiguration = LLMConfiguration()
     public var asrConfig: ASRConfiguration = ASRConfiguration()
+    public var ttsConfig: TTSConfiguration = TTSConfiguration()
     public var modelStorageConfig: ModelStorageConfig = ModelStorageConfig()
+
+    /// 获取当前工程当前目标语言和 TTS 引擎配置下生效的配音音色标识符
+    public var effectiveVoiceCode: String {
+        ttsConfig.effectiveVoice(for: llmConfig.targetLanguage)
+    }
 
     public init(videoURL: URL? = nil, subtitles: [SubtitleItem] = []) {
         self.videoURL = videoURL
@@ -76,7 +100,8 @@ public struct ProjectState: Equatable {
             videoPath: videoURL?.path,
             subtitles: subtitles,
             llmConfig: safeLLMConfig,
-            asrConfig: asrConfig
+            asrConfig: asrConfig,
+            ttsConfig: ttsConfig
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
@@ -102,6 +127,7 @@ public struct ProjectState: Equatable {
             self.llmConfig.onlineAPIKey = existingKey
         }
         self.asrConfig = document.asrConfig
+        self.ttsConfig = document.ttsConfig
         self.isDirty = false
     }
 }
