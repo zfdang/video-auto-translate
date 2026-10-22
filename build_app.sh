@@ -24,6 +24,13 @@ chmod +x "$APP_DIR/Contents/MacOS/VideoAutoTranslateApp"
 mkdir -p "$APP_DIR/Contents/Resources/scripts"
 cp -r "$DIR/scripts/"* "$APP_DIR/Contents/Resources/scripts/"
 
+echo "==> 2.1 正在打包内嵌独立 Portable Python 运行环境..."
+"$DIR/scripts/prepare-embedded-runtime.sh" "$DIR/.build/embedded-runtime"
+mkdir -p "$APP_DIR/Contents/Resources/runtime"
+rsync -a "$DIR/.build/embedded-runtime/" "$APP_DIR/Contents/Resources/runtime/"
+chmod -R u+w "$APP_DIR/Contents/Resources/runtime"
+chmod +x "$APP_DIR/Contents/Resources/runtime/bin/"* 2>/dev/null || true
+
 if [ -f "$DIR/assets/AppIcon.icns" ]; then
     cp "$DIR/assets/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 fi
@@ -45,6 +52,8 @@ cat << EOF > "$APP_DIR/Contents/Info.plist"
     <key>CFBundleDisplayName</key>
     <string>VideoAutoTranslate</string>
     <key>CFBundleIconFile</key>
+    <string>AppIcon.icns</string>
+    <key>CFBundleIconName</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
@@ -60,6 +69,13 @@ cat << EOF > "$APP_DIR/Contents/Info.plist"
     <string>NSApplication</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.video</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
 </dict>
 </plist>
 EOF
@@ -68,6 +84,9 @@ echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
 
 echo "==> 3. 对应用进行 Ad-hoc 签名..."
 codesign --force --deep --sign - "$APP_DIR"
+
+touch "$APP_DIR"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP_DIR" 2>/dev/null || true
 
 echo "==> 4. 打包完成！应用位于: $APP_DIR"
 echo "您可以直接运行: open \"$APP_DIR\""

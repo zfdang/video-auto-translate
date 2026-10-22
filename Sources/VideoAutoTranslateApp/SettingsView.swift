@@ -8,8 +8,6 @@ public struct SettingsView: View {
     @ObservedObject var modelStorageManager: ModelStorageManager
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab: SettingsTab = .tts
-    @State private var isTestingASR: Bool = false
-    @State private var asrTestFeedback: (isSuccess: Bool, message: String)? = nil
     @State private var isProbingOllama: Bool = false
     @State private var ollamaProbeFeedback: (isSuccess: Bool, message: String)? = nil
     @State private var selectedLanguageOption: String = "简体中文 (Simplified Chinese)"
@@ -199,21 +197,61 @@ public struct SettingsView: View {
 
     private var asrServiceSettingsView: some View {
         Form {
-            Section("首次准备与诊断") {
-                Text("应用不捆绑 Python 和模型。首次准备需联网安装依赖；还需下载数 GB 识别/对齐模型。已有完整环境可直接使用。")
-                    .font(.caption)
-                Text(appState.sidecarManager.runtimeMessage).font(.caption).textSelection(.enabled)
-                HStack {
-                    if appState.sidecarManager.isPreparingRuntime {
-                        ProgressView().controlSize(.small)
-                        Button("取消准备") { appState.sidecarManager.cancelRuntimePreparation() }
-                    } else {
-                        Button("准备识别环境（需联网）") { Task { await appState.sidecarManager.prepareManagedRuntime() } }
-                        Button("选择 Python…") {
-                            let panel = NSOpenPanel()
-                            panel.allowsMultipleSelection = false
-                            if panel.runModal() == .OK { appState.sidecarManager.bootstrapPythonPath = panel.url?.path }
+            Section("Python 运行环境与诊断") {
+                if appState.sidecarManager.isUsingEmbeddedRuntime && appState.sidecarManager.isRuntimeValid {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundColor(.green)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("已启用 App 内置独立 Portable Python 运行环境")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                            Text("完全隔离自包含，ASR 转录与 Edge TTS 配音均由内置环境统一提供支持，免去系统环境配置。")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
+                    }
+                } else {
+                    if appState.sidecarManager.isEmbeddedRuntimeCorrupted {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("内置 Python 环境依赖缺失或已损坏")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                Text("检测到内置运行环境无法加载全部核心依赖。已尝试自动回退至其他可用环境，您也可以点击下方按钮重新配置或修复环境。")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    Text("当前使用环境：\(appState.sidecarManager.runtimeDescription)")
+                        .font(.caption)
+                    Text(appState.sidecarManager.runtimeMessage).font(.caption).textSelection(.enabled)
+                }
+
+                HStack {
+                    if !appState.sidecarManager.isUsingEmbeddedRuntime || !appState.sidecarManager.isRuntimeValid {
+                        if appState.sidecarManager.isPreparingRuntime {
+                            ProgressView().controlSize(.small)
+                            Button("取消准备") { appState.sidecarManager.cancelRuntimePreparation() }
+                        } else {
+                            Button(appState.sidecarManager.isEmbeddedRuntimeCorrupted ? "修复/准备运行环境（需联网）" : "准备识别环境（需联网）") {
+                                Task { await appState.sidecarManager.prepareManagedRuntime(force: true) }
+                            }
+                            Button("选择 Python…") {
+                                let panel = NSOpenPanel()
+                                panel.allowsMultipleSelection = false
+                                if panel.runModal() == .OK, let path = panel.url?.path {
+                                    appState.sidecarManager.bootstrapPythonPath = path
+                                    Task { await appState.sidecarManager.refreshEnvironment() }
+                                }
+                            }
+                        }
+                    }
+                    Button("重新检测") {
+                        Task { await appState.sidecarManager.refreshEnvironment() }
                     }
                     Button("查看准备日志") { NSWorkspace.shared.open(appState.sidecarManager.runtimeLogURL) }
                     Button("查看引擎日志") { NSWorkspace.shared.open(appState.sidecarManager.diagnosticLogURL) }
@@ -259,28 +297,21 @@ public struct SettingsView: View {
                         TextField("ASR 接口 URL", text: $appState.project.asrConfig.serviceURL)
                         Button(action: {
                             Task {
-                                isTestingASR = true
-                                asrTestFeedback = nil
-                                let res = await appState.testASRConnection()
-                                await MainActor.run {
-                                    self.isTestingASR = false
-                                    self.asrTestFeedback = (res.success, res.message)
-                                    self.appState.isASRServerOnline = res.success
-                                }
+                                _ = await appState.testASRConnection()
                             }
                         }) {
                             HStack(spacing: 4) {
-                                if isTestingASR {
+                                if appState.isTestingASR {
                                     ProgressView()
                                         .controlSize(.small)
                                 }
-                                Text("测试连通")
+                                Text(appState.isTestingASR && appState.usesManagedASR && !appState.sidecarManager.status.isRunning ? "正在唤醒并测试..." : "测试连通")
                             }
                         }
-                        .disabled(isTestingASR)
+                        .disabled(appState.isTestingASR)
                     }
 
-                    if let feedback = asrTestFeedback {
+                    if let feedback = appState.asrTestFeedback {
                         HStack(spacing: 6) {
                             Image(systemName: feedback.isSuccess ? "checkmark.circle.fill" : "xmark.circle.fill")
                                 .foregroundColor(feedback.isSuccess ? .green : .red)
@@ -544,7 +575,8 @@ public struct SettingsView: View {
                             .frame(width: 8, height: 8)
 
                         if edgeTTSStatus.installed {
-                            Text("Edge TTS 依赖已就绪 (版本: \(edgeTTSStatus.version))")
+                            let source = appState.sidecarManager.isUsingEmbeddedRuntime ? "内置独立环境" : "外部环境"
+                            Text("Edge TTS 依赖已就绪 (\(source) · \(edgeTTSStatus.version))")
                                 .font(.caption)
                                 .foregroundColor(.primary)
                         } else {
@@ -752,6 +784,7 @@ public struct SettingsView: View {
         Task.detached {
             do {
                 try await EdgeTTSService.installEdgeTTS()
+                await appState.sidecarManager.refreshEnvironment()
                 await MainActor.run {
                     self.isInstallingEdgeTTS = false
                     self.edgeTTSInstallMessage = "安装成功！已可直接使用微软 Edge 拟真配音。"

@@ -10,6 +10,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
+        // 确保应用 Dock 与调度中心图标正确加载
+        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let image = NSImage(contentsOf: iconURL) {
+            NSApp.applicationIconImage = image
+        } else if let assetIcon = NSImage(contentsOfFile: "assets/AppIcon.icns") {
+            NSApp.applicationIconImage = assetIcon
+        }
+
         DispatchQueue.main.async {
             if NSApp.windows.isEmpty {
                 let win = NSWindow(
