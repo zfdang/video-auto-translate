@@ -24,6 +24,13 @@ chmod +x "$APP_DIR/Contents/MacOS/VideoAutoTranslateApp"
 mkdir -p "$APP_DIR/Contents/Resources/scripts"
 cp -r "$DIR/scripts/"* "$APP_DIR/Contents/Resources/scripts/"
 
+echo "==> 2.1 正在打包内嵌独立 Portable Python 运行环境..."
+"$DIR/scripts/prepare-embedded-runtime.sh" "$DIR/.build/embedded-runtime"
+mkdir -p "$APP_DIR/Contents/Resources/runtime"
+rsync -a "$DIR/.build/embedded-runtime/" "$APP_DIR/Contents/Resources/runtime/"
+chmod -R u+w "$APP_DIR/Contents/Resources/runtime"
+chmod +x "$APP_DIR/Contents/Resources/runtime/bin/"* 2>/dev/null || true
+
 if [ -f "$DIR/assets/AppIcon.icns" ]; then
     cp "$DIR/assets/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 fi

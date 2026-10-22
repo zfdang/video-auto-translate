@@ -199,20 +199,38 @@ public struct SettingsView: View {
 
     private var asrServiceSettingsView: some View {
         Form {
-            Section("首次准备与诊断") {
-                Text("应用不捆绑 Python 和模型。首次准备需联网安装依赖；还需下载数 GB 识别/对齐模型。已有完整环境可直接使用。")
-                    .font(.caption)
-                Text(appState.sidecarManager.runtimeMessage).font(.caption).textSelection(.enabled)
+            Section("Python 运行环境与诊断") {
+                if appState.sidecarManager.isUsingEmbeddedRuntime {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundColor(.green)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("已启用 App 内置独立 Portable Python 运行环境")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                            Text("完全隔离自包含，ASR 转录与 Edge TTS 配音均由内置环境统一提供支持，免去系统环境配置。")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                } else {
+                    Text("当前使用外部环境：\(appState.sidecarManager.runtimeDescription)")
+                        .font(.caption)
+                    Text(appState.sidecarManager.runtimeMessage).font(.caption).textSelection(.enabled)
+                }
+
                 HStack {
-                    if appState.sidecarManager.isPreparingRuntime {
-                        ProgressView().controlSize(.small)
-                        Button("取消准备") { appState.sidecarManager.cancelRuntimePreparation() }
-                    } else {
-                        Button("准备识别环境（需联网）") { Task { await appState.sidecarManager.prepareManagedRuntime() } }
-                        Button("选择 Python…") {
-                            let panel = NSOpenPanel()
-                            panel.allowsMultipleSelection = false
-                            if panel.runModal() == .OK { appState.sidecarManager.bootstrapPythonPath = panel.url?.path }
+                    if !appState.sidecarManager.isUsingEmbeddedRuntime {
+                        if appState.sidecarManager.isPreparingRuntime {
+                            ProgressView().controlSize(.small)
+                            Button("取消准备") { appState.sidecarManager.cancelRuntimePreparation() }
+                        } else {
+                            Button("准备识别环境（需联网）") { Task { await appState.sidecarManager.prepareManagedRuntime() } }
+                            Button("选择 Python…") {
+                                let panel = NSOpenPanel()
+                                panel.allowsMultipleSelection = false
+                                if panel.runModal() == .OK { appState.sidecarManager.bootstrapPythonPath = panel.url?.path }
+                            }
                         }
                     }
                     Button("查看准备日志") { NSWorkspace.shared.open(appState.sidecarManager.runtimeLogURL) }
@@ -544,7 +562,8 @@ public struct SettingsView: View {
                             .frame(width: 8, height: 8)
 
                         if edgeTTSStatus.installed {
-                            Text("Edge TTS 依赖已就绪 (版本: \(edgeTTSStatus.version))")
+                            let source = appState.sidecarManager.isUsingEmbeddedRuntime ? "内置独立环境" : "外部环境"
+                            Text("Edge TTS 依赖已就绪 (\(source) · \(edgeTTSStatus.version))")
                                 .font(.caption)
                                 .foregroundColor(.primary)
                         } else {

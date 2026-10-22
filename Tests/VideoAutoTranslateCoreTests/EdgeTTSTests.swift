@@ -84,4 +84,12 @@ final class EdgeTTSTests: XCTestCase {
         let restoredDoc = try ProjectState.decodeDocument(from: encodedData)
         XCTAssertEqual(restoredDoc.ttsConfig.selectedVoice, "zh-CN-XiaoxiaoNeural")
     }
+
+    func testEmbeddedRuntimeResolution() {
+        let manager = ASRSidecarManager.shared
+        let resolvedPath = manager.resolvePythonPath()
+        XCTAssertFalse(resolvedPath.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: resolvedPath))
+        XCTAssertFalse(manager.runtimeDescription.isEmpty)
+    }
 }
