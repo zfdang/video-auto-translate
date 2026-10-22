@@ -22,6 +22,8 @@ import VideoAutoTranslateCore
         task = Task {
             do {
                 var audio: URL?
+                defer { if let audio { try? FileManager.default.removeItem(at: audio) } }
+                try Task.checkCancellation()
                 if audioMode != .original {
                     let manager = SubtitleManager()
                     let tts = ttsService ?? EdgeTTSService()
@@ -35,10 +37,9 @@ import VideoAutoTranslateCore
                     try Task.checkCancellation()
                     message = "正在混音…"
                     let mixed = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
-                    try await AudioMixer().mix(backgroundAudioURL: audioMode == .overlay ? video : nil, subtitles: snapshot, to: mixed)
                     audio = mixed
+                    try await AudioMixer().mix(backgroundAudioURL: audioMode == .overlay ? (background ?? video) : nil, subtitles: snapshot, to: mixed)
                 }
-                defer { if let audio = audio { try? FileManager.default.removeItem(at: audio) } }
                 try Task.checkCancellation()
                 progress = 0.75
                 message = "正在渲染视频…"
