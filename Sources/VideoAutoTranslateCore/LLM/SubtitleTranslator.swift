@@ -20,6 +20,9 @@ public final class SubtitleTranslator {
         config: LLMConfiguration,
         onProgress: ((_ progress: Double, _ status: String) -> Void)? = nil
     ) async throws {
+        let items = await MainActor.run {
+            items.filter { $0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.translationNeedsReview }
+        }
         guard !items.isEmpty else { return }
 
         let modelName = config.effectiveModel
@@ -76,13 +79,19 @@ public final class SubtitleTranslator {
                 onProgress?(progressBefore, promptText)
             }
 
-            try await translateChunk(
-                chunk: chunk,
-                targetLanguage: config.targetLanguage,
-                model: modelName,
-                temperature: config.temperature,
-                client: client
-            )
+            let snapshot = await MainActor.run {
+                chunk.map { (id: $0.id, orig: $0.originalText, trans: $0.translatedText) }
+            }
+            try await Self.retryBatch {
+                try await self.translateChunk(
+                    chunk: chunk,
+                    snapshot: snapshot,
+                    targetLanguage: config.targetLanguage,
+                    model: modelName,
+                    temperature: config.temperature,
+                    client: client
+                )
+            }
 
             completedCount += chunk.count
             let progressAfter = 0.05 + 0.90 * (Double(completedCount) / Double(totalCount))
@@ -124,8 +133,22 @@ public final class SubtitleTranslator {
         }
     }
 
+    /// Retry one failed batch; cancellation must never initiate another request.
+    internal static func retryBatch(_ operation: () async throws -> Void) async throws {
+        do {
+            try Task.checkCancellation()
+            try await operation()
+        } catch {
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { throw error }
+            try Task.checkCancellation()
+            try await Task.sleep(nanoseconds: 300_000_000)
+            try await operation()
+        }
+    }
+
     private func translateChunk(
         chunk: [SubtitleItem],
+        snapshot: [(id: UUID, orig: String, trans: String)],
         targetLanguage: String,
         model: String,
         temperature: Double,
@@ -160,8 +183,6 @@ public final class SubtitleTranslator {
         ]
         """
 
-        let snapshot = chunk.map { (id: $0.id, orig: $0.originalText, trans: $0.translatedText) }
-
         let userPrompt = """
         待翻译字幕列表：
         \(inputJSONString)
@@ -184,6 +205,7 @@ public final class SubtitleTranslator {
         // 回填至各 SubtitleItem (R07 / FU06: 严格快照校验保护人工在途修改; R08: 安全合并去重; R17: 校验批次有效性)
         let finalDict = try validatedTranslations(entries, for: chunk)
         await MainActor.run {
+            guard !Task.isCancelled else { return }
             for snap in snapshot {
                 guard let item = chunk.first(where: { $0.id == snap.id }),
                       let translated = finalDict[item.id.uuidString] else {

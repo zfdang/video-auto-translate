@@ -34,6 +34,30 @@ public final class LocalASRService: ASREngineProtocol {
         self.session = URLSession(configuration: sessionConfig)
     }
 
+    /// Keep memory bounded to one chunk, even for multi-hour recordings.
+    internal static func writeMultipartBody(audioURL: URL, to bodyURL: URL, boundary: String,
+                                           model: String, language: String) throws {
+        FileManager.default.createFile(atPath: bodyURL.path, contents: nil)
+        let output = try FileHandle(forWritingTo: bodyURL)
+        defer { try? output.close() }
+        let input = try FileHandle(forReadingFrom: audioURL)
+        defer { try? input.close() }
+        func write(_ text: String) throws { try output.write(contentsOf: Data(text.utf8)) }
+        var fields = [("model", model), ("response_format", "verbose_json"),
+                      ("timestamp_granularities[]", "word")]
+        if language != "auto" && !language.isEmpty { fields.append(("language", language)) }
+        for (name, value) in fields {
+            try write("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n")
+        }
+        try write("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n")
+        while true {
+            try Task.checkCancellation()
+            guard let data = try input.read(upToCount: 64 * 1024), !data.isEmpty else { break }
+            try output.write(contentsOf: data)
+        }
+        try write("\r\n--\(boundary)--\r\n")
+    }
+
     /// 快速检测本地 ASR 服务是否在线
     public func checkHealth() async -> Bool {
         let (success, _) = await Self.testConnection(urlString: config.serviceURL)
@@ -112,48 +136,19 @@ public final class LocalASRService: ASREngineProtocol {
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        let audioData = try Data(contentsOf: audioURL)
-        var body = Data()
-
-        // 1. 添加参数 model
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"model\"\r\n\r\n".data(using: .utf8)!)
-        body.append("\(config.model)\r\n".data(using: .utf8)!)
-
-        // 2. 添加参数 response_format
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"response_format\"\r\n\r\n".data(using: .utf8)!)
-        body.append("verbose_json\r\n".data(using: .utf8)!)
-
-        // 3. 添加参数 timestamp_granularities[]
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"timestamp_granularities[]\"\r\n\r\n".data(using: .utf8)!)
-        body.append("word\r\n".data(using: .utf8)!)
-
-        // 4. 添加可选参数 language (非 auto 时显式指定)
-        if config.language != "auto" && !config.language.isEmpty {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"language\"\r\n\r\n".data(using: .utf8)!)
-            body.append("\(config.language)\r\n".data(using: .utf8)!)
-        }
-
-        // 5. 添加音频文件
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(audioURL.lastPathComponent)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
-        body.append(audioData)
-        body.append("\r\n".data(using: .utf8)!)
-
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-        request.httpBody = body
+        let bodyURL = FileManager.default.temporaryDirectory.appendingPathComponent("asr-upload-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: bodyURL) }
+        try Self.writeMultipartBody(audioURL: audioURL, to: bodyURL, boundary: boundary,
+                                    model: config.model, language: config.language)
 
         onProgress?(0.3)
 
         let responseData: Data
         let response: URLResponse
         do {
-            (responseData, response) = try await session.data(for: request)
+            (responseData, response) = try await session.upload(for: request, fromFile: bodyURL)
         } catch {
+            try Task.checkCancellation()
             throw ASRError.engineNotReady(
                 "无法连接到本地语音识别服务，请前往【设置 - ASR 服务】检查引擎运行状态。"
             )

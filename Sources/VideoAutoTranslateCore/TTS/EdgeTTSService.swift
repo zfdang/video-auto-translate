@@ -5,11 +5,19 @@ import AVFoundation
 public final class EdgeTTSService: TTSServiceProtocol {
     public let host: String
     public let port: Int
+    private let ensureSidecar: () async -> Bool
     private let systemFallback = SystemTTSService()
 
     public init(host: String = "127.0.0.1", port: Int = 8765) {
         self.host = host
         self.port = port
+        self.ensureSidecar = { await ASRSidecarManager.shared.ensureRunning() }
+    }
+
+    internal init(ensureSidecar: @escaping () async -> Bool) {
+        self.host = "127.0.0.1"
+        self.port = 8765
+        self.ensureSidecar = ensureSidecar
     }
 
     public func synthesize(
@@ -30,6 +38,12 @@ public final class EdgeTTSService: TTSServiceProtocol {
 
         let tempMp3URL = FileManager.default.temporaryDirectory.appendingPathComponent("edge_tts_\(UUID().uuidString).mp3")
         defer { try? FileManager.default.removeItem(at: tempMp3URL) }
+
+        // Only the default local endpoint belongs to the managed sidecar.
+        if ["127.0.0.1", "localhost"].contains(host), port == 8765 {
+            _ = await ensureSidecar()
+            try Task.checkCancellation()
+        }
 
         // 1. 优先尝试本地 Sidecar HTTP 服务合成 (常驻服务，毫秒级响应)
         do {
