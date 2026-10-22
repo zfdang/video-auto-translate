@@ -37,6 +37,9 @@ public final class AudioExtractor {
         let tempOutputWavURL = tempDirectory.appendingPathComponent(tempFilename)
         try? FileManager.default.removeItem(at: tempOutputWavURL)
 
+        defer { try? FileManager.default.removeItem(at: tempOutputWavURL) }
+        try Task.checkCancellation()
+
         let asset = AVURLAsset(url: videoURL)
         guard let audioTrack = try await asset.loadTracks(withMediaType: .audio).first else {
             throw AudioExtractorError.noAudioTrack
@@ -70,64 +73,14 @@ public final class AudioExtractor {
         }
         writer.add(writerInput)
 
-        guard reader.startReading() else {
-            try? FileManager.default.removeItem(at: tempOutputWavURL)
-            throw AudioExtractorError.readerFailed(reader.error?.localizedDescription ?? "读取器启动失败")
+        let pump = AudioExtractionPump(reader: reader, output: readerOutput, writer: writer, input: writerInput)
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await pump.run()
+        } onCancel: {
+            pump.cancel()
         }
-        guard writer.startWriting() else {
-            try? FileManager.default.removeItem(at: tempOutputWavURL)
-            throw AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "写入器启动失败")
-        }
-        writer.startSession(atSourceTime: .zero)
-
-        // 异步将 sample buffer 从 reader 泵送至 writer (带 exactly-once 保护)
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let queue = DispatchQueue(label: "com.videoautotranslate.audioextract", qos: .userInitiated)
-            let lock = NSLock()
-            var hasResumed = false
-
-            func safeResume(throwing error: Error) {
-                lock.lock()
-                defer { lock.unlock() }
-                if !hasResumed {
-                    hasResumed = true
-                    continuation.resume(throwing: error)
-                }
-            }
-
-            func safeResumeSuccess() {
-                lock.lock()
-                defer { lock.unlock() }
-                if !hasResumed {
-                    hasResumed = true
-                    continuation.resume()
-                }
-            }
-
-            writerInput.requestMediaDataWhenReady(on: queue) {
-                while writerInput.isReadyForMoreMediaData {
-                    if let sampleBuffer = readerOutput.copyNextSampleBuffer() {
-                        if !writerInput.append(sampleBuffer) {
-                            reader.cancelReading()
-                            writer.cancelWriting()
-                            safeResume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "数据写入失败"))
-                            return
-                        }
-                    } else {
-                        // 读取完成
-                        writerInput.markAsFinished()
-                        writer.finishWriting {
-                            if writer.status == .completed {
-                                safeResumeSuccess()
-                            } else {
-                                safeResume(throwing: AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "写入结束异常"))
-                            }
-                        }
-                        return
-                    }
-                }
-            }
-        }
+        try Task.checkCancellation()
 
         // 提取成功后原子替换目标文件
         do {
@@ -139,6 +92,102 @@ public final class AudioExtractor {
         } catch {
             try? FileManager.default.removeItem(at: tempOutputWavURL)
             throw AudioExtractorError.writerFailed("替换导出目标音频失败: \(error.localizedDescription)")
+        }
+    }
+}
+
+/// AVFoundation objects and the continuation are exclusively accessed on `queue`
+/// after setup. Only the cancellation flag is shared, protected by `lock`.
+private final class AudioExtractionPump: @unchecked Sendable {
+    private let reader: AVAssetReader
+    private let output: AVAssetReaderTrackOutput
+    private let writer: AVAssetWriter
+    private let input: AVAssetWriterInput
+    private let queue = DispatchQueue(label: "com.videoautotranslate.audioextract", qos: .userInitiated)
+    private let lock = NSLock()
+    private var cancelled = false
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var finishing = false
+
+    init(reader: AVAssetReader, output: AVAssetReaderTrackOutput, writer: AVAssetWriter, input: AVAssetWriterInput) {
+        self.reader = reader
+        self.output = output
+        self.writer = writer
+        self.input = input
+    }
+
+    private var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+        // Also wake a stalled writer which is no longer invoking its ready callback.
+        queue.async { self.abort(CancellationError()) }
+    }
+
+    func run() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                self.continuation = continuation
+                guard !self.isCancelled else { self.abort(CancellationError()); return }
+                guard self.reader.startReading() else {
+                    self.abort(AudioExtractorError.readerFailed(self.reader.error?.localizedDescription ?? "读取器启动失败"))
+                    return
+                }
+                guard self.writer.startWriting() else {
+                    self.abort(AudioExtractorError.writerFailed(self.writer.error?.localizedDescription ?? "写入器启动失败"))
+                    return
+                }
+                self.writer.startSession(atSourceTime: .zero)
+                self.input.requestMediaDataWhenReady(on: self.queue) { [weak self] in self?.pump() }
+            }
+        }
+    }
+
+    private func complete(_ result: Result<Void, Error>) {
+        let pending = continuation
+        continuation = nil
+        pending?.resume(with: result)
+    }
+
+    private func abort(_ error: Error) {
+        guard continuation != nil else { return }
+        if reader.status == .reading { reader.cancelReading() }
+        if writer.status == .writing { writer.cancelWriting() }
+        complete(.failure(error))
+    }
+
+    private func pump() {
+        guard continuation != nil, !finishing else { return }
+        while input.isReadyForMoreMediaData {
+            guard !isCancelled else { abort(CancellationError()); return }
+            if let sample = output.copyNextSampleBuffer() {
+                guard input.append(sample) else {
+                    abort(AudioExtractorError.writerFailed(writer.error?.localizedDescription ?? "数据写入失败"))
+                    return
+                }
+            } else {
+                guard reader.status == .completed else {
+                    abort(AudioExtractorError.readerFailed(reader.error?.localizedDescription ?? "音频读取未完成"))
+                    return
+                }
+                finishing = true
+                input.markAsFinished()
+                writer.finishWriting {
+                    self.queue.async {
+                        guard self.continuation != nil else { return }
+                        if self.isCancelled { self.abort(CancellationError()) }
+                        else if self.writer.status == .completed { self.complete(.success(())) }
+                        else { self.abort(AudioExtractorError.writerFailed(self.writer.error?.localizedDescription ?? "写入结束异常")) }
+                    }
+                }
+                return
+            }
         }
     }
 }
