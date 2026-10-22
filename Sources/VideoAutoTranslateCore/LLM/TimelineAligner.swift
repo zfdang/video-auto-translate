@@ -215,15 +215,17 @@ public final class TimelineAligner {
         var ends: [CMTime] = []
         for (index, item) in items.enumerated() {
             let start = CMTimeGetSeconds(item.sourceStartTime)
-            let end = CMTimeGetSeconds(item.sourceEndTime)
-            guard start.isFinite, end.isFinite, start >= 0,
-                  end - start >= 0.0999, videoDuration.map({ end <= $0 }) ?? true else { return nil }
+            let sourceEnd = CMTimeGetSeconds(item.sourceEndTime)
+            // AAC packet boundaries can extend slightly beyond the container.
+            let end = videoDuration.map { min(sourceEnd, $0) } ?? sourceEnd
+            guard start.isFinite, sourceEnd.isFinite, start >= 0,
+                  end - start >= 0.0999, videoDuration.map({ sourceEnd <= $0 + 0.5 }) ?? true else { return nil }
             if let previousEnd = ends.last, item.sourceStartTime < previousEnd {
                 guard CMTimeSubtract(previousEnd, item.sourceStartTime) <= overlapTolerance,
                       start - items[index - 1].sourceStartTime.secondsValue >= 0.0999 else { return nil }
                 ends[index - 1] = item.sourceStartTime
             }
-            ends.append(item.sourceEndTime)
+            ends.append(end == sourceEnd ? item.sourceEndTime : .from(seconds: end))
         }
         return ends
     }
