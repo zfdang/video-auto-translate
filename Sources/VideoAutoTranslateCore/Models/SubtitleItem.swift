@@ -25,7 +25,15 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
     }
     @Published public var translatedText: String {
         willSet { if translatedText != newValue { onModified?() } }
-        didSet { if translatedText != oldValue { naturalSpeech = nil; dubbedAudioURL = nil; dubbedAudioSignature = nil; dubbedRate = nil } }
+        didSet {
+            if translatedText != oldValue {
+                naturalSpeech = nil
+                dubbedAudioURL = nil
+                dubbedAudioSignature = nil
+                dubbedRate = nil
+                translationNeedsReview = false
+            }
+        }
     }
     @Published public var words: [WordToken] {
         willSet { if words != newValue { onModified?() } }
@@ -119,6 +127,12 @@ public final class SubtitleItem: Identifiable, ObservableObject, Hashable, Equat
 
     public func hasCurrentAudio(voice: String) -> Bool {
         !translationNeedsReview && dubbedAudioSignature == audioSignature(voice: voice) && dubbedAudioURL.map { FileManager.default.fileExists(atPath: $0.path) } == true
+    }
+
+    /// Confirm an unchanged translation after correcting its source text.
+    public func confirmTranslation() {
+        guard !translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        translationNeedsReview = false
     }
 
     public func snapshot() -> SubtitleItem {
