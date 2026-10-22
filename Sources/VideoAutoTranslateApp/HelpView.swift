@@ -68,6 +68,7 @@ public struct HelpView: View {
                 }
                 .padding(24)
             }
+            .id(selectedTab)
         }
         .frame(width: 740, height: 600)
     }
