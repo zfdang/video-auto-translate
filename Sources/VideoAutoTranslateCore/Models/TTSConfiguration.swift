@@ -92,6 +92,12 @@ public struct TTSVoiceOption: Identifiable, Hashable, Codable {
         TTSVoiceOption(id: "ru-RU-SvetlanaNeural", name: "Svetlana (清晰自然·女)", gender: "女", locale: "ru-RU", isRecommended: true, engine: .edgeTTS),
         TTSVoiceOption(id: "ru-RU-DmitryNeural", name: "Dmitry (稳健有力·男)", gender: "男", locale: "ru-RU", isRecommended: true, engine: .edgeTTS),
 
+        TTSVoiceOption(id: "pt-BR-FranciscaNeural", name: "Francisca（葡萄牙语）", gender: "女", locale: "pt-BR", isRecommended: true),
+        TTSVoiceOption(id: "it-IT-ElsaNeural", name: "Elsa（意大利语）", gender: "女", locale: "it-IT", isRecommended: true),
+        TTSVoiceOption(id: "ar-SA-ZariyahNeural", name: "Zariyah（阿拉伯语）", gender: "女", locale: "ar-SA", isRecommended: true),
+        TTSVoiceOption(id: "th-TH-PremwadeeNeural", name: "Premwadee（泰语）", gender: "女", locale: "th-TH", isRecommended: true),
+        TTSVoiceOption(id: "vi-VN-HoaiMyNeural", name: "HoaiMy（越南语）", gender: "女", locale: "vi-VN", isRecommended: true),
+
         // 系统原生音色常用占位
         TTSVoiceOption(id: "zh-CN", name: "系统普通话 (默认)", gender: "通用", locale: "zh-CN", isRecommended: true, engine: .system),
         TTSVoiceOption(id: "en-US", name: "System English (Default)", gender: "通用", locale: "en-US", isRecommended: true, engine: .system),
@@ -103,7 +109,9 @@ public struct TTSVoiceOption: Identifiable, Hashable, Codable {
     public static func voices(for targetLanguage: String, engine: TTSEngineType) -> [TTSVoiceOption] {
         let trimmed = targetLanguage.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let langPrefix: String
-        if trimmed.contains("中") || trimmed.contains("华") || trimmed.hasPrefix("zh") || trimmed.contains("chinese") {
+        if trimmed.contains("繁体") || trimmed.contains("traditional chinese") || trimmed.hasPrefix("zh-hant") || trimmed.hasPrefix("zh-tw") {
+            langPrefix = "zh-tw"
+        } else if trimmed.contains("中") || trimmed.contains("华") || trimmed.hasPrefix("zh") || trimmed.contains("chinese") {
             langPrefix = "zh"
         } else if trimmed.contains("英") || trimmed.hasPrefix("en") || trimmed.contains("english") {
             langPrefix = "en"
@@ -119,10 +127,25 @@ public struct TTSVoiceOption: Identifiable, Hashable, Codable {
             langPrefix = "es"
         } else if trimmed.contains("俄") || trimmed.hasPrefix("ru") || trimmed.contains("russian") {
             langPrefix = "ru"
+        } else if trimmed.contains("葡萄牙") || trimmed.hasPrefix("pt") || trimmed.contains("portuguese") {
+            langPrefix = "pt"
+        } else if trimmed.contains("意大利") || trimmed.hasPrefix("it") || trimmed.contains("italian") {
+            langPrefix = "it"
+        } else if trimmed.contains("阿拉伯") || trimmed.hasPrefix("ar") || trimmed.contains("arabic") {
+            langPrefix = "ar"
+        } else if trimmed.contains("泰") || trimmed.hasPrefix("th") || trimmed.contains("thai") {
+            langPrefix = "th"
+        } else if trimmed.contains("越南") || trimmed.hasPrefix("vi") || trimmed.contains("vietnamese") {
+            langPrefix = "vi"
         } else {
             langPrefix = "zh"
         }
 
+        if engine == .system {
+            let locales = ["zh": "zh-CN", "zh-tw": "zh-TW", "en": "en-US", "ja": "ja-JP", "ko": "ko-KR", "fr": "fr-FR", "de": "de-DE", "es": "es-ES", "ru": "ru-RU", "pt": "pt-BR", "it": "it-IT", "ar": "ar-SA", "th": "th-TH", "vi": "vi-VN"]
+            let locale = locales[langPrefix] ?? "zh-CN"
+            return [TTSVoiceOption(id: locale, name: "系统语音 (\(locale))", gender: "通用", locale: locale, isRecommended: true, engine: .system)]
+        }
         let matched = presets.filter { $0.engine == engine && $0.locale.lowercased().hasPrefix(langPrefix) }
         return matched.isEmpty ? presets.filter { $0.engine == engine } : matched
     }
