@@ -169,9 +169,10 @@ public final class VideoComposer {
 
                 guard !primaryText.isEmpty || !secondaryText.isEmpty else { continue }
 
-                let startSec = item.startTime.seconds
-                let endSec = item.endTime.seconds
-                guard endSec - startSec >= 0.001 else { continue }
+                guard let keyTimes = Self.subtitleKeyTimes(
+                    start: item.startTime.seconds, end: item.endTime.seconds,
+                    duration: totalDurationSec
+                ) else { continue }
 
                 if let cgImage = renderSubtitlePill(
                     primary: primaryText,
@@ -192,22 +193,9 @@ public final class VideoComposer {
                     subLayer.contents = cgImage
                     subLayer.contentsGravity = .resizeAspect
 
-                    let delta = 0.001
-                    let k0 = max(0.0, (startSec - delta) / totalDurationSec)
-                    let k1 = startSec / totalDurationSec
-                    let k2 = endSec / totalDurationSec
-                    let k3 = min(1.0, (endSec + delta) / totalDurationSec)
-
                     let anim = CAKeyframeAnimation(keyPath: "opacity")
                     anim.duration = totalDurationSec
-                    anim.keyTimes = [
-                        0.0,
-                        NSNumber(value: k0),
-                        NSNumber(value: k1),
-                        NSNumber(value: k2),
-                        NSNumber(value: k3),
-                        1.0
-                    ]
+                    anim.keyTimes = keyTimes.map { NSNumber(value: $0) }
                     anim.values = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
                     anim.beginTime = AVCoreAnimationBeginTimeAtZero
                     anim.isRemovedOnCompletion = false
@@ -265,6 +253,15 @@ public final class VideoComposer {
             try? FileManager.default.removeItem(at: tempOutputURL)
             throw VideoComposerError.exportFailed("替换导出目标文件失败: \(error.localizedDescription)")
         }
+    }
+
+    internal static func subtitleKeyTimes(start: Double, end: Double, duration: Double) -> [Double]? {
+        guard start.isFinite, end.isFinite, duration.isFinite, duration > 0 else { return nil }
+        let start = max(0, start)
+        let end = min(duration, end)
+        guard end - start >= 0.001 else { return nil }
+        return [0, start - 0.001, start, end, end + 0.001, duration]
+            .map { min(1, max(0, $0 / duration)) }
     }
 
     // MARK: - 绘制高保真胶囊字幕图片
