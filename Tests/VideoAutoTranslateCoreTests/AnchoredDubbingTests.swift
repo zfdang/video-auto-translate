@@ -317,12 +317,12 @@ final class AnchoredDubbingTests: XCTestCase {
         XCTAssertNil(app.errorMessage)
         XCTAssertNotNil(app.auditionPlayer)
         XCTAssertEqual(fixture.calls, 1)
-        XCTAssertNil(item.dubbedAudioURL, "Natural audition must not publish overlong export audio")
+        XCTAssertNotNil(item.dubbedAudioURL, "单句配音试听应生成并发布适配语速的配音切片")
         XCTAssertEqual(item.startTime.secondsValue, 0)
         XCTAssertEqual(item.endTime.secondsValue, 0.5)
         await app.auditionSubtitle(item, target: .translated)
         XCTAssertNil(app.errorMessage)
-        XCTAssertEqual(fixture.calls, 1, "Repeated audition reuses natural speech")
+        XCTAssertEqual(fixture.calls, 1, "重复试听复用配音缓存")
     }
 
     @MainActor func testContextPlanMovesInternalStartsAndBalancesMeasuredSpeech() async throws {
