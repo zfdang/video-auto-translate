@@ -193,6 +193,15 @@ LANGUAGE_NAMES = {
 }
 
 
+@app.get("/")
+def root_index():
+    return {
+        "status": "ok",
+        "service": "VideoAutoTranslate ASR & TTS Server",
+        "health": "/health"
+    }
+
+
 @app.get("/health")
 def health_check():
     return {
