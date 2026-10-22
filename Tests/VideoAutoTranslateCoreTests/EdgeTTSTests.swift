@@ -91,5 +91,26 @@ final class EdgeTTSTests: XCTestCase {
         XCTAssertFalse(resolvedPath.isEmpty)
         XCTAssertTrue(FileManager.default.fileExists(atPath: resolvedPath))
         XCTAssertFalse(manager.runtimeDescription.isEmpty)
+
+        // 验证缓存命中速度极快（微秒级，绝不阻塞主线程）
+        let startTime = CFAbsoluteTimeGetCurrent()
+        let secondPath = manager.resolvePythonPath()
+        let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+        XCTAssertEqual(resolvedPath, secondPath)
+        XCTAssertLessThan(elapsed, 0.05, "缓存命中读取耗时必须小于 50ms")
+    }
+
+    func testInvalidCandidateRejection() {
+        let manager = ASRSidecarManager.shared
+        // /bin/echo 或 /bin/sh 即使可执行也绝对不能通过依赖校验
+        let isEchoValid = manager.isPythonCandidateValid(path: "/bin/echo")
+        XCTAssertFalse(isEchoValid)
+    }
+
+    @MainActor
+    func testRefreshEnvironmentBackgroundExecution() async {
+        let manager = ASRSidecarManager.shared
+        await manager.refreshEnvironment()
+        XCTAssertFalse(manager.runtimeDescription.isEmpty)
     }
 }

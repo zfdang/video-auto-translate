@@ -198,7 +198,7 @@ public struct SettingsView: View {
     private var asrServiceSettingsView: some View {
         Form {
             Section("Python 运行环境与诊断") {
-                if appState.sidecarManager.isUsingEmbeddedRuntime {
+                if appState.sidecarManager.isUsingEmbeddedRuntime && appState.sidecarManager.isRuntimeValid {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.seal.fill")
                             .foregroundColor(.green)
@@ -212,24 +212,46 @@ public struct SettingsView: View {
                         }
                     }
                 } else {
-                    Text("当前使用外部环境：\(appState.sidecarManager.runtimeDescription)")
+                    if appState.sidecarManager.isEmbeddedRuntimeCorrupted {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("内置 Python 环境依赖缺失或已损坏")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                Text("检测到内置运行环境无法加载全部核心依赖。已尝试自动回退至其他可用环境，您也可以点击下方按钮重新配置或修复环境。")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    Text("当前使用环境：\(appState.sidecarManager.runtimeDescription)")
                         .font(.caption)
                     Text(appState.sidecarManager.runtimeMessage).font(.caption).textSelection(.enabled)
                 }
 
                 HStack {
-                    if !appState.sidecarManager.isUsingEmbeddedRuntime {
+                    if !appState.sidecarManager.isUsingEmbeddedRuntime || !appState.sidecarManager.isRuntimeValid {
                         if appState.sidecarManager.isPreparingRuntime {
                             ProgressView().controlSize(.small)
                             Button("取消准备") { appState.sidecarManager.cancelRuntimePreparation() }
                         } else {
-                            Button("准备识别环境（需联网）") { Task { await appState.sidecarManager.prepareManagedRuntime() } }
+                            Button(appState.sidecarManager.isEmbeddedRuntimeCorrupted ? "修复/准备运行环境（需联网）" : "准备识别环境（需联网）") {
+                                Task { await appState.sidecarManager.prepareManagedRuntime(force: true) }
+                            }
                             Button("选择 Python…") {
                                 let panel = NSOpenPanel()
                                 panel.allowsMultipleSelection = false
-                                if panel.runModal() == .OK { appState.sidecarManager.bootstrapPythonPath = panel.url?.path }
+                                if panel.runModal() == .OK, let path = panel.url?.path {
+                                    appState.sidecarManager.bootstrapPythonPath = path
+                                    Task { await appState.sidecarManager.refreshEnvironment() }
+                                }
                             }
                         }
+                    }
+                    Button("重新检测") {
+                        Task { await appState.sidecarManager.refreshEnvironment() }
                     }
                     Button("查看准备日志") { NSWorkspace.shared.open(appState.sidecarManager.runtimeLogURL) }
                     Button("查看引擎日志") { NSWorkspace.shared.open(appState.sidecarManager.diagnosticLogURL) }
@@ -762,6 +784,7 @@ public struct SettingsView: View {
         Task.detached {
             do {
                 try await EdgeTTSService.installEdgeTTS()
+                await appState.sidecarManager.refreshEnvironment()
                 await MainActor.run {
                     self.isInstallingEdgeTTS = false
                     self.edgeTTSInstallMessage = "安装成功！已可直接使用微软 Edge 拟真配音。"
