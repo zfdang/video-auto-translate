@@ -292,7 +292,7 @@ public struct SettingsView: View {
                                     ProgressView()
                                         .controlSize(.small)
                                 }
-                                Text("测试连通")
+                                Text(isTestingASR && appState.usesManagedASR && !appState.sidecarManager.status.isRunning ? "正在唤醒并测试..." : "测试连通")
                             }
                         }
                         .disabled(isTestingASR)

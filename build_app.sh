@@ -52,6 +52,8 @@ cat << EOF > "$APP_DIR/Contents/Info.plist"
     <key>CFBundleDisplayName</key>
     <string>VideoAutoTranslate</string>
     <key>CFBundleIconFile</key>
+    <string>AppIcon.icns</string>
+    <key>CFBundleIconName</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
@@ -75,6 +77,9 @@ echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
 
 echo "==> 3. 对应用进行 Ad-hoc 签名..."
 codesign --force --deep --sign - "$APP_DIR"
+
+touch "$APP_DIR"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP_DIR" 2>/dev/null || true
 
 echo "==> 4. 打包完成！应用位于: $APP_DIR"
 echo "您可以直接运行: open \"$APP_DIR\""
