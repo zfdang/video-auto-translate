@@ -163,6 +163,8 @@ public final class LLMSegmenter {
         return nil
     }
 
+    private static let omittableFillers: Set<String> = ["um", "uh", "umm", "uhh", "erm", "呃", "嗯"]
+
     /// 将断句文本对齐到词级时间戳，由首词与末词获得物理时间
     internal func alignLinesToTokens(lines: [String], tokens: [WordToken]) -> [SubtitleItem] {
         var items: [SubtitleItem] = []
@@ -179,9 +181,15 @@ public final class LLMSegmenter {
             let startIdx = tokenIdx
             var consumed = ""
             while tokenIdx < tokens.count && consumed != target {
-                consumed += normalized(tokens[tokenIdx].text)
+                let token = normalized(tokens[tokenIdx].text)
+                let candidate = consumed + token
+                if target.hasPrefix(candidate) {
+                    consumed = candidate
+                } else if !Self.omittableFillers.contains(token) {
+                    return fallbackSegmenter.segment(tokens: tokens)
+                }
+                // Omitted fillers still belong to the physical subtitle tokens.
                 tokenIdx += 1
-                guard target.hasPrefix(consumed) else { return fallbackSegmenter.segment(tokens: tokens) }
             }
             guard consumed == target else { return fallbackSegmenter.segment(tokens: tokens) }
 
