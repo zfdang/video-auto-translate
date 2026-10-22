@@ -9,105 +9,14 @@ public struct SubtitleListView: View {
     public var body: some View {
         VStack(spacing: 0) {
             // 工具栏头部 (靠右排列：撤销、重做、合并)
-            HStack(spacing: 8) {
-                Text(searchText.isEmpty
-                     ? "字幕列表 (\(filteredSubtitles.count))"
-                     : "字幕列表 (\(filteredSubtitles.count)/\(appState.project.subtitles.count))")
-                    .font(.headline)
-
-                Spacer()
-
-                // 1. 撤销按钮 (Cmd+Z)
-                Button(action: {
-                    appState.undo()
-                }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.uturn.backward")
-                        Text("撤销")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(!appState.canUndo)
-                .keyboardShortcut("z", modifiers: .command)
-                .help("撤销上一步编辑操作 (Cmd+Z)")
-
-                // 2. 重做按钮 (Cmd+Shift+Z)
-                Button(action: {
-                    appState.redo()
-                }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.uturn.forward")
-                        Text("重做")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(!appState.canRedo)
-                .keyboardShortcut("z", modifiers: [.command, .shift])
-                .help("恢复上一步被撤销的操作 (Cmd+Shift+Z)")
-
-                // 3. 智能分句按钮 (基于每个单词的毫秒时间戳与 LLM 语义规整)
-                Button(action: {
-                    Task {
-                        await appState.runSmartSegmentation()
-                    }
-                }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "sparkles")
-                        Text("智能分句")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
-                .help("调用大模型结合每个词的精确时间戳进行语义智能断句规整")
-
-                // 4. 匹配译文时间轴按钮 (跟译文的时间轴做匹配：保持原文与译文对应不变，按译文自然语速重排时间轴)
-                let hasTranslations = appState.project.subtitles.contains { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                Button(action: {
-                    Task {
-                        await appState.matchTimelineToTranslation()
-                    }
-                }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "waveform.badge.clock")
-                        Text("匹配译文时间轴")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(!hasTranslations || appState.project.isProcessing)
-                .help("实测配音时长，按局部语境分组；固定每组开头和结尾，组内自动平衡语速。预览并试听后应用")
-
-                // 5. 合并按钮 (仅当选中多个且连续时可用，平时置灰禁用)
-                let canMergeMulti = appState.canMergeMultipleConsecutive(ids: appState.selectedSubtitleIDs)
-                let mergeButtonTitle: String = {
-                    if appState.selectedSubtitleIDs.count >= 2 {
-                        return "合并 (\(appState.selectedSubtitleIDs.count))"
-                    } else {
-                        return "合并"
-                    }
-                }()
-
-                Button(action: {
-                    appState.mergeSubtitles(ids: appState.selectedSubtitleIDs)
-                    appState.selectedSubtitleIDs.removeAll()
-                }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.triangle.merge")
-                        Text(mergeButtonTitle)
-                    }
-                }
-                .buttonStyle(.bordered)
-                .tint(canMergeMulti ? .accentColor : nil)
-                .controlSize(.small)
-                .disabled(!canMergeMulti)
-                .keyboardShortcut("j", modifiers: .command)
-                .help(canMergeMulti ? "合并当前选中的 \(appState.selectedSubtitleIDs.count) 行连续字幕 (Cmd+J)" : (appState.selectedSubtitleIDs.count >= 2 ? "选中的字幕行必须连续方可合并" : "勾选多个且连续的字幕行即可激活合并功能"))
+            ScrollView(.horizontal) {
+                subtitleToolbar
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .scrollIndicators(.visible)
+            .frame(height: 44)
             .background(Color(nsColor: .windowBackgroundColor))
 
             Divider()
@@ -245,6 +154,106 @@ public struct SubtitleListView: View {
         .onChange(of: searchText) { _, _ in
             appState.selectedSubtitleIDs.removeAll()
             lastClickedIndex = nil
+        }
+    }
+
+    private var subtitleToolbar: some View {
+        HStack(spacing: 8) {
+            Text(searchText.isEmpty
+                 ? "字幕列表 (\(filteredSubtitles.count))"
+                 : "字幕列表 (\(filteredSubtitles.count)/\(appState.project.subtitles.count))")
+                .font(.headline)
+
+            Spacer()
+
+            // 1. 撤销按钮 (Cmd+Z)
+            Button(action: {
+                appState.undo()
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.uturn.backward")
+                    Text("撤销")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(!appState.canUndo)
+            .keyboardShortcut("z", modifiers: .command)
+            .help("撤销上一步编辑操作 (Cmd+Z)")
+
+            // 2. 重做按钮 (Cmd+Shift+Z)
+            Button(action: {
+                appState.redo()
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.uturn.forward")
+                    Text("重做")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(!appState.canRedo)
+            .keyboardShortcut("z", modifiers: [.command, .shift])
+            .help("恢复上一步被撤销的操作 (Cmd+Shift+Z)")
+
+            // 3. 智能分句按钮 (基于每个单词的毫秒时间戳与 LLM 语义规整)
+            Button(action: {
+                Task {
+                    await appState.runSmartSegmentation()
+                }
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "sparkles")
+                    Text("智能分句")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(appState.project.subtitles.isEmpty || appState.project.isProcessing)
+            .help("调用大模型结合每个词的精确时间戳进行语义智能断句规整")
+
+            // 4. 匹配译文时间轴按钮 (跟译文的时间轴做匹配：保持原文与译文对应不变，按译文自然语速重排时间轴)
+            let hasTranslations = appState.project.subtitles.contains { !$0.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            Button(action: {
+                Task {
+                    await appState.matchTimelineToTranslation()
+                }
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "waveform.badge.clock")
+                    Text("匹配译文时间轴")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(!hasTranslations || appState.project.isProcessing)
+            .help("实测配音时长，按局部语境分组；固定每组开头和结尾，组内自动平衡语速。预览并试听后应用")
+
+            // 5. 合并按钮 (仅当选中多个且连续时可用，平时置灰禁用)
+            let canMergeMulti = appState.canMergeMultipleConsecutive(ids: appState.selectedSubtitleIDs)
+            let mergeButtonTitle: String = {
+                if appState.selectedSubtitleIDs.count >= 2 {
+                    return "合并 (\(appState.selectedSubtitleIDs.count))"
+                } else {
+                    return "合并"
+                }
+            }()
+
+            Button(action: {
+                appState.mergeSubtitles(ids: appState.selectedSubtitleIDs)
+                appState.selectedSubtitleIDs.removeAll()
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.triangle.merge")
+                    Text(mergeButtonTitle)
+                }
+            }
+            .buttonStyle(.bordered)
+            .tint(canMergeMulti ? .accentColor : nil)
+            .controlSize(.small)
+            .disabled(!canMergeMulti)
+            .keyboardShortcut("j", modifiers: .command)
+            .help(canMergeMulti ? "合并当前选中的 \(appState.selectedSubtitleIDs.count) 行连续字幕 (Cmd+J)" : (appState.selectedSubtitleIDs.count >= 2 ? "选中的字幕行必须连续方可合并" : "勾选多个且连续的字幕行即可激活合并功能"))
         }
     }
 
