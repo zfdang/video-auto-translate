@@ -66,6 +66,8 @@ public final class AppState: ObservableObject {
     @Published public var availableOllamaModels: [String] = []
     @Published public var ollamaPullStates: [String: ModelState] = [:]
     @Published public var isASRServerOnline: Bool = false
+    @Published public var isTestingASR: Bool = false
+    @Published public var asrTestFeedback: (isSuccess: Bool, message: String)? = nil
     @Published public var showSettings: Bool = false
     @Published public var showHelp: Bool = false
     @Published public var showExportSheet: Bool = false
@@ -210,14 +212,28 @@ public final class AppState: ObservableObject {
     }
 
     /// 详细测试当前 ASR 配置 URL 连通性
+    @MainActor
     public func testASRConnection() async -> (success: Bool, message: String) {
+        isTestingASR = true
+        asrTestFeedback = nil
+        defer { isTestingASR = false }
+
         if usesManagedASR && !sidecarManager.status.isRunning {
             let started = await sidecarManager.ensureRunning()
             if !started {
-                return (false, "唤醒本地内置 ASR 引擎失败，请查看引擎日志以排查原因")
+                let err = (false, "唤醒本地内置 ASR 引擎失败，请查看引擎日志以排查原因")
+                self.asrTestFeedback = err
+                self.isASRServerOnline = false
+                return err
             }
         }
-        return await LocalASRService.testConnection(urlString: project.asrConfig.serviceURL)
+        let res = await LocalASRService.testConnection(urlString: project.asrConfig.serviceURL)
+        self.asrTestFeedback = (res.success, res.message)
+        self.isASRServerOnline = res.success
+        if res.success && usesManagedASR && !sidecarManager.status.isRunning {
+            sidecarManager.status = .running(pid: 0, port: sidecarManager.defaultPort)
+        }
+        return res
     }
 
     deinit {

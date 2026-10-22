@@ -8,8 +8,6 @@ public struct SettingsView: View {
     @ObservedObject var modelStorageManager: ModelStorageManager
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab: SettingsTab = .tts
-    @State private var isTestingASR: Bool = false
-    @State private var asrTestFeedback: (isSuccess: Bool, message: String)? = nil
     @State private var isProbingOllama: Bool = false
     @State private var ollamaProbeFeedback: (isSuccess: Bool, message: String)? = nil
     @State private var selectedLanguageOption: String = "简体中文 (Simplified Chinese)"
@@ -277,28 +275,21 @@ public struct SettingsView: View {
                         TextField("ASR 接口 URL", text: $appState.project.asrConfig.serviceURL)
                         Button(action: {
                             Task {
-                                isTestingASR = true
-                                asrTestFeedback = nil
-                                let res = await appState.testASRConnection()
-                                await MainActor.run {
-                                    self.isTestingASR = false
-                                    self.asrTestFeedback = (res.success, res.message)
-                                    self.appState.isASRServerOnline = res.success
-                                }
+                                _ = await appState.testASRConnection()
                             }
                         }) {
                             HStack(spacing: 4) {
-                                if isTestingASR {
+                                if appState.isTestingASR {
                                     ProgressView()
                                         .controlSize(.small)
                                 }
-                                Text(isTestingASR && appState.usesManagedASR && !appState.sidecarManager.status.isRunning ? "正在唤醒并测试..." : "测试连通")
+                                Text(appState.isTestingASR && appState.usesManagedASR && !appState.sidecarManager.status.isRunning ? "正在唤醒并测试..." : "测试连通")
                             }
                         }
-                        .disabled(isTestingASR)
+                        .disabled(appState.isTestingASR)
                     }
 
-                    if let feedback = asrTestFeedback {
+                    if let feedback = appState.asrTestFeedback {
                         HStack(spacing: 6) {
                             Image(systemName: feedback.isSuccess ? "checkmark.circle.fill" : "xmark.circle.fill")
                                 .foregroundColor(feedback.isSuccess ? .green : .red)

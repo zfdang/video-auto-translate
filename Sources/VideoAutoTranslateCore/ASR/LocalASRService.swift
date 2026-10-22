@@ -43,13 +43,24 @@ public final class LocalASRService: ASREngineProtocol {
     /// 详细测试 ASR 接口连通性并返回耗时与状态说明
     public static func testConnection(urlString: String) async -> (success: Bool, message: String) {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), let scheme = url.scheme, ["http", "https"].contains(scheme.lowercased()) else {
+        guard !trimmed.isEmpty else {
+            return (false, "请输入有效的 ASR 接口 URL")
+        }
+
+        var normalized = trimmed
+        if !normalized.lowercased().hasPrefix("http://") && !normalized.lowercased().hasPrefix("https://") {
+            normalized = "http://" + normalized
+        }
+
+        guard let url = URL(string: normalized), let scheme = url.scheme, ["http", "https"].contains(scheme.lowercased()) else {
             return (false, "URL 格式不合法，请输入有效的 http:// 或 https:// 地址")
         }
 
         var testURLs: [URL] = []
         if var comp = URLComponents(url: url, resolvingAgainstBaseURL: false) {
             comp.path = "/health"
+            if let u = comp.url { testURLs.append(u) }
+            comp.path = "/"
             if let u = comp.url { testURLs.append(u) }
             comp.path = "/v1/models"
             if let u = comp.url { testURLs.append(u) }
@@ -58,7 +69,8 @@ public final class LocalASRService: ASREngineProtocol {
 
         let start = Date()
         let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.timeoutIntervalForRequest = 2.0
+        sessionConfig.timeoutIntervalForRequest = 2.5
+        sessionConfig.timeoutIntervalForResource = 5.0
         let session = URLSession(configuration: sessionConfig)
 
         for target in testURLs {
