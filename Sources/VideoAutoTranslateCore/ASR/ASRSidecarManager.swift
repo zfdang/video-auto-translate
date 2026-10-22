@@ -72,12 +72,12 @@ public final class ASRSidecarManager: ObservableObject {
         return await startSidecar()
     }
 
-    /// 校验 Python 环境是否安装了必须依赖 (fastapi 与 uvicorn)
+    /// 校验 Python 环境是否安装了必须依赖 (fastapi, uvicorn, edge_tts 等)
     private func isPythonCandidateValid(path: String) -> Bool {
         guard FileManager.default.fileExists(atPath: path) else { return false }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
-        p.arguments = ["-c", "import fastapi, uvicorn, multipart, mlx_audio, huggingface_hub"]
+        p.arguments = ["-c", "import fastapi, uvicorn, multipart, mlx_audio, huggingface_hub, edge_tts"]
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         do {
@@ -89,18 +89,58 @@ public final class ASRSidecarManager: ObservableObject {
         }
     }
 
-    /// 查找 Python 路径 (R13: 智能探测各环境候选并验证依赖有效性)
+    /// 判断当前是否正运行在内嵌的独立 Python 环境中
+    public var isUsingEmbeddedRuntime: Bool {
+        let p = resolvePythonPath()
+        return p.contains("Contents/Resources/runtime") || p.contains(".build/embedded-runtime")
+    }
+
+    /// 获取当前 Python 环境的友好展示描述
+    public var runtimeDescription: String {
+        let path = resolvePythonPath()
+        if path.contains("Contents/Resources/runtime") {
+            return "App 内置独立运行环境 (免配置·开箱即用)"
+        } else if path.contains(".build/embedded-runtime") {
+            return "本地内嵌运行环境 (.build/embedded-runtime)"
+        } else if path.contains("VideoAutoTranslate/venv") {
+            return "应用专属隔离环境 (Application Support)"
+        } else if path.contains(".venv") {
+            return "工作区虚拟环境 (.venv)"
+        } else {
+            return "外部 Python: \(path)"
+        }
+    }
+
+    /// 查找 Python 路径 (优先锁定 App 内嵌独立运行环境)
     public func resolvePythonPath() -> String {
         let fileManager = FileManager.default
         let home = fileManager.homeDirectoryForCurrentUser
 
-        // 1. 优先读取环境变量 VAT_PYTHON_PATH
+        // 1. 【最高优先级】App Bundle 内部自带的独立嵌入式 Python 运行时
+        if let resourceURL = Bundle.main.resourceURL {
+            let embeddedPy3 = resourceURL.appendingPathComponent("runtime/bin/python3").path
+            if isPythonCandidateValid(path: embeddedPy3) || fileManager.isExecutableFile(atPath: embeddedPy3) {
+                return embeddedPy3
+            }
+            let embeddedPy = resourceURL.appendingPathComponent("runtime/bin/python").path
+            if isPythonCandidateValid(path: embeddedPy) || fileManager.isExecutableFile(atPath: embeddedPy) {
+                return embeddedPy
+            }
+        }
+
+        // 2. 【开发调试优先级】本地构建缓存中的内嵌运行时 (.build/embedded-runtime)
+        let buildEmbeddedPy3 = URL(fileURLWithPath: fileManager.currentDirectoryPath).appendingPathComponent(".build/embedded-runtime/bin/python3").path
+        if isPythonCandidateValid(path: buildEmbeddedPy3) || fileManager.isExecutableFile(atPath: buildEmbeddedPy3) {
+            return buildEmbeddedPy3
+        }
+
+        // 3. 环境变量 VAT_PYTHON_PATH
         if let envPath = ProcessInfo.processInfo.environment["VAT_PYTHON_PATH"],
            fileManager.fileExists(atPath: envPath) {
             return envPath
         }
 
-        // 2. 检查应用专属目录、工作区虚拟环境及 Conda 等候选路径
+        // 4. 检查应用专属目录、工作区虚拟环境及 Conda 等候选路径
         var candidates: [String] = []
         if let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             candidates.append(appSupport.appendingPathComponent("VideoAutoTranslate/venv/bin/python").path)
@@ -262,6 +302,10 @@ public final class ASRSidecarManager: ObservableObject {
     }
     @MainActor public func prepareManagedRuntime() async {
         guard !isPreparingRuntime else { return }
+        if isUsingEmbeddedRuntime {
+            runtimeMessage = "当前已使用内置独立运行环境，无需重复准备环境。"
+            return
+        }
         guard let server = resolveServerScriptPath() else { runtimeMessage = "未找到环境准备脚本，请重新安装应用"; return }
         let script = URL(fileURLWithPath: server).deletingLastPathComponent().appendingPathComponent("prepare-runtime.sh")
         let target = diagnosticLogURL.deletingLastPathComponent().appendingPathComponent("venv")
