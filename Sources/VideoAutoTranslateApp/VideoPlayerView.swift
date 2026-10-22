@@ -9,7 +9,7 @@ public struct VideoPlayerView: View {
 
     public var body: some View {
         ZStack {
-            NativeAVPlayerView(player: appState.player)
+            NativeAVPlayerView(player: appState.player, subtitle: currentSubtitle)
                 .background(Color.black)
 
             // 顶部右上角音轨切换浮层 (仅在已加载视频时展示)
@@ -22,32 +22,6 @@ public struct VideoPlayerView: View {
                     .padding(12)
                     Spacer()
                 }
-            }
-
-            // 底部实时字幕浮层
-            if let activeSubtitle = currentSubtitle {
-                VStack {
-                    Spacer()
-                    VStack(spacing: 4) {
-                        if !activeSubtitle.translatedText.isEmpty {
-                            Text(activeSubtitle.translatedText)
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundColor(.yellow)
-                                .shadow(color: .black, radius: 2, x: 1, y: 1)
-                        }
-                        Text(activeSubtitle.originalText)
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(.white)
-                            .shadow(color: .black, radius: 2, x: 1, y: 1)
-                    }
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Color.black.opacity(0.6))
-                    .cornerRadius(8)
-                    .padding(.bottom, 24)
-                }
-                .transition(.opacity)
             }
         }
     }
@@ -120,18 +94,76 @@ public struct VideoPlayerView: View {
     }
 }
 
+private struct PlayerSubtitleOverlay: View {
+    let subtitle: SubtitleItem?
+    var body: some View {
+        ZStack {
+            if let activeSubtitle = subtitle {
+                VStack {
+                    Spacer()
+                    VStack(spacing: 4) {
+                        if !activeSubtitle.translatedText.isEmpty {
+                            Text(activeSubtitle.translatedText)
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(.yellow)
+                                .shadow(color: .black, radius: 2, x: 1, y: 1)
+                        }
+                        Text(activeSubtitle.originalText)
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.white)
+                            .shadow(color: .black, radius: 2, x: 1, y: 1)
+                    }
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color.black.opacity(0.6))
+                    .cornerRadius(8)
+                    .padding(.bottom, 24)
+                }
+                .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
+    }
+}
+
+private final class SubtitleHostingView: NSHostingView<PlayerSubtitleOverlay> {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 struct NativeAVPlayerView: NSViewRepresentable {
     let player: AVPlayer
+    let subtitle: SubtitleItem?
+
+    final class Coordinator {
+        fileprivate var subtitleHost: NSHostingView<PlayerSubtitleOverlay>?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
         view.player = player
         view.controlsStyle = .inline
         view.showsFullScreenToggleButton = true
+        if let container = view.contentOverlayView {
+            let host = SubtitleHostingView(rootView: PlayerSubtitleOverlay(subtitle: subtitle))
+            host.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(host)
+            NSLayoutConstraint.activate([
+                host.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                host.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                host.topAnchor.constraint(equalTo: container.topAnchor),
+                host.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+            ])
+            context.coordinator.subtitleHost = host
+        }
         return view
     }
 
     func updateNSView(_ nsView: AVPlayerView, context: Context) {
         nsView.player = player
+        context.coordinator.subtitleHost?.rootView = PlayerSubtitleOverlay(subtitle: subtitle)
     }
 }
