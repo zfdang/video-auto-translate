@@ -69,6 +69,13 @@ cat << EOF > "$APP_DIR/Contents/Info.plist"
     <string>NSApplication</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.video</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
 </dict>
 </plist>
 EOF
