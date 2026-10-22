@@ -24,6 +24,14 @@ import VideoAutoTranslateCore
                 var audio: URL?
                 defer { if let audio { try? FileManager.default.removeItem(at: audio) } }
                 try Task.checkCancellation()
+                if subtitleMode != .none || audioMode != .original {
+                    let mode = audioMode == .original ? subtitleMode : .bilingual
+                    let validation = SRTExporter().validate(items: snapshot, mode: mode)
+                    guard !validation.hasIssues else {
+                        throw NSError(domain: "SubtitleExport", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                            validation.issues.map { "第\($0.row)句：\($0.reason)" }.joined(separator: "\n")])
+                    }
+                }
                 if audioMode != .original {
                     let manager = SubtitleManager()
                     let tts = ttsService ?? EdgeTTSService()
