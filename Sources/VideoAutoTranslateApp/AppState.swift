@@ -570,9 +570,9 @@ public final class AppState: ObservableObject {
             feedbackKind = .success
             let highSpeedCount = project.subtitles.filter { $0.dubbingTimingIssue != nil }.count
             if highSpeedCount > 0 {
-                statusMessage = "配音已完成（其中 \(highSpeedCount) 句语速偏快，建议使用「匹配译文时间轴」优化听感，也可直接试听或导出成片）；播放器已切换至译文配音"
+                statusMessage = "配音已完成（\(highSpeedCount) 句语速偏快，可使用「匹配译文时间轴」优化）；播放器已切换至译文配音"
             } else {
-                statusMessage = "配音已生成；播放器已切换至译文配音"
+                statusMessage = "配音已完成；播放器已切换至译文配音"
             }
             previewAudioTrack = .translated
             await updatePreviewPlayerItem()

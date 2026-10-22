@@ -271,6 +271,7 @@ public final class SubtitleManager {
             guard !Task.isCancelled, item.audioSignature(voice: voice) == signature else { throw CancellationError() }
             item.dubbedAudioURL = result
             item.dubbedAudioSignature = signature
+            item.dubbedRate = rate
         }
     }
 }
