@@ -635,7 +635,10 @@ public struct SettingsView: View {
                         engine: appState.project.ttsConfig.engineType
                     )
 
-                    Picker("当前音色", selection: $appState.project.ttsConfig.selectedVoice) {
+                    Picker("当前音色", selection: Binding(
+                        get: { appState.project.effectiveVoiceCode },
+                        set: { appState.project.ttsConfig.selectedVoice = $0 }
+                    )) {
                         ForEach(availableVoices) { voice in
                             HStack {
                                 Text(voice.name)
