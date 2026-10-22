@@ -1,5 +1,6 @@
 import XCTest
 import CoreMedia
+import AVFoundation
 @testable import VideoAutoTranslateCore
 @testable import VideoAutoTranslateApp
 
@@ -93,6 +94,13 @@ import CoreMedia
             XCTAssertNil(app.errorMessage)
             XCTAssertEqual(app.project.llmConfig.ollamaModel, current)
         }
+    }
+
+    func testInvalidExportMediaExplainsHowToRecover() {
+        let error = NSError(domain: AVFoundationErrorDomain, code: AVError.Code.fileFormatNotRecognized.rawValue)
+        XCTAssertTrue(ExportJob.failureDescription(error).contains("重新定位媒体"))
+        let other = NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "磁盘空间不足"])
+        XCTAssertEqual(ExportJob.failureDescription(other), "磁盘空间不足")
     }
 
     func testExportCancellationPreservesExistingDestination() async throws {

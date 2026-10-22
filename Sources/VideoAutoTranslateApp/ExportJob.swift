@@ -49,10 +49,20 @@ import VideoAutoTranslateCore
                 progress = 1
                 message = "已导出 \(destination.lastPathComponent)；字幕 \(subtitleMode == .none ? 0 : snapshot.count) 句，明确跳过 \(skipped) 句"
             } catch is CancellationError { message = "导出已取消" }
-            catch { self.error = error.localizedDescription; message = "导出失败：\(error.localizedDescription)" }
+            catch { self.error = Self.failureDescription(error); message = "导出失败：\(self.error!)" }
             isRunning = false
             task = nil
         }
+    }
+
+    static func failureDescription(_ error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain == AVFoundationErrorDomain,
+           [AVError.Code.invalidSourceMedia.rawValue, AVError.Code.fileFormatNotRecognized.rawValue,
+            AVError.Code.fileFailedToParse.rawValue, AVError.Code.failedToLoadMediaData.rawValue].contains(nsError.code) {
+            return "无法读取媒体素材，请确认视频和音频文件完整、格式受支持，或使用「重新定位媒体」选择有效文件。"
+        }
+        return error.localizedDescription
     }
 
     public func cancel() { task?.cancel(); message = "正在取消导出…" }

@@ -367,7 +367,7 @@ public final class AppState: ObservableObject {
     public func openVideo(url: URL) {
         guard confirmReplacingProject() else { return }
         if url.pathExtension.lowercased() == "vatproject" {
-            do { try loadProject(from: url) } catch { errorMessage = "无法打开工程：\(error.localizedDescription)" }
+            do { try loadProject(from: url) } catch { errorMessage = error is DecodingError ? "工程文件格式无效，请选择有效的 .vatproject 工程文件。" : "无法打开工程：\(error.localizedDescription)" }
             return
         }
         clearRecoveryCheckpoint()
@@ -1205,7 +1205,7 @@ public final class AppState: ObservableObject {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try loadProject(from: url) } catch { errorMessage = "无法打开工程：\(error.localizedDescription)" }
+        do { try loadProject(from: url) } catch { errorMessage = error is DecodingError ? "工程文件格式无效，请选择有效的 .vatproject 工程文件。" : "无法打开工程：\(error.localizedDescription)" }
     }
 
     public func loadProject(from url: URL) throws {
