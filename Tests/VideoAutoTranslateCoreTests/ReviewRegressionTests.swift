@@ -44,6 +44,30 @@ final class ReviewRegressionTests: XCTestCase {
         XCTAssertEqual(result.first?.endTime.secondsValue, 2)
     }
 
+    func testLLMSegmenterStatusCallbackUpdates() async throws {
+        let tokens = (0..<150).map { i in
+            WordToken(text: "word\(i)", startTime: .from(seconds: Double(i) * 0.5), endTime: .from(seconds: Double(i + 1) * 0.5))
+        }
+        let segmenter = LLMSegmenter()
+        var reportedStatuses: [String] = []
+        var reportedProgress: [Double] = []
+
+        // 使用离线/无效配置，将触发初始状态汇报、批次状态更新以及安全重构完成回调
+        var config = LLMConfiguration()
+        config.providerType = .onlineCustom
+        config.onlineBaseURL = "http://127.0.0.1:9" // 快速失败端口
+        config.onlineAPIKey = "dummy"
+
+        _ = try await segmenter.segment(tokens: tokens, config: config) { status, progress in
+            reportedStatuses.append(status)
+            reportedProgress.append(progress)
+        }
+
+        XCTAssertFalse(reportedStatuses.isEmpty, "必须提供状态栏进度描述回调")
+        XCTAssertTrue(reportedStatuses.contains(where: { $0.contains("批次") || $0.contains("分析") }), "状态信息应包含批次或分析详情")
+        XCTAssertEqual(reportedProgress.last, 1.0, "最终进度必须达到 1.0 (100%)")
+    }
+
     func testTranslationSequenceBaseAndCompleteCoverage() throws {
         let rows = ["First", "Second"].map { SubtitleItem(startTime: .zero, endTime: .from(seconds: 1), originalText: $0) }
         let translator = SubtitleTranslator()
