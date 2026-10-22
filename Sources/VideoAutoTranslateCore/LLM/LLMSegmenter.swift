@@ -11,15 +11,27 @@ public final class LLMSegmenter {
     /// - Parameters:
     ///   - tokens: 包含物理开始/结束时间戳的词序列 (WordToken)
     ///   - config: 大语言模型参数配置
+    ///   - onStatusUpdate: 进度与状态更新回调 (状态描述, 0.0~1.0进度)
     /// - Returns: 经语义断句后的高质量字幕项列表 (SubtitleItem)
     public func segment(
         tokens: [WordToken],
-        config: LLMConfiguration
+        config: LLMConfiguration,
+        onStatusUpdate: ((_ status: String, _ progress: Double) -> Void)? = nil
     ) async throws -> [SubtitleItem] {
         guard !tokens.isEmpty else { return [] }
 
         let fullRawText = tokens.map { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !fullRawText.isEmpty else { return [] }
+
+        let totalTokens = tokens.count
+        let batchWordSize = 120
+        let totalBatches = max(1, Int(ceil(Double(totalTokens) / Double(batchWordSize))))
+        let modelName = config.effectiveModel
+
+        let initialMsg = totalBatches > 1
+            ? "正在准备智能分句：分析共 \(totalTokens) 个对齐词，划分为 \(totalBatches) 个批次..."
+            : "正在准备智能分句：分析共 \(totalTokens) 个对齐词时间戳..."
+        onStatusUpdate?(initialMsg, 0.05)
 
         defer {
             if config.providerType == .localOllama {
@@ -36,25 +48,56 @@ public final class LLMSegmenter {
         )
 
         // 分批处理：为保证 LLM 响应速度与上下文连贯性，每批约 120 个词进行分句
-        let batchWordSize = 120
         var allSegmentedItems: [SubtitleItem] = []
         var tokenOffset = 0
+        var batchIndex = 0
 
         while tokenOffset < tokens.count {
+            batchIndex += 1
             let chunkTokens = Array(tokens[tokenOffset..<min(tokenOffset + batchWordSize, tokens.count)])
             tokenOffset += chunkTokens.count
 
-            let items = try await segmentChunk(tokens: chunkTokens, config: config, client: client)
+            // 批次进度：从 0.05 渐进至 0.90
+            let batchStartProgress = 0.05 + 0.85 * (Double(batchIndex - 1) / Double(totalBatches))
+            let batchAlignProgress = 0.05 + 0.85 * ((Double(batchIndex) - 0.25) / Double(totalBatches))
+
+            let promptMsg = totalBatches > 1
+                ? "智能分句 (批次 \(batchIndex)/\(totalBatches)): 正在调用大模型 (\(modelName)) 规划语法意群..."
+                : "智能分句: 正在调用大模型 (\(modelName)) 规划语法意群与断句..."
+            onStatusUpdate?(promptMsg, batchStartProgress)
+
+            let alignMsg = totalBatches > 1
+                ? "智能分句 (批次 \(batchIndex)/\(totalBatches)): 正在吸附物理声学时间戳并重构字幕行..."
+                : "智能分句: 正在吸附物理声学时间戳并重构字幕行..."
+
+            let items = try await segmentChunk(
+                tokens: chunkTokens,
+                config: config,
+                client: client,
+                onBeforeAlign: {
+                    onStatusUpdate?(alignMsg, batchAlignProgress)
+                }
+            )
             allSegmentedItems.append(contentsOf: items)
         }
 
-        return allSegmentedItems.isEmpty ? fallbackSegmenter.segment(tokens: tokens) : allSegmentedItems
+        let finalItems: [SubtitleItem]
+        if allSegmentedItems.isEmpty {
+            onStatusUpdate?("大模型未返回分句，正在使用本地规则安全重构...", 0.92)
+            finalItems = fallbackSegmenter.segment(tokens: tokens)
+        } else {
+            finalItems = allSegmentedItems
+        }
+
+        onStatusUpdate?("智能分句重构完成：共生成 \(finalItems.count) 行自然字幕", 1.0)
+        return finalItems
     }
 
     private func segmentChunk(
         tokens: [WordToken],
         config: LLMConfiguration,
-        client: OpenAICompatibleClient
+        client: OpenAICompatibleClient,
+        onBeforeAlign: (() -> Void)? = nil
     ) async throws -> [SubtitleItem] {
         let rawText = tokens.map { $0.text }.joined(separator: " ")
 
@@ -100,6 +143,8 @@ public final class LLMSegmenter {
         guard let lines = parseLines(from: responseText), !lines.isEmpty else {
             return fallbackSegmenter.segment(tokens: tokens)
         }
+
+        onBeforeAlign?()
 
         // 将 LLM 分出的行精确对齐映射回原物理 WordTokens，重构开始和结束时间
         return alignLinesToTokens(lines: lines, tokens: tokens)

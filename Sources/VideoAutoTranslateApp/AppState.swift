@@ -454,8 +454,14 @@ public final class AppState: ObservableObject {
                 let modelName = project.llmConfig.effectiveModel
                 project.currentStepName = "正在调用大模型 (\(modelName)) 执行智能语义断句规整..."
                 statusMessage = "正在调用大模型 (\(modelName)) 执行智能语义断句规整..."
-                project.progress = 0.92
-                if let smartItems = try? await llmSegmenter.segment(tokens: allTokens, config: project.llmConfig), !smartItems.isEmpty {
+                project.progress = 0.90
+                if let smartItems = try? await llmSegmenter.segment(tokens: allTokens, config: project.llmConfig, onStatusUpdate: { [weak self] status, progress in
+                    guard let self = self, !Task.isCancelled else { return }
+                    Task { @MainActor in
+                        self.project.currentStepName = status
+                        self.project.progress = 0.90 + progress * 0.09
+                    }
+                }), !smartItems.isEmpty {
                     finalItems = smartItems
                     usedLLMSegmentation = true
                 }
@@ -955,7 +961,13 @@ public final class AppState: ObservableObject {
         }
         let config = project.llmConfig
         await runEditingJob(name: "智能分句", snapshot: snapshot) {
-            try await self.llmSegmenter.segment(tokens: tokens, config: config)
+            try await self.llmSegmenter.segment(tokens: tokens, config: config) { [weak self] status, progress in
+                guard let self = self, !Task.isCancelled else { return }
+                Task { @MainActor in
+                    self.project.currentStepName = status
+                    self.project.progress = progress
+                }
+            }
         }
     }
 
@@ -1015,7 +1027,11 @@ public final class AppState: ObservableObject {
             guard result != snapshot || reviewUnchangedResult else { statusMessage = "没有可安全应用的新建议，原字幕已保留"; editingTask = nil; return }
             editProposal = EditProposal(title: name, before: snapshot, after: result, generation: generation, voice: voice)
             project.progress = 1
-            statusMessage = "建议已生成；请预览并确认应用"
+            if name == "智能分句" {
+                statusMessage = "智能分句建议已生成：已将 \(snapshot.count) 行碎片字幕规整为 \(result.count) 行自然句子；请预览并确认应用"
+            } else {
+                statusMessage = "建议已生成；请预览并确认应用"
+            }
 
         } catch {
             guard generation == projectGeneration else { return }
@@ -1038,7 +1054,11 @@ public final class AppState: ObservableObject {
         scheduleRecovery()
         editProposal = nil
         let conflicts = proposal.after.filter { $0.dubbingTimingIssue != nil }.count
-        statusMessage = conflicts == 0 ? "已应用建议，可撤销；请试听" : "已应用时间建议；\(conflicts) 句语速偏快，可试听；可直接继续配音和导出"
+        if proposal.title == "智能分句" {
+            statusMessage = "已应用智能分句（共 \(proposal.after.count) 行，可 ⌘Z 撤销）；请继续翻译或微调"
+        } else {
+            statusMessage = conflicts == 0 ? "已应用建议，可撤销；请试听" : "已应用时间建议；\(conflicts) 句语速偏快，可试听；可直接继续配音和导出"
+        }
         if previewAudioTrack != .original {
             previewAudioTrack = .original
             Task { await self.updatePreviewPlayerItem() }
