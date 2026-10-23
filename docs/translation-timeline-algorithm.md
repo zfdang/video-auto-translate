@@ -57,4 +57,4 @@
 - [语境分组](../Sources/VideoAutoTranslateCore/LLM/SpeechClusterPlanner.swift)
 - [音频准备、变速和复用](../Sources/VideoAutoTranslateCore/Manager/SubtitleManager.swift)
 - [样例时长数据](../Tests/VideoAutoTranslateCoreTests/Fixtures/paris-tour-timing.json)与[真实视频验收测试](../Tests/VideoAutoTranslateCoreTests/RealSampleDubbingTests.swift)
-- [运行真实视频验收的方法](../README.md#真实视频时间轴回归)
+- [运行真实视频验收的方法](development.md#真实视频时间轴回归)
