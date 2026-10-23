@@ -6,6 +6,10 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      - 'doc/**'
+      - 'reviews/**'
+      - 'pages/**'
+      - '.github/workflows/pages.yml'
       - '.gitignore'
       - 'LICENSE'
   pull_request:
@@ -13,6 +17,10 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      - 'doc/**'
+      - 'reviews/**'
+      - 'pages/**'
+      - '.github/workflows/pages.yml'
       - '.gitignore'
       - 'LICENSE'
 
@@ -38,7 +46,7 @@ jobs:
           python3 scripts/test-release-notes.py
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('scripts/test-asr-results.py') }}
@@ -54,19 +62,26 @@ jobs:
   build-and-test:
     name: Build & Test (macOS arm64)
     runs-on: macos-14
-    timeout-minutes: 8
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
       - name: Cache SPM
-        uses: actions/cache@v4
+        uses: actions/cache@v6.1.0
         with:
-          path: .build
+          path: |
+            .build/artifacts
+            .build/checkouts
+            .build/repositories
+            .build/arm64-apple-macosx
           key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'Package.swift') }}
           restore-keys: |
             ${{ runner.os }}-spm-
+
+      - name: Prepare Python runtime for integration tests
+        run: ./scripts/prepare-embedded-runtime.sh
 
       - name: Swift Test
         run: swift test

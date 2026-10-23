@@ -3,6 +3,15 @@ name: macOS Release
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'doc/**'
+      - 'reviews/**'
+      - 'pages/**'
+      - '.github/workflows/pages.yml'
+      - '.gitignore'
+      - 'LICENSE'
   workflow_dispatch:
 
 permissions:
@@ -15,6 +24,7 @@ concurrency:
 jobs:
   changelog:
     name: Generate Release Changelog
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -69,6 +79,9 @@ jobs:
         run: |
           python3 scripts/test-release-metadata.py
           python3 scripts/test-release-notes.py
+
+      - name: Prepare Python runtime for integration tests
+        run: ./scripts/prepare-embedded-runtime.sh
 
       - name: Swift Test
         run: swift test
