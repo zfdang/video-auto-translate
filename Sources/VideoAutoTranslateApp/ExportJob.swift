@@ -40,18 +40,23 @@ import VideoAutoTranslateCore
                         message = "生成配音 \(index + 1)/\(snapshot.count)"
                         if !row.hasCurrentAudio(voice: voice) { try await manager.reDub(item: row, ttsService: tts, voice: voice) }
                         guard row.hasCurrentAudio(voice: voice) else { throw TTSError.synthesisFailed("配音未完成，未导出不完整成片") }
-                        progress = Double(index + 1) / Double(max(1, snapshot.count)) * 0.5
+                        progress = Double(index + 1) / Double(max(1, snapshot.count)) * 0.1
                     }
                     try Task.checkCancellation()
                     message = "正在混音…"
                     let mixed = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".m4a")
                     audio = mixed
-                    try await AudioMixer().mix(backgroundAudioURL: audioMode == .overlay ? video : nil, subtitles: snapshot, to: mixed)
+                    try await AudioMixer().mix(backgroundAudioURL: audioMode == .overlay ? video : nil, subtitles: snapshot, to: mixed) { value in
+                        self.progress = 0.1 + value * 0.1
+                    }
                 }
                 try Task.checkCancellation()
-                progress = 0.75
+                let renderStart = audioMode == .original ? 0.0 : 0.2
+                progress = renderStart
                 message = "正在渲染视频…"
-                try await VideoComposer().compose(videoURL: video, newAudioURL: audio, outputURL: destination, subtitles: snapshot, subtitleMode: subtitleMode)
+                try await VideoComposer().compose(videoURL: video, newAudioURL: audio, outputURL: destination, subtitles: snapshot, subtitleMode: subtitleMode) { value in
+                    self.progress = renderStart + value * (0.99 - renderStart)
+                }
                 try Task.checkCancellation()
                 outputURL = destination
                 progress = 1

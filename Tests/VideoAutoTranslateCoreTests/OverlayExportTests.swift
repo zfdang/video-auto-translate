@@ -1,5 +1,6 @@
 import XCTest
 import AVFoundation
+import Combine
 @testable import VideoAutoTranslateCore
 @testable import VideoAutoTranslateApp
 
@@ -52,10 +53,17 @@ import AVFoundation
         app.project.videoURL = video
         app.project.audioURL = recognition
         let destination = folder.appendingPathComponent("overlay.mp4")
+        var progressValues: [Double] = []
+        let observation = app.exportJob.$progress.sink { progressValues.append($0) }
         app.exportJob.start(video: video, rows: [], voice: "zh-CN", audioMode: .overlay, subtitleMode: .none, destination: destination, skipped: 0)
         while app.exportJob.isRunning { try await Task.sleep(nanoseconds: 10_000_000) }
         XCTAssertNil(app.exportJob.error)
         XCTAssertEqual(app.exportJob.outputURL, destination)
+        XCTAssertEqual(progressValues.first, 0)
+        XCTAssertEqual(progressValues.last, 1)
+        XCTAssertTrue(progressValues.contains { $0 >= 0.1 && $0 <= 0.2 }, "Mixing must report progress before rendering")
+        XCTAssertTrue(zip(progressValues, progressValues.dropFirst()).allSatisfy { $0 <= $1 })
+        withExtendedLifetime(observation) {}
 
         // Decode the exported track at 48 kHz and measure each channel's tone.
         let asset = AVURLAsset(url: destination)

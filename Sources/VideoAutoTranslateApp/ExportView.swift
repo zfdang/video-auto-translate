@@ -4,12 +4,18 @@ import VideoAutoTranslateCore
 
 public struct ExportView: View {
     @ObservedObject var appState: AppState
+    @ObservedObject private var exportJob: ExportJob
+
+    public init(appState: AppState) {
+        self.appState = appState
+        self.exportJob = appState.exportJob
+    }
     @Environment(\.dismiss) private var dismiss
 
     @State private var subtitleFileMode: SubtitleExportMode = .bilingual
     @State private var videoAudioMode: VideoAudioExportMode = .translated
     @State private var videoSubtitleMode: SubtitleExportMode = .bilingual
-    private var isExporting: Bool { appState.exportJob.isRunning }
+    private var isExporting: Bool { exportJob.isRunning }
     @State private var exportMessage: String = ""
 
     private var hasTranslations: Bool {
@@ -199,8 +205,8 @@ public struct ExportView: View {
                                 ProgressView()
                                     .controlSize(.small)
                             } else {
-                                Image(systemName: appState.exportJob.error != nil || exportMessage.contains("失败") || exportMessage.contains("不能") ? "exclamationmark.triangle.fill" : (exportMessage.contains("取消") ? "minus.circle" : "checkmark.circle.fill"))
-                                    .foregroundColor(appState.exportJob.error != nil || exportMessage.contains("失败") || exportMessage.contains("不能") ? .orange : (exportMessage.contains("取消") ? .secondary : .green))
+                                Image(systemName: exportJob.error != nil || exportMessage.contains("失败") || exportMessage.contains("不能") ? "exclamationmark.triangle.fill" : (exportMessage.contains("取消") ? "minus.circle" : "checkmark.circle.fill"))
+                                    .foregroundColor(exportJob.error != nil || exportMessage.contains("失败") || exportMessage.contains("不能") ? .orange : (exportMessage.contains("取消") ? .secondary : .green))
                             }
                             Text(exportMessage)
                                 .font(.caption)
@@ -208,8 +214,12 @@ public struct ExportView: View {
                         }
                         .padding(.horizontal, 4)
                         if isExporting {
-                            ProgressView(value: appState.exportJob.progress)
-                            Button("取消导出") { appState.exportJob.cancel() }
+                            HStack {
+                                ProgressView(value: exportJob.progress)
+                                Text(exportJob.progress, format: .percent.precision(.fractionLength(0)))
+                                    .font(.caption.monospacedDigit())
+                            }
+                            Button("取消导出") { exportJob.cancel() }
                         }
                     }
 
@@ -219,7 +229,7 @@ public struct ExportView: View {
             }
         }
         .frame(width: 580, height: 600)
-        .onReceive(appState.exportJob.$message) { message in
+        .onReceive(exportJob.$message) { message in
             if !message.isEmpty { exportMessage = message }
         }
         .onAppear {
@@ -287,7 +297,7 @@ public struct ExportView: View {
                 }
 
                 let audioMode: VideoAudioExportMode = (hasDubbing || hasTranslations) ? videoAudioMode : .original
-                appState.exportJob.start(
+                exportJob.start(
                     video: sourceVideo,
                     rows: appState.project.subtitles,
                     voice: appState.project.effectiveVoiceCode,

@@ -36,7 +36,8 @@ public final class VideoComposer {
         newAudioURL: URL? = nil,
         outputURL: URL,
         subtitles: [SubtitleItem] = [],
-        subtitleMode: SubtitleExportMode = .bilingual
+        subtitleMode: SubtitleExportMode = .bilingual,
+        onProgress: @escaping @MainActor (Double) -> Void = { _ in }
     ) async throws {
         // 安全检查：严禁输出路径与输入视频或输入音频相同或指向同一文件（防父目录别名与符号链接，R01 / FU02）
         guard !outputURL.pointsToSameFile(as: videoURL) else {
@@ -226,12 +227,7 @@ public final class VideoComposer {
             exportSession.videoComposition = videoComposition
         }
 
-        try Task.checkCancellation()
-        let cancellation = ExportCancellation(exportSession)
-        await withTaskCancellationHandler {
-            await exportSession.export()
-        } onCancel: { cancellation.cancel() }
-        try Task.checkCancellation()
+        try await exportWithProgress(exportSession, onProgress: onProgress)
 
         if exportSession.status != .completed {
             try? FileManager.default.removeItem(at: tempOutputURL)
@@ -255,6 +251,7 @@ public final class VideoComposer {
             try? FileManager.default.removeItem(at: tempOutputURL)
             throw VideoComposerError.exportFailed("替换导出目标文件失败: \(error.localizedDescription)")
         }
+        await onProgress(1)
     }
 
     internal static func subtitleKeyTimes(start: Double, end: Double, duration: Double) -> [Double]? {

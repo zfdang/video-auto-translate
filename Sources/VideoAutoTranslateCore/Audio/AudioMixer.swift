@@ -29,7 +29,8 @@ public final class AudioMixer {
         backgroundAudioURL: URL?,
         subtitles: [SubtitleItem],
         to outputURL: URL,
-        duckingVolume: Float = 0.35
+        duckingVolume: Float = 0.35,
+        onProgress: @escaping @MainActor (Double) -> Void = { _ in }
     ) async throws {
         // 安全检查：严禁输出路径与背景音频或配音片段相同（防符号链接别名覆盖，R01 / FU02）
         if let bgURL = backgroundAudioURL {
@@ -200,12 +201,7 @@ public final class AudioMixer {
             exportSession.audioMix = audioMix
         }
 
-        try Task.checkCancellation()
-        let cancellation = ExportCancellation(exportSession)
-        await withTaskCancellationHandler {
-            await exportSession.export()
-        } onCancel: { cancellation.cancel() }
-        try Task.checkCancellation()
+        try await exportWithProgress(exportSession, onProgress: onProgress)
 
         if exportSession.status != .completed {
             try? FileManager.default.removeItem(at: tempOutputURL)
@@ -223,6 +219,7 @@ public final class AudioMixer {
             try? FileManager.default.removeItem(at: tempOutputURL)
             throw AudioMixerError.exportFailed("替换混音目标文件失败: \(error.localizedDescription)")
         }
+        await onProgress(1)
     }
 
     /// 为播放器构建实时多轨合成的 AVPlayerItem (无需导出磁盘文件，毫秒级快速组装)
