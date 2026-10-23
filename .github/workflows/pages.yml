@@ -1,0 +1,60 @@
+name: Project Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pages/**'
+      - '.github/workflows/pages.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pages/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Prepare Static Website
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Check website files
+        run: |
+          test -s pages/index.html
+          test -s pages/styles.css
+          test -s pages/assets/app-icon.png
+          test -s pages/assets/workspace.png
+          grep -Fx 'vat.zfdang.com' pages/CNAME
+      - name: Prepare deployment directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/site"
+          cp -R pages/. "$RUNNER_TEMP/site/"
+          rm -f "$RUNNER_TEMP/site/README.md"
+      - uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+
+  deploy:
+    name: Deploy GitHub Pages
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v6.0.0
+      - name: Deploy website
+        id: deployment
+        uses: actions/deploy-pages@v5.0.1
