@@ -59,6 +59,6 @@ VAT_REAL_DUBBING_SAMPLE=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Develop
 ## 技术资料
 
 - [技术架构](architecture.md)：SwiftUI、AVFoundation、AVAudioEngine 与本地推理服务。
-- [时间轴算法](../doc/translation-timeline-algorithm.md)：局部语境分组与时间共享。
+- [时间轴算法](translation-timeline-algorithm.md)：局部语境分组与时间共享。
 - [历史评审和验收记录](../reviews/README.md)：特定版本的验证证据，不代表当前发布版保证。
 - [自动化与发布](workflows.md)：CI、打包与网站部署。

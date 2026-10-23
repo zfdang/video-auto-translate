@@ -37,7 +37,7 @@ VideoAutoTranslate 是面向 macOS 14 及以上、Apple Silicon 的原生视频�
 
 需要配音时，选好引擎和音色，点击「匹配译文时间轴」。应用实测配音时长，在局部语境内重新分配各句时间，保持每组的开头和结尾与视频一致。预览时间变化、试听后确认应用；短句自然留白，语速偏快会显示提示。
 
-匹配结果会被后续生成、试听和导出复用。原始时间戳始终保留，重复匹配不会积累全片漂移。算法细节见[时间轴设计说明](doc/translation-timeline-algorithm.md)。
+匹配结果会被后续生成、试听和导出复用。原始时间戳始终保留，重复匹配不会积累全片漂移。算法细节见[时间轴设计说明](docs/translation-timeline-algorithm.md)。
 
 ### 5. 试听与配音（可选）
 
@@ -65,7 +65,7 @@ VideoAutoTranslate 是面向 macOS 14 及以上、Apple Silicon 的原生视频�
 - [安装与首次设置](docs/getting-started.md)：下载、运行要求、模型和服务配置。
 - [开发与验证](docs/development.md)：源码编译、测试与真实视频验收。
 - [自动化与发布](docs/workflows.md)：CI、版本号、发布产物和项目网站部署。
-- [时间轴算法](doc/translation-timeline-algorithm.md) · [产品需求](docs/PRD.md) · [技术架构](docs/architecture.md) · [交互设计](docs/ui-design.md)
+- [时间轴算法](docs/translation-timeline-algorithm.md) · [产品需求](docs/PRD.md) · [技术架构](docs/architecture.md) · [交互设计](docs/ui-design.md)
 
 欢迎通过 [Issues](https://github.com/zfdang/video-auto-translate/issues) 报告问题或提出建议，也欢迎提交 Pull Request。反馈时请附上系统版本、操作步骤和必要日志，并移除密钥及私人内容。
 
