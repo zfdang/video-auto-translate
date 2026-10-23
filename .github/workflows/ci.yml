@@ -6,6 +6,10 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      - 'doc/**'
+      - 'reviews/**'
+      - 'pages/**'
+      - '.github/workflows/pages.yml'
       - '.gitignore'
       - 'LICENSE'
   pull_request:
@@ -13,6 +17,10 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      - 'doc/**'
+      - 'reviews/**'
+      - 'pages/**'
+      - '.github/workflows/pages.yml'
       - '.gitignore'
       - 'LICENSE'
 
