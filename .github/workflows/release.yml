@@ -70,6 +70,9 @@ jobs:
           python3 scripts/test-release-metadata.py
           python3 scripts/test-release-notes.py
 
+      - name: Prepare Python runtime for integration tests
+        run: ./scripts/prepare-embedded-runtime.sh
+
       - name: Swift Test
         run: swift test
 

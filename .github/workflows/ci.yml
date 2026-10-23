@@ -54,7 +54,7 @@ jobs:
   build-and-test:
     name: Build & Test (macOS arm64)
     runs-on: macos-14
-    timeout-minutes: 8
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -63,10 +63,17 @@ jobs:
       - name: Cache SPM
         uses: actions/cache@v4
         with:
-          path: .build
+          path: |
+            .build/artifacts
+            .build/checkouts
+            .build/repositories
+            .build/arm64-apple-macosx
           key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'Package.swift') }}
           restore-keys: |
             ${{ runner.os }}-spm-
+
+      - name: Prepare Python runtime for integration tests
+        run: ./scripts/prepare-embedded-runtime.sh
 
       - name: Swift Test
         run: swift test
